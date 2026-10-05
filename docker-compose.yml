@@ -1,0 +1,13 @@
+services:
+  jinnee:
+    build: .
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./brain:/app/brain
+      - ./handoffs:/app/handoffs
+      - claude-auth:/root/.claude
+    ports:
+      - "127.0.0.1:8080:8080"
+volumes:
+  claude-auth:

@@ -1,0 +1,6 @@
+.env
+brain/
+handoffs/
+logs.txt
+__pycache__/
+connectors/*/token.json

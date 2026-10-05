@@ -1,0 +1,5 @@
+# Dashboard on your own domain with automatic HTTPS.
+# 1. DNS A record → your VPS IP.  2. apt install caddy  3. cp Caddyfile /etc/caddy/Caddyfile && systemctl reload caddy
+jinnee.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
