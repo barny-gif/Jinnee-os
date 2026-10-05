@@ -1,0 +1,3 @@
+{ "id": "gmail", "name": "Gmail", "category": "email", "version": "0.1.0",
+  "auth": { "type": "oauth_own_app", "notes": "The owner's own Google Cloud project in 'testing' mode – no Google verification needed." },
+  "ops": ["search", "read", "draft_reply", "send"] }

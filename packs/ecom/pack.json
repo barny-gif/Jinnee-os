@@ -1,0 +1,27 @@
+{
+  "id": "ecom",
+  "name": "E-commerce team",
+  "version": "0.1.0",
+  "description": "Online-shop operations: marketing, social, order-to-invoice-to-shipping chain, development.",
+  "extends": "general",
+  "agents": ["marketing-manager", "social-media-manager", "ops", "forge"],
+  "connectors": {
+    "required": ["shop"],
+    "optional": ["meta-ads", "shipping"],
+    "defaults": { "shop": "shopify", "shipping": "gls" },
+    "alternatives": {
+      "shop": ["shopify", "unas", "shoprenter", "woocommerce"],
+      "shipping": ["gls", "foxpost", "packeta"]
+    }
+  },
+  "onboarding": "onboarding.md",
+  "autonomy_defaults": {
+    "publish_social_post": 1,
+    "send_customer_email": 1,
+    "issue_invoice": 1,
+    "change_product_price": 0,
+    "spend_ad_budget": 0,
+    "draft_anything": 3,
+    "read_anything": 3
+  }
+}

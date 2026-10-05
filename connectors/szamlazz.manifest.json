@@ -1,0 +1,4 @@
+{ "id": "szamlazz", "name": "Számlázz.hu", "category": "invoicing", "version": "0.1.0",
+  "auth": { "type": "agent_key", "env": "SZAMLAZZ_AGENT_KEY", "docs": "https://docs.szamlazz.hu" },
+  "ops": ["create_draft", "list", "get_pdf", "status"],
+  "notes": "Számla Agent XML API. Same operation set as Billingo – swap via the registry." }

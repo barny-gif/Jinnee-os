@@ -1,0 +1,4 @@
+{ "id": "billingo", "name": "Billingo", "category": "invoicing", "version": "0.1.0",
+  "auth": { "type": "api_key", "env": "BILLINGO_API_KEY", "docs": "https://api.billingo.hu" },
+  "ops": ["create_draft", "list", "get_pdf", "status"],
+  "notes": "Default invoicing connector. The shop automation usually issues the invoice already; the agent mainly verifies." }

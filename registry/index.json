@@ -1,0 +1,12 @@
+{
+  "updated": "2026-10-05",
+  "items": [
+    { "kind": "pack", "id": "general", "version": "0.1.0", "url": "https://jinnee-os.com/registry/packs/general-0.1.0.zip", "changelog": "First release: Office + Watcher." },
+    { "kind": "pack", "id": "ecom", "version": "0.1.0", "url": "https://jinnee-os.com/registry/packs/ecom-0.1.0.zip", "changelog": "First release: Marketing, Social, Ops, Forge." },
+    { "kind": "connector", "id": "billingo", "version": "0.1.0", "url": "https://jinnee-os.com/registry/connectors/billingo-0.1.0.zip", "changelog": "" },
+    { "kind": "connector", "id": "szamlazz", "version": "0.1.0", "url": "https://jinnee-os.com/registry/connectors/szamlazz-0.1.0.zip", "changelog": "" },
+    { "kind": "connector", "id": "gmail", "version": "0.1.0", "url": "https://jinnee-os.com/registry/connectors/gmail-0.1.0.zip", "changelog": "" },
+    { "kind": "connector", "id": "shopify", "version": "0.1.0", "url": "https://jinnee-os.com/registry/connectors/shopify-0.1.0.zip", "changelog": "" },
+    { "kind": "connector", "id": "gls", "version": "0.1.0", "url": "https://jinnee-os.com/registry/connectors/gls-0.1.0.zip", "changelog": "" }
+  ]
+}

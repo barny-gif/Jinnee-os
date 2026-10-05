@@ -1,0 +1,3 @@
+{ "id": "gls", "name": "GLS (MyGLS)", "category": "shipping", "version": "0.1.0",
+  "auth": { "type": "api_credentials", "env": ["GLS_CLIENT_NUMBER", "GLS_USERNAME", "GLS_PASSWORD"] },
+  "ops": ["create_label_draft", "track"] }

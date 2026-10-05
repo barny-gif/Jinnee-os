@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{NAME}}</title>
+<style>
+:root{--paper:#F3F5F2;--ink:#17262B;--mute:#5F7177;--line:#D4DBD6;--ok:#2F7D5B;--warn:#B8641B;--bad:#A8382F;--panel:#FFFFFF}
+@media (prefers-color-scheme:dark){:root{--paper:#15201F;--ink:#E7EDE9;--mute:#9BAAA6;--line:#2B3A38;--panel:#1C2A28}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.5 Georgia,"Times New Roman",serif}
+header{padding:28px 24px 8px;max-width:960px;margin:0 auto}
+header h1{font-weight:400;font-size:40px;margin:0;letter-spacing:-.01em}
+header p{margin:4px 0 0;color:var(--mute);font-family:system-ui,sans-serif;font-size:14px}
+main{max-width:960px;margin:0 auto;padding:12px 24px 60px;display:grid;gap:28px}
+section h2{font-weight:400;font-size:22px;margin:0 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+.brief{white-space:pre-wrap;font-size:18px;line-height:1.6}
+.item{display:grid;grid-template-columns:1fr auto;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);align-items:start}
+.item:last-child{border-bottom:0}
+.item .t{font-family:system-ui,sans-serif;font-size:15px}
+.item .t small{display:block;color:var(--mute);margin-top:2px}
+.acts{display:flex;gap:6px;flex-wrap:wrap}
+button{font:14px system-ui,sans-serif;padding:7px 12px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;cursor:pointer}
+button:focus-visible{outline:2px solid var(--ok);outline-offset:2px}
+button.ok{border-color:var(--ok);color:var(--ok)}button.drop{border-color:var(--bad);color:var(--bad)}
+.row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);font-family:system-ui,sans-serif;font-size:15px}
+.row:last-child{border-bottom:0}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;vertical-align:middle}
+.g{background:var(--ok)}.y{background:var(--warn)}.r{background:var(--bad)}.n{background:var(--line)}
+.empty{color:var(--mute);font-family:system-ui,sans-serif;font-size:15px}
+.log{font-family:system-ui,sans-serif;font-size:14px;color:var(--mute);line-height:1.7}
+@media(min-width:760px){.two{display:grid;grid-template-columns:1fr 1fr;gap:28px}}
+</style>
+</head>
+<body>
+<header><h1>{{NAME}}</h1><p id="stamp">Loading…</p></header>
+<main>
+  <section><h2>Today</h2><div class="brief" id="brief"></div></section>
+  <section><h2>Awaiting approval</h2><div id="approvals"></div></section>
+  <div class="two">
+    <section><h2>Team</h2><div id="team"></div></section>
+    <section><h2>Connections</h2><div id="connectors"></div></section>
+  </div>
+  <section><h2>Decision log</h2><div class="log" id="log"></div></section>
+</main>
+<script>
+const key=new URLSearchParams(location.search).get('key')||'';
+const H={'x-dash-key':key,'Content-Type':'application/json'};
+const el=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function load(){
+  const r=await fetch('/api/state',{headers:H});
+  if(!r.ok){el('stamp').textContent='Password required: add ?key=… to the URL';return;}
+  const s=await r.json();
+  el('stamp').textContent='Updated '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  el('brief').textContent=s.brief||('No brief yet today. It arrives at 8:00, or message '+s.name+' on Telegram.');
+  const open=s.approvals.filter(a=>!a.decision);
+  el('approvals').innerHTML=open.length?open.map(a=>`<div class="item"><div class="t">${esc(a.title||a.id)}<small>${esc(a.agent)} ${esc(a.summary)}</small></div>
+    <div class="acts"><button class="ok" onclick="dec('${esc(a.id)}','ok')">Approve</button><button onclick="dec('${esc(a.id)}','edit')">Change</button><button class="drop" onclick="dec('${esc(a.id)}','drop')">Drop</button></div></div>`).join('')
+    :'<p class="empty">Nothing waiting for you. That\'s good.</p>';
+  el('team').innerHTML=s.team.length?s.team.map(t=>`<div class="row"><span><span class="dot ${t.ago_min<60?'g':t.ago_min<240?'y':'r'}"></span>${esc(t.agent)}</span><span>${t.ago_min<60?t.ago_min+' min ago':Math.round(t.ago_min/60)+' h ago'} · ${esc(t.note)}</span></div>`).join('')
+    :'<p class="empty">No one has checked in yet. After the first task you\'ll see who is doing what.</p>';
+  el('connectors').innerHTML=s.connectors.map(c=>`<div class="row"><span><span class="dot ${c.ok===null?'n':c.ok?'g':'r'}"></span>${esc(c.name)}</span><span>${c.ok===null?'no key':c.ok?'connected':'missing key'}</span></div>`).join('');
+  el('log').innerHTML=s.log.length?s.log.map(esc).join('<br>'):'<span class="empty">No decisions yet.</span>';
+}
+async function dec(id,d){let note='';if(d==='edit'){note=prompt('What should change?')||'';if(!note)return;}
+  await fetch('/api/approve/'+encodeURIComponent(id),{method:'POST',headers:H,body:JSON.stringify({decision:d,note})});load();}
+load();setInterval(load,60000);
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "id": "general",
+  "name": "General",
+  "version": "0.1.0",
+  "description": "The base of every Jinnee: invoice monitoring, email triage, competitor watch, weekly report.",
+  "agents": ["office", "watcher"],
+  "connectors": {
+    "required": ["invoicing", "email"],
+    "optional": [],
+    "defaults": { "invoicing": "billingo", "email": "gmail" },
+    "alternatives": { "invoicing": ["billingo", "szamlazz"], "email": ["gmail", "m365"] }
+  },
+  "onboarding": "onboarding.md",
+  "autonomy_defaults": {
+    "send_customer_email": 1, "issue_invoice": 1, "spend_money": 0,
+    "draft_anything": 3, "read_anything": 3, "update_from_registry": 1
+  }
+}

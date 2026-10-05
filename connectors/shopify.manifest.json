@@ -1,0 +1,4 @@
+{ "id": "shopify", "name": "Shopify", "category": "shop", "version": "0.1.0",
+  "auth": { "type": "admin_api_token", "env": "SHOPIFY_ADMIN_TOKEN", "store_env": "SHOPIFY_STORE" },
+  "ops": ["list_orders", "get_order", "list_products", "get_product", "update_product_draft", "inventory_levels"],
+  "notes": "Custom app in the shop admin with only the needed scopes (read_orders, read_products, write_products)." }
