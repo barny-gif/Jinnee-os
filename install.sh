@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Jinnee OS installer – Linux VPS (Docker), Linux desktop, macOS
 set -euo pipefail
-REPO="https://github.com/<github-user>/jinnee-os.git"
+REPO="https://github.com/barny-gif/Jinnee-os.git"
 DIR="${JINNEE_DIR:-$HOME/jinnee-os}"
 say(){ printf '\n\033[1m%s\033[0m\n' "$*"; }
 ask(){ local v; read -r -p "$1 " v; echo "$v"; }

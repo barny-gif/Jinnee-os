@@ -3,9 +3,9 @@
 An AI agent team for small businesses. One installer, one core, and your industry is just a folder.
 
 ```
-curl -fsSL https://raw.githubusercontent.com/<github-user>/jinnee-os/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/barny-gif/Jinnee-os/main/install.sh | bash
 ```
-Windows: `irm https://raw.githubusercontent.com/<github-user>/jinnee-os/main/install.ps1 | iex`
+Windows: `irm https://raw.githubusercontent.com/barny-gif/Jinnee-os/main/install.ps1 | iex`
 
 ## What you get
 - **Jinnee** – the team lead. You talk to it on Telegram in your own language; it delegates, reviews and reports. Rename it to anything you like.
