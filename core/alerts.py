@@ -162,7 +162,7 @@ class Watch:
 def hand_over_message(book, items):
     """What the lead is told when decisions are ready. The lead still has to take each one with consume."""
     rows = [f"- {line(book, i)}: {book.status(i)}" + (f" – note: {i['note']}" if i["note"] else "") for i in items]
-    return ("The owner has decided the following. Handle each one now, in this order: run `python3 core/approvals.py consume <id>`; "
+    return (f"The owner has decided the following. Handle each one now, in this order: run `{store.PY} core/approvals.py consume <id>`; "
             "act only if it prints GO; then record what happened with `result`. For CHANGE, fix it and ask again with "
-            "`add … --replaces <id>`. For a level change use `python3 core/autonomy.py apply <id>` instead of consume. "
+            f"`add … --replaces <id>`. For a level change use `{store.PY} core/autonomy.py apply <id>` instead of consume. "
             "Then tell the owner in a few lines what was done.\n" + "\n".join(rows))

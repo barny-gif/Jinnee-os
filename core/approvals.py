@@ -246,7 +246,7 @@ class Book:
                 it.update(state="consumed", consumed_at=now, outcome="executing")
                 self.log(it["agent"] or "agent", f"{item_id} → taken, carrying it out")
                 return Verdict("GO", f"approved by the owner ({it['decided_by']}, {when(it['decided_at'])}). Carry it out now, exactly as "
-                                     f"approved, then report: python core/approvals.py result {item_id} \"what happened\"", dict(it))
+                                     f"approved, then report: {store.PY} core/approvals.py result {item_id} \"what happened\"", dict(it))
             outcome, word = ("returned", "CHANGE") if it["decision"] == "edit" else ("dropped", "DROPPED")
             it.update(state="consumed", consumed_at=now, finished_at=now, outcome=outcome)
             if word == "CHANGE":

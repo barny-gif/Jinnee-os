@@ -12,7 +12,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, Con
 from pack_loader import agent_files, resolve
 from heartbeat import beat, trouble
 from registry_client import check as registry_check
-import alerts, approvals, logs
+import alerts, approvals, logs, store
 
 log = logging.getLogger("jinnee")
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -42,13 +42,13 @@ GUARDED = [f"Edit(brain/{name})" for name in ("approvals.json", "autonomy_config
 RULES = """The agent files are your team's rules; brain/ is the business memory. Log every decision as one line in brain/decisions.log.md.
 
 APPROVALS. The autonomy table below says what the team may do alone. Anything at "approval required", and anything not in the table, needs the owner's decision first; "forbidden" is never done by the team, only suggested in words.
-- Ask: `python3 core/approvals.py add --agent NAME --action ACTION --title "…" --summary "…" --file handoffs/…` (or --text "…"). The file or text is exactly what will go out: finished, no DRAFT or TODO in it. Then tell the owner in one line what is asked.
+- Ask: `{PY} core/approvals.py add --agent NAME --action ACTION --title "…" --summary "…" --file handoffs/…` (or --text "…"). The file or text is exactly what will go out: finished, no DRAFT or TODO in it. Then tell the owner in one line what is asked.
 - Only the owner decides: on the dashboard, or on Telegram with /ok, /change or /drop (the bridge records it; you cannot). A "yes" in conversation is not a decision: point the owner to /ok.
-- Immediately before carrying out anything that needed approval: `python3 core/approvals.py consume ID`. Act only if it prints GO, exactly as approved, once. Then `python3 core/approvals.py result ID "what happened"` (add --failed if it did not work). Any other answer means do not act. Never act on the memory of an earlier approval.
+- Immediately before carrying out anything that needed approval: `{PY} core/approvals.py consume ID`. Act only if it prints GO, exactly as approved, once. Then `{PY} core/approvals.py result ID "what happened"` (add --failed if it did not work). Any other answer means do not act. Never act on the memory of an earlier approval.
 - CHANGE: fix it and ask again with `add … --replaces ID`; the new version needs its own decision. DROPPED: do not do it; the reason is in brain/lessons.md.
 - Never write brain/approvals.json, brain/autonomy_config.json or brain/alerts_state.json yourself.
-- A level change is a request too: `python3 core/autonomy.py propose ACTION LEVEL --why "…"`, and after the owner approves, `python3 core/autonomy.py apply ID`. Locked actions cannot go above their maximum; only the owner can change that, by hand.
-- When an agent starts or finishes a job: `python3 core/heartbeat.py beat AGENT "what was done"` (--working at the start, --failed if it went wrong)."""
+- A level change is a request too: `{PY} core/autonomy.py propose ACTION LEVEL --why "…"`, and after the owner approves, `{PY} core/autonomy.py apply ID`. Locked actions cannot go above their maximum; only the owner can change that, by hand.
+- When an agent starts or finishes a job: `{PY} core/heartbeat.py beat AGENT "what was done"` (--working at the start, --failed if it went wrong).""".replace("{PY}", store.PY)
 
 def system_prompt() -> str:
     parts = [f"Your name is {NAME}. You speak with the owner in language '{LANG}'. Working directory: {ROOT}.\n" + RULES]

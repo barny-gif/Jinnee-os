@@ -14,6 +14,7 @@ except ImportError:  # Windows
             except OSError: time.sleep(0.05)
     def _unlock(f): f.seek(0); msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
 
+PY = "python" if os.name == "nt" else "python3"  # the command agents are told to use
 _held = threading.local()
 
 

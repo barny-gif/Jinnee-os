@@ -2,6 +2,7 @@
 brain/
 handoffs/
 logs.txt
+logs/
 __pycache__/
 connectors/*/token.json
 *.zip

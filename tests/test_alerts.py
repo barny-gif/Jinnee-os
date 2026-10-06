@@ -527,6 +527,7 @@ class AgentFailures(Bridge):
         self.assertIn("spend_money: level 0 (forbidden, locked at max 0)", args)
         self.assertIn("Never write brain/approvals.json", args)
         self.assertNotIn("bypassPermissions", args)
+        self.assertNotIn("{PY}", args)
 
 
 if __name__ == "__main__":

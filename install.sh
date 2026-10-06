@@ -143,11 +143,11 @@ main(){
     if [ "$TTY" = yes ]; then say "Claude login (one time):"; claude login <&3 || true
     else LOGIN_LATER="claude login"; fi
     pip3 install -q -r requirements.txt --break-system-packages 2>/dev/null || pip3 install -q -r requirements.txt
-    nohup python3 core/jinnee.py >> logs.txt 2>&1 3<&- &
-    nohup python3 dashboard/app.py >> logs.txt 2>&1 3<&- &
+    bash run.sh restart  # running it again replaces the running copy; it never adds a second one
   fi
   say "Done. Message $NAME on Telegram and open: http://localhost:8080"
   [ -z "$LOGIN_LATER" ] || echo "One step is left, and it needs a terminal. $NAME cannot answer until it is done: $LOGIN_LATER"
+  [ "$MODE" = docker ] || echo "After a reboot: cd $DIR && ./run.sh start   (to make that automatic: README, \"Keeping it running\")"
   echo "Custom domain: dashboard/README.md"
 }
 

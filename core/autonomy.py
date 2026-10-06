@@ -198,7 +198,7 @@ def main(argv):
         elif a.cmd == "propose":
             item = cfg.propose(a.action, a.level, a.why, a.agent)
             print(f"ASKED {item['id']}: {item['title']}. Nothing changes until the owner approves and you run: "
-                  f"python core/autonomy.py apply {item['id']}")
+                  f"{store.PY} core/autonomy.py apply {item['id']}")
         elif a.cmd == "apply":
             action, level = cfg.apply(a.approval_id)
             print(f"DONE {action} is now level {level} ({NAMES[level]})")

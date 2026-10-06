@@ -38,7 +38,7 @@ class Installer(unittest.TestCase):
         shutil.copy(REPO / "install.sh", self.work / "install.sh")
         for d in ("core", "packs"):
             shutil.copytree(REPO / d, src / d, ignore=shutil.ignore_patterns("__pycache__"))
-        for f in (".env.example", "requirements.txt"): shutil.copy(REPO / f, src / f)
+        for f in (".env.example", "requirements.txt", "run.sh"): shutil.copy(REPO / f, src / f)
         for name in FAKED:
             (fakebin / name).write_text(FAKE); (fakebin / name).chmod(0o755)
         self.log, self.dir = tmp / "calls.log", self.home / "jinnee-os"

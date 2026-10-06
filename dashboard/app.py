@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
-import approvals, autonomy, heartbeat
+import approvals, autonomy, heartbeat, logs
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BRAIN = ROOT / "brain"
@@ -158,4 +158,5 @@ async def undo(item_id: str, req: Request):
 
 if __name__ == "__main__":
     host = os.getenv("DASHBOARD_HOST") or ("0.0.0.0" if PASSWORD else "127.0.0.1")
-    uvicorn.run(app, host=host, port=int(os.getenv("DASHBOARD_PORT", "8080")))
+    to_file = logs.setup("dashboard")  # then uvicorn's own lines go through the same rotating file
+    uvicorn.run(app, host=host, port=int(os.getenv("DASHBOARD_PORT", "8080")), **({"log_config": None} if to_file else {}))
