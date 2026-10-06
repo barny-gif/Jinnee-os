@@ -36,7 +36,7 @@ On a fresh install every action touching money or customers is 0 or 1.
 ## First run
 1. `install.sh` asks for: Telegram token, which pack, VPS or local machine.
 2. Message Jinnee on Telegram – it walks you through onboarding.
-3. Dashboard: `http://<ip>:8080`, or on your domain – see `dashboard/README.md`.
+3. Dashboard: `http://localhost:8080` on the machine itself; from another device or on your domain, set a password first – see `dashboard/README.md`.
 4. In week one you approve everything. Jinnee proposes raising the level of whatever proves reliable.
 
 ## Managed setup
