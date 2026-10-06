@@ -17,7 +17,8 @@ def order(pack_ids):
     return ["general"] + [p for p in pack_ids if p and p != "general"]
 
 def resolve(pack_ids):
-    """general always comes first; vertical packs inherit and override."""
+    """general always comes first; vertical packs inherit and override.
+    autonomy_defaults: action → level, or {"level", "max_level", "locked", "label"} (core/autonomy.py reads both)."""
     merged = {"agents": ["jinnee"], "connectors": {"required": [], "optional": [], "defaults": {}},
               "autonomy_defaults": {}, "onboarding": []}
     for pid in order(pack_ids):
@@ -46,13 +47,16 @@ if __name__ == "__main__":
     m = resolve(packs)
     if "--init" in sys.argv:
         BRAIN.mkdir(exist_ok=True)
-        defaults = {"autonomy_config.json": json.dumps(m["autonomy_defaults"], indent=2, ensure_ascii=False),
+        import autonomy
+        cfg = autonomy.Config(BRAIN, packs)
+        defaults = {"autonomy_config.json": json.dumps({"_format": autonomy.FORMAT, **cfg.defaults()}, indent=2, ensure_ascii=False) + "\n",
                     "approvals.json": "[]", "heartbeat.json": "{}",
                     "lessons.md": "# lessons – the owner's corrections\n",
                     "decisions.log.md": "# decisions\n"}
         for name, content in defaults.items():
             f = BRAIN / name
             if not f.exists(): f.write_text(content, encoding="utf-8")
+        if cfg.migrate(): print("brain/autonomy_config.json updated to the lockable format; your levels are kept.")
         print("brain/ ready. Agents:", ", ".join(m["agents"]))
     else:
         print(json.dumps(m, indent=2, ensure_ascii=False))

@@ -1,7 +1,7 @@
 {
   "id": "general",
   "name": "General",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The base of every Jinnee: invoice monitoring, email triage, competitor watch, weekly report.",
   "agents": ["office", "watcher"],
   "connectors": {
@@ -12,7 +12,12 @@
   },
   "onboarding": "onboarding.md",
   "autonomy_defaults": {
-    "send_customer_email": 1, "issue_invoice": 1, "spend_money": 0,
-    "draft_anything": 3, "read_anything": 3, "update_from_registry": 1
+    "send_customer_email": { "level": 1, "max_level": 2, "locked": true, "label": "Send an email to a customer" },
+    "issue_invoice": { "level": 1, "max_level": 2, "locked": true, "label": "Issue an invoice" },
+    "void_or_edit_invoice": { "level": 0, "max_level": 0, "locked": true, "label": "Void or edit an issued invoice" },
+    "spend_money": { "level": 0, "max_level": 0, "locked": true, "label": "Spend money" },
+    "update_from_registry": { "level": 1, "max_level": 1, "locked": true, "label": "Install an update" },
+    "draft_anything": { "level": 3, "label": "Write drafts" },
+    "read_anything": { "level": 3, "label": "Read connected systems" }
   }
 }
