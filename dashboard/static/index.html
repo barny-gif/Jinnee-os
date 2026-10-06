@@ -12,6 +12,7 @@ body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.5 Georgia,"Ti
 header{padding:28px 24px 8px;max-width:960px;margin:0 auto}
 header h1{font-weight:400;font-size:40px;margin:0;letter-spacing:-.01em}
 header p{margin:4px 0 0;color:var(--mute);font-family:system-ui,sans-serif;font-size:14px}
+header form{margin-top:10px}
 main{max-width:960px;margin:0 auto;padding:12px 24px 60px;display:grid;gap:28px}
 section h2{font-weight:400;font-size:22px;margin:0 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
 .brief{white-space:pre-wrap;font-size:18px;line-height:1.6}
@@ -33,7 +34,7 @@ button.ok{border-color:var(--ok);color:var(--ok)}button.drop{border-color:var(--
 </style>
 </head>
 <body>
-<header><h1>{{NAME}}</h1><p id="stamp">Loading…</p></header>
+<header><h1>{{NAME}}</h1><p id="stamp">Loading…</p><form method="post" action="/logout" id="out" hidden><button>Sign out</button></form></header>
 <main>
   <section><h2>Today</h2><div class="brief" id="brief"></div></section>
   <section><h2>Awaiting approval</h2><div id="approvals"></div></section>
@@ -44,14 +45,15 @@ button.ok{border-color:var(--ok);color:var(--ok)}button.drop{border-color:var(--
   <section><h2>Decision log</h2><div class="log" id="log"></div></section>
 </main>
 <script>
-const key=new URLSearchParams(location.search).get('key')||'';
-const H={'x-dash-key':key,'Content-Type':'application/json'};
+const H={'Content-Type':'application/json'};
 const el=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function load(){
   const r=await fetch('/api/state',{headers:H});
-  if(!r.ok){el('stamp').textContent='Password required: add ?key=… to the URL';return;}
+  if(r.status===401){location.href='/login';return;}
+  if(!r.ok){el('stamp').textContent=(await r.json().catch(()=>({}))).detail||'Could not load ('+r.status+')';return;}
   const s=await r.json();
+  el('out').hidden=!s.auth;
   el('stamp').textContent='Updated '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
   el('brief').textContent=s.brief||('No brief yet today. It arrives at 8:00, or message '+s.name+' on Telegram.');
   const open=s.approvals.filter(a=>!a.decision);
