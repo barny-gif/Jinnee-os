@@ -14,10 +14,10 @@ $owner = Read-Host "Your Telegram user ID"
 $name  = Read-Host "What should your agent be called? [Jinnee]"; if (-not $name) { $name = "Jinnee" }
 $pack  = Read-Host "Pack: [1] general only  [2] general + ecom"
 $packs = if ($pack -eq "2") { "general,ecom" } else { "general" }
-(Get-Content .env) -replace '^TELEGRAM_BOT_TOKEN=.*',"TELEGRAM_BOT_TOKEN=$token" `
+(Get-Content .env -Encoding UTF8) -replace '^TELEGRAM_BOT_TOKEN=.*',"TELEGRAM_BOT_TOKEN=$token" `
                    -replace '^TELEGRAM_OWNER_ID=.*',"TELEGRAM_OWNER_ID=$owner" `
                    -replace '^JINNEE_NAME=.*',"JINNEE_NAME=$name" `
-                   -replace '^PACKS=.*',"PACKS=$packs" | Set-Content .env
+                   -replace '^PACKS=.*',"PACKS=$packs" | Set-Content .env -Encoding UTF8
 New-Item -ItemType Directory -Force brain,handoffs | Out-Null
 $env:PACKS = $packs; python core\pack_loader.py --init
 pip install -q -r requirements.txt
