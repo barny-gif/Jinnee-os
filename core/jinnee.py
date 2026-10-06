@@ -17,7 +17,18 @@ BRAIN = ROOT / "brain"
 NAME = os.getenv("JINNEE_NAME", "Jinnee")
 LANG = os.getenv("JINNEE_LANG", "en")
 PACKS = [p.strip() for p in os.getenv("PACKS", "general").split(",")]
-OWNER = int(os.getenv("TELEGRAM_OWNER_ID", "0") or 0)
+
+def owner_id() -> int:
+    """The one Telegram user the bridge obeys. 0 = not set or not a number; main() refuses to start then."""
+    raw = os.getenv("TELEGRAM_OWNER_ID", "").strip()
+    return int(raw) if raw.isascii() and raw.isdigit() else 0
+
+OWNER = owner_id()
+
+def from_owner(update) -> bool:
+    """Every handler starts with this. Anyone else is dropped without a reply, so the bot does not reveal that it is alive."""
+    user = update.effective_user
+    return bool(OWNER) and user is not None and user.id == OWNER
 
 def system_prompt() -> str:
     parts = [f"Your name is {NAME}. You speak with the owner in language '{LANG}'. Working directory: {ROOT}.\n"
@@ -52,7 +63,7 @@ def run_agent(message: str) -> str:
     return out
 
 async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if OWNER and update.effective_user.id != OWNER: return
+    if not from_owner(update): return
     reply = await asyncio.to_thread(run_agent, update.message.text)
     for i in range(0, len(reply), 4000):
         await update.message.reply_text(reply[i:i+4000])
@@ -68,15 +79,24 @@ async def morning_brief(ctx: ContextTypes.DEFAULT_TYPE):
     await ctx.bot.send_message(chat_id=OWNER, text=text[:4000])
 
 async def cmd_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if OWNER and update.effective_user.id != OWNER: return
+    if not from_owner(update): return
     FRESH["next"] = True
     await update.message.reply_text("New day, clean slate. What are we doing?")
 
 def main():
-    app = ApplicationBuilder().token(os.environ["TELEGRAM_BOT_TOKEN"]).build()
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        raise SystemExit("TELEGRAM_BOT_TOKEN is not set. Create a bot with @BotFather on Telegram, "
+                         "put its token in .env and start again.")
+    if not OWNER:
+        raise SystemExit("TELEGRAM_OWNER_ID is missing or not a number, so the Telegram bridge will not start: "
+                         "without it anyone who finds the bot could run the agent on this machine. "
+                         "Message @userinfobot on Telegram, put the number it replies with in .env "
+                         "(TELEGRAM_OWNER_ID=123456789) and start again.")
+    app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("new", cmd_new))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
-    if OWNER and app.job_queue:
+    if app.job_queue:  # the brief goes to OWNER, which is always set here
         app.job_queue.run_daily(morning_brief, time=dt.time(hour=8, minute=0))
     print(f"{NAME} is running. Packs: {', '.join(PACKS)}")
     app.run_polling()

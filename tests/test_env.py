@@ -101,8 +101,10 @@ STUBS = {  # stand-ins so jinnee.py starts without the Telegram library, the net
         "MessageHandler = CommandHandler = _Any\n"
         "filters = _Any()\n"
         "class ContextTypes: DEFAULT_TYPE = object\n"
+        "class _Jobs:\n"
+        "    def run_daily(self, callback, time): print('STUB_DAILY ' + callback.__name__ + ' ' + str(time))\n"
         "class _App:\n"
-        "    job_queue = None\n"
+        "    job_queue = _Jobs()\n"
         "    def add_handler(self, h): pass\n"
         "    def run_polling(self): pass\n"
         "class ApplicationBuilder:\n"
@@ -114,7 +116,7 @@ OURS = ("JINNEE_NAME", "JINNEE_LANG", "PACKS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_O
         "DASHBOARD_PASSWORD", "DASHBOARD_HOST", "DASHBOARD_PORT", "DASHBOARD_TRUST_PEER")
 
 
-class Installed(unittest.TestCase):
+class RepoCopy(unittest.TestCase):
     """A copy of the repo with its own .env, started with none of our variables in the environment."""
 
     def setUp(self):
@@ -133,10 +135,12 @@ class Installed(unittest.TestCase):
     def dotenv(self, text):
         (self.root / ".env").write_text(text, encoding="utf-8")
 
-    def run_py(self, script, extra=None):
-        return subprocess.run([sys.executable, script], cwd=self.root, env={**self.env, **(extra or {})},
+    def run_py(self, script, extra=None, *args):
+        return subprocess.run([sys.executable, script, *args], cwd=self.root, env={**self.env, **(extra or {})},
                               capture_output=True, text=True, timeout=60)
 
+
+class Installed(RepoCopy):
     def start_dashboard(self):
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
@@ -174,7 +178,8 @@ class Installed(unittest.TestCase):
         self.assertEqual((status, json.loads(body)["auth"]), (200, False))
 
     def test_bridge_gets_token_name_and_packs_from_dotenv(self):
-        self.dotenv("TELEGRAM_BOT_TOKEN=123456:TEST-not-a-real-token\nJINNEE_NAME=Testbot\nPACKS=general,ecom   # two packs\n")
+        self.dotenv("TELEGRAM_BOT_TOKEN=123456:TEST-not-a-real-token\nTELEGRAM_OWNER_ID=4242\n"
+                    "JINNEE_NAME=Testbot\nPACKS=general,ecom   # two packs\n")
         r = self.run_py("core/jinnee.py")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('STUB_TOKEN "123456:TEST-not-a-real-token"', r.stdout)
@@ -183,7 +188,8 @@ class Installed(unittest.TestCase):
     def test_bridge_without_dotenv_has_no_token(self):  # what a native install did before
         r = self.run_py("core/jinnee.py")
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("KeyError: 'TELEGRAM_BOT_TOKEN'", r.stderr)
+        self.assertIn("TELEGRAM_BOT_TOKEN is not set", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
 
     def test_pack_loader_init(self):
         self.dotenv("PACKS=general,ecom\n")
