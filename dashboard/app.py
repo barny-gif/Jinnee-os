@@ -1,6 +1,8 @@
 """Jinnee dashboard – one page. Shows the brain/ files; the approval buttons write approvals.json."""
-import os, json, pathlib, time, hmac, hashlib, secrets, ipaddress, asyncio
+import os, sys, json, pathlib, time, hmac, hashlib, secrets, ipaddress, asyncio
 from urllib.parse import parse_qs, urlsplit
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "core"))
+import env; env.load()  # before the settings below are read
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles

@@ -5,6 +5,7 @@ This is the skeleton; Forge fills it in.
 """
 import os, sys, subprocess, pathlib, asyncio, datetime as dt
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import env; env.load()  # before anything below reads the environment
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
 from pack_loader import agent_files, resolve

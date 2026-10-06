@@ -41,6 +41,7 @@ def agent_files(pack_ids):
     return files
 
 if __name__ == "__main__":
+    import env; env.load()  # PACKS given on the command line still wins
     packs = [p.strip() for p in os.getenv("PACKS", "general").split(",")]
     m = resolve(packs)
     if "--init" in sys.argv:
