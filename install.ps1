@@ -6,18 +6,19 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue))    { winget install -e
 if (-not (Get-Command node -ErrorAction SilentlyContinue))   { winget install -e --id OpenJS.NodeJS.LTS }
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) { winget install -e --id Python.Python.3.12 }
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { npm install -g @anthropic-ai/claude-code }
-if (Test-Path "$dir\.git") { git -C $dir pull -q } else { git clone -q https://github.com/<github-user>/jinnee-os.git $dir }
+if (Test-Path "$dir\.git") { git -C $dir pull -q } else { git clone -q https://github.com/barny-gif/Jinnee-os.git $dir }
 Set-Location $dir
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-$token = Read-Host "Telegram bot token"
-$owner = Read-Host "Your Telegram user ID"
+# Both are required: without the owner ID the bot does not start (it would otherwise obey anyone who finds it).
+do { $token = (Read-Host "Telegram bot token (@BotFather)").Trim() } until ($token -match '^\S+$')
+do { $owner = (Read-Host "Your Telegram user ID, a number (@userinfobot)").Trim() } until ($owner -match '^[1-9][0-9]*$')
 $name  = Read-Host "What should your agent be called? [Jinnee]"; if (-not $name) { $name = "Jinnee" }
 $pack  = Read-Host "Pack: [1] general only  [2] general + ecom"
 $packs = if ($pack -eq "2") { "general,ecom" } else { "general" }
-(Get-Content .env) -replace '^TELEGRAM_BOT_TOKEN=.*',"TELEGRAM_BOT_TOKEN=$token" `
+(Get-Content .env -Encoding UTF8) -replace '^TELEGRAM_BOT_TOKEN=.*',"TELEGRAM_BOT_TOKEN=$token" `
                    -replace '^TELEGRAM_OWNER_ID=.*',"TELEGRAM_OWNER_ID=$owner" `
                    -replace '^JINNEE_NAME=.*',"JINNEE_NAME=$name" `
-                   -replace '^PACKS=.*',"PACKS=$packs" | Set-Content .env
+                   -replace '^PACKS=.*',"PACKS=$packs" | Set-Content .env -Encoding UTF8
 New-Item -ItemType Directory -Force brain,handoffs | Out-Null
 $env:PACKS = $packs; python core\pack_loader.py --init
 pip install -q -r requirements.txt

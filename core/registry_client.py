@@ -26,4 +26,5 @@ def check():
     return updates
 
 if __name__ == "__main__":
+    import env; env.load()
     for u in check(): print(f"{u['key']}: {u['from']} → {u['to']} – {u['changelog']}")

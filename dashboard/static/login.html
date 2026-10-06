@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{NAME}}</title>
+<style>
+:root{--paper:#F3F5F2;--ink:#17262B;--mute:#5F7177;--line:#D4DBD6;--ok:#2F7D5B;--bad:#A8382F;--panel:#FFFFFF}
+@media (prefers-color-scheme:dark){:root{--paper:#15201F;--ink:#E7EDE9;--mute:#9BAAA6;--line:#2B3A38;--panel:#1C2A28}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.5 Georgia,"Times New Roman",serif}
+form{max-width:360px;margin:18vh auto 0;padding:0 24px;display:grid;gap:12px}
+h1{font-weight:400;font-size:40px;margin:0;letter-spacing:-.01em}
+label{font:14px system-ui,sans-serif;color:var(--mute)}
+input,button{font:16px system-ui,sans-serif;padding:9px 12px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px}
+button{border-color:var(--ok);color:var(--ok);cursor:pointer}
+input:focus-visible,button:focus-visible{outline:2px solid var(--ok);outline-offset:2px}
+.err{margin:0;min-height:1.5em;color:var(--bad);font:14px system-ui,sans-serif}
+</style>
+</head>
+<body>
+<form method="post" action="/login">
+  <h1>{{NAME}}</h1>
+  <label for="password">Dashboard password</label>
+  <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+  <button type="submit">Sign in</button>
+  <p class="err" role="alert">{{ERROR}}</p>
+</form>
+</body>
+</html>

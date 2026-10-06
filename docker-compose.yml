@@ -7,6 +7,9 @@ services:
       - ./brain:/app/brain
       - ./handoffs:/app/handoffs
       - claude-auth:/root/.claude
+    environment:
+      DASHBOARD_HOST: 0.0.0.0        # inside the container only; the host side is the port line below
+      DASHBOARD_TRUST_PEER: "1"      # requests arrive from the Docker bridge, not loopback. Keep the port on 127.0.0.1.
     ports:
       - "127.0.0.1:8080:8080"
 volumes:

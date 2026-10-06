@@ -3,9 +3,9 @@
 An AI agent team for small businesses. One installer, one core, and your industry is just a folder.
 
 ```
-curl -fsSL https://raw.githubusercontent.com/<github-user>/jinnee-os/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/barny-gif/Jinnee-os/main/install.sh | bash
 ```
-Windows: `irm https://raw.githubusercontent.com/<github-user>/jinnee-os/main/install.ps1 | iex`
+Windows: `irm https://raw.githubusercontent.com/barny-gif/Jinnee-os/main/install.ps1 | iex`
 
 ## What you get
 - **Jinnee** – the team lead. You talk to it on Telegram in your own language; it delegates, reviews and reports. Rename it to anything you like.
@@ -30,13 +30,16 @@ On a fresh install every action touching money or customers is 0 or 1.
 ## Requirements
 - A Linux VPS (Docker) **or** a Mac/Linux/Windows machine that stays on
 - A Claude Pro/Max subscription (Claude Code CLI runs on it) – your account, your cost
-- A Telegram bot token (@BotFather, 2 minutes)
+- A Telegram bot token (@BotFather, 2 minutes) and your own Telegram user ID (@userinfobot): the bot obeys that user only and does not start without it
 - API keys for the connectors you use (`.env`)
 
 ## First run
-1. `install.sh` asks for: Telegram token, which pack, VPS or local machine.
+1. `install.sh` asks for: VPS or local machine, Telegram token, your Telegram user ID, the agent's name, which pack.
+   No terminal (CI, a provisioning script)? Pass the answers as variables; `claude login` is then left for you to run:
+   `curl -fsSL …/install.sh | JINNEE_MODE=native TELEGRAM_BOT_TOKEN=… TELEGRAM_OWNER_ID=… bash`
+   (`JINNEE_MODE`: `docker` or `native`; optional `JINNEE_NAME`, `PACKS=general,ecom`).
 2. Message Jinnee on Telegram – it walks you through onboarding.
-3. Dashboard: `http://<ip>:8080`, or on your domain – see `dashboard/README.md`.
+3. Dashboard: `http://localhost:8080` on the machine itself; from another device or on your domain, set a password first – see `dashboard/README.md`.
 4. In week one you approve everything. Jinnee proposes raising the level of whatever proves reliable.
 
 ## Managed setup
