@@ -9,8 +9,9 @@ if (-not (Get-Command claude -ErrorAction SilentlyContinue)) { npm install -g @a
 if (Test-Path "$dir\.git") { git -C $dir pull -q } else { git clone -q https://github.com/barny-gif/Jinnee-os.git $dir }
 Set-Location $dir
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-$token = Read-Host "Telegram bot token"
-$owner = Read-Host "Your Telegram user ID"
+# Both are required: without the owner ID the bot does not start (it would otherwise obey anyone who finds it).
+do { $token = (Read-Host "Telegram bot token (@BotFather)").Trim() } until ($token -match '^\S+$')
+do { $owner = (Read-Host "Your Telegram user ID, a number (@userinfobot)").Trim() } until ($owner -match '^[1-9][0-9]*$')
 $name  = Read-Host "What should your agent be called? [Jinnee]"; if (-not $name) { $name = "Jinnee" }
 $pack  = Read-Host "Pack: [1] general only  [2] general + ecom"
 $packs = if ($pack -eq "2") { "general,ecom" } else { "general" }
