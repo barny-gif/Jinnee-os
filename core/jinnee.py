@@ -29,14 +29,24 @@ def system_prompt() -> str:
         if p.exists(): parts.append(f"\n\n===== brain/{b} =====\n{p.read_text(encoding='utf-8')}")
     return "".join(parts)
 
+FRESH = {"next": True}  # first message after start or /new opens a new session
+
 def run_agent(message: str) -> str:
-    """Claude Code CLI, non-interactive. Runs on the owner's Pro/Max subscription."""
-    cmd = ["claude", "-p", message, "--append-system-prompt", system_prompt(), "--output-format", "text"]
+    """Claude Code CLI, non-interactive. Runs on the owner's Pro/Max subscription.
+    --continue keeps one running conversation; acceptEdits lets agents write brain/ and handoffs/."""
+    base = ["claude", "-p", message, "--permission-mode", "acceptEdits",
+            "--append-system-prompt", system_prompt(), "--output-format", "text"]
+    cmd = base if FRESH["next"] else base[:2] + ["--continue"] + base[2:]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=600)
+        if r.returncode != 0 and "--continue" in cmd:
+            r = subprocess.run(base, capture_output=True, text=True, cwd=ROOT, timeout=600)
         out = r.stdout.strip() or r.stderr.strip() or "…"
+        FRESH["next"] = False
     except FileNotFoundError:
         out = "The `claude` command was not found. Did `claude login` run?"
+    except subprocess.TimeoutExpired:
+        out = "This took longer than 10 minutes, so I stopped. Try a smaller step."
     beat("jinnee", "replied")
     return out
 
@@ -57,6 +67,8 @@ async def morning_brief(ctx: ContextTypes.DEFAULT_TYPE):
     await ctx.bot.send_message(chat_id=OWNER, text=text[:4000])
 
 async def cmd_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if OWNER and update.effective_user.id != OWNER: return
+    FRESH["next"] = True
     await update.message.reply_text("New day, clean slate. What are we doing?")
 
 def main():
