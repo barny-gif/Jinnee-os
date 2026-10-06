@@ -12,5 +12,8 @@ services:
       DASHBOARD_TRUST_PEER: "1"      # requests arrive from the Docker bridge, not loopback. Keep the port on 127.0.0.1.
     ports:
       - "127.0.0.1:8080:8080"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }   # `docker compose logs` stays under 30 MB
 volumes:
   claude-auth:

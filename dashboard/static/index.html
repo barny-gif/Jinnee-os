@@ -20,6 +20,10 @@ section h2{font-weight:400;font-size:22px;margin:0 0 10px;border-bottom:1px soli
 .item:last-child{border-bottom:0}
 .item .t{font-family:system-ui,sans-serif;font-size:15px}
 .item .t small{display:block;color:var(--mute);margin-top:2px}
+.item .t .w{color:var(--warn)}
+.item details{margin-top:6px}.item summary{cursor:pointer;color:var(--mute);font-size:14px}
+.item pre{white-space:pre-wrap;word-break:break-word;font:14px/1.5 system-ui,sans-serif;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px;margin:6px 0 0;max-height:320px;overflow:auto}
+.note{color:var(--bad);font-family:system-ui,sans-serif;font-size:15px;margin:0 0 10px}
 .acts{display:flex;gap:6px;flex-wrap:wrap}
 button{font:14px system-ui,sans-serif;padding:7px 12px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;cursor:pointer}
 button:focus-visible{outline:2px solid var(--ok);outline-offset:2px}
@@ -37,11 +41,14 @@ button.ok{border-color:var(--ok);color:var(--ok)}button.drop{border-color:var(--
 <header><h1>{{NAME}}</h1><p id="stamp">Loading…</p><form method="post" action="/logout" id="out" hidden><button>Sign out</button></form></header>
 <main>
   <section><h2>Today</h2><div class="brief" id="brief"></div></section>
-  <section><h2>Awaiting approval</h2><div id="approvals"></div></section>
+  <section><h2>Awaiting your decision</h2><div id="problems"></div><div id="approvals"></div></section>
+  <section id="decidedBox" hidden><h2>Decided, not carried out yet</h2><div id="decided"></div></section>
+  <section id="closedBox" hidden><h2>Recently closed</h2><div id="closed"></div></section>
   <div class="two">
     <section><h2>Team</h2><div id="team"></div></section>
     <section><h2>Connections</h2><div id="connectors"></div></section>
   </div>
+  <section><h2>What the team may do</h2><div id="autonomy"></div></section>
   <section><h2>Decision log</h2><div class="log" id="log"></div></section>
 </main>
 <script>
@@ -56,17 +63,33 @@ async function load(){
   el('out').hidden=!s.auth;
   el('stamp').textContent='Updated '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
   el('brief').textContent=s.brief||('No brief yet today. It arrives at 8:00, or message '+s.name+' on Telegram.');
-  const open=s.approvals.filter(a=>!a.decision);
-  el('approvals').innerHTML=open.length?open.map(a=>`<div class="item"><div class="t">${esc(a.title||a.id)}<small>${esc(a.agent)} ${esc(a.summary)}</small></div>
-    <div class="acts"><button class="ok" onclick="dec('${esc(a.id)}','ok')">Approve</button><button onclick="dec('${esc(a.id)}','edit')">Change</button><button class="drop" onclick="dec('${esc(a.id)}','drop')">Drop</button></div></div>`).join('')
+  el('problems').innerHTML=s.problems.map(p=>`<p class="note">${esc(p)}</p>`).join('');
+  const head=a=>`${esc(a.title||a.id)}<small>${esc(a.agent)}${a.label||a.action?' · '+esc(a.label||a.action):''}${a.summary?' · '+esc(a.summary):''}</small>`;
+  const by=st=>s.approvals.filter(a=>a.state===st);
+  el('approvals').innerHTML=by('pending').length?by('pending').map(a=>`<div class="item"><div class="t">${head(a)}
+    ${a.warning?`<small class="w">Not sendable as it is: ${esc(a.warning)}. Approving will not send it.</small>`:''}
+    ${a.preview?`<details><summary>Show the text</summary><pre>${esc(a.preview)}${a.cut?'\n…':''}</pre></details>`:''}</div>
+    <div class="acts"><button class="ok" data-id="${esc(a.id)}" data-d="ok">Approve</button><button data-id="${esc(a.id)}" data-d="edit">Change</button><button class="drop" data-id="${esc(a.id)}" data-d="drop">Drop</button></div></div>`).join('')
     :'<p class="empty">Nothing waiting for you. That\'s good.</p>';
-  el('team').innerHTML=s.team.length?s.team.map(t=>`<div class="row"><span><span class="dot ${t.ago_min<60?'g':t.ago_min<240?'y':'r'}"></span>${esc(t.agent)}</span><span>${t.ago_min<60?t.ago_min+' min ago':Math.round(t.ago_min/60)+' h ago'} · ${esc(t.note)}</span></div>`).join('')
+  el('decidedBox').hidden=!by('decided').length;
+  el('decided').innerHTML=by('decided').map(a=>`<div class="item"><div class="t">${head(a)}
+    <small class="${a.warning?'w':''}">${esc(a.status[0].toUpperCase()+a.status.slice(1))}${a.note?' · “'+esc(a.note)+'”':''}</small></div>
+    <div class="acts"><button data-id="${esc(a.id)}" data-d="undo">Undo</button></div></div>`).join('');
+  el('closedBox').hidden=!by('consumed').length;
+  el('closed').innerHTML=by('consumed').map(a=>`<div class="row"><span>${esc(a.title||a.id)}</span><span>${esc(a.status)}${a.result?' · '+esc(a.result):''}</span></div>`).join('');
+  el('autonomy').innerHTML=s.autonomy.map(a=>`<div class="row"><span>${esc(a.label||a.action)}</span><span>${esc(a.name)}${a.locked?' · locked'+(a.max_level>a.level?', at most “'+esc(['forbidden','approval required','act, report afterwards','free'][a.max_level])+'”':''):''}</span></div>`).join('');
+  el('team').innerHTML=s.team.length?s.team.map(t=>`<div class="row"><span><span class="dot ${t.state==='failed'?'r':t.state==='working'?(t.ago_min<60?'y':'r'):'g'}"></span>${esc(t.agent)}</span><span>${t.ago_min<60?t.ago_min+' min ago':Math.round(t.ago_min/60)+' h ago'} · ${esc(t.note)}</span></div>`).join('')
     :'<p class="empty">No one has checked in yet. After the first task you\'ll see who is doing what.</p>';
   el('connectors').innerHTML=s.connectors.map(c=>`<div class="row"><span><span class="dot ${c.ok===null?'n':c.ok?'g':'r'}"></span>${esc(c.name)}</span><span>${c.ok===null?'no key':c.ok?'connected':'missing key'}</span></div>`).join('');
   el('log').innerHTML=s.log.length?s.log.map(esc).join('<br>'):'<span class="empty">No decisions yet.</span>';
 }
-async function dec(id,d){let note='';if(d==='edit'){note=prompt('What should change?')||'';if(!note)return;}
-  await fetch('/api/approve/'+encodeURIComponent(id),{method:'POST',headers:H,body:JSON.stringify({decision:d,note})});load();}
+async function dec(id,d){let note='';
+  if(d==='edit'){note=(prompt('What should change?')||'').trim();if(!note)return;}
+  if(d==='drop'){note=(prompt('Why are you dropping it? One sentence. The team reads it and learns from it.')||'').trim();if(!note)return;}
+  const r=await fetch(d==='undo'?'/api/undo/'+encodeURIComponent(id):'/api/approve/'+encodeURIComponent(id),{method:'POST',headers:H,body:JSON.stringify({decision:d,note})});
+  if(!r.ok)alert((await r.json().catch(()=>({}))).detail||'That did not work ('+r.status+').');
+  load();}
+document.addEventListener('click',e=>{const b=e.target.closest('button[data-id]');if(b)dec(b.dataset.id,b.dataset.d);});
 load();setInterval(load,60000);
 </script>
 </body>

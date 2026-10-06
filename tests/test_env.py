@@ -103,6 +103,7 @@ STUBS = {  # stand-ins so jinnee.py starts without the Telegram library, the net
         "class ContextTypes: DEFAULT_TYPE = object\n"
         "class _Jobs:\n"
         "    def run_daily(self, callback, time): print('STUB_DAILY ' + callback.__name__ + ' ' + str(time))\n"
+        "    def run_repeating(self, callback, interval, first=None): print('STUB_REPEAT ' + callback.__name__ + ' ' + str(interval))\n"
         "class _App:\n"
         "    job_queue = _Jobs()\n"
         "    def add_handler(self, h): pass\n"
@@ -113,7 +114,8 @@ STUBS = {  # stand-ins so jinnee.py starts without the Telegram library, the net
     "requests.py": "def get(*a, **k): raise RuntimeError('no network in tests')\n",
 }
 OURS = ("JINNEE_NAME", "JINNEE_LANG", "PACKS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_ID", "REGISTRY_URL",
-        "DASHBOARD_PASSWORD", "DASHBOARD_HOST", "DASHBOARD_PORT", "DASHBOARD_TRUST_PEER")
+        "DASHBOARD_PASSWORD", "DASHBOARD_HOST", "DASHBOARD_PORT", "DASHBOARD_TRUST_PEER",
+        "QUIET_HOURS", "REMIND_AFTER_DAYS", "STUCK_AFTER_HOURS", "UNDO_SECONDS", "JINNEE_TZ", "JINNEE_LOG_DIR")
 
 
 class RepoCopy(unittest.TestCase):

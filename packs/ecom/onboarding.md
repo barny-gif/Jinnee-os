@@ -13,4 +13,4 @@ Asks only for what the general round didn't cover. Output: appended to `brain/co
 
 ## 3. Goals for the next 30 days
 - Launch, campaign, clearing stock…?
-- Ad budget: is there one, and who controls it? (spending is always level 0 for agents)
+- Ad budget: is there one, and who controls it? (spending is always level 0 for agents, and locked there)

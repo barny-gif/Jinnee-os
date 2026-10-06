@@ -1,8 +1,8 @@
 {
-  "updated": "2026-10-05",
+  "updated": "2026-10-06",
   "items": [
-    { "kind": "pack", "id": "general", "version": "0.1.0", "url": "https://jinnee-os.com/registry/packs/general-0.1.0.zip", "changelog": "First release: Office + Watcher." },
-    { "kind": "pack", "id": "ecom", "version": "0.1.0", "url": "https://jinnee-os.com/registry/packs/ecom-0.1.0.zip", "changelog": "First release: Marketing, Social, Ops, Forge." },
+    { "kind": "pack", "id": "general", "version": "0.2.0", "url": "https://jinnee-os.com/registry/packs/general-0.2.0.zip", "changelog": "Autonomy defaults carry locks: money and customer actions are locked with a maximum level. Needs core with core/autonomy.py; an existing brain/autonomy_config.json keeps its levels." },
+    { "kind": "pack", "id": "ecom", "version": "0.2.0", "url": "https://jinnee-os.com/registry/packs/ecom-0.2.0.zip", "changelog": "Autonomy defaults carry locks; new actions issue_refund (forbidden) and change_live_shop (approval, locked). Agents ask through the approval queue." },
     { "kind": "connector", "id": "billingo", "version": "0.1.0", "url": "https://jinnee-os.com/registry/connectors/billingo-0.1.0.zip", "changelog": "" },
     { "kind": "connector", "id": "szamlazz", "version": "0.1.0", "url": "https://jinnee-os.com/registry/connectors/szamlazz-0.1.0.zip", "changelog": "" },
     { "kind": "connector", "id": "gmail", "version": "0.1.0", "url": "https://jinnee-os.com/registry/connectors/gmail-0.1.0.zip", "changelog": "" },

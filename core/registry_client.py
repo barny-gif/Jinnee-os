@@ -10,6 +10,11 @@ def installed_versions():
         d = json.loads(c.read_text(encoding="utf-8")); out[f"connector:{d['id']}"] = d["version"]
     return out
 
+def newer(offered: str, have: str) -> bool:
+    """Semver-ish compare. Something that is not a version number is never offered as an update."""
+    try: return tuple(int(x) for x in offered.split(".")) > tuple(int(x) for x in have.split("."))
+    except (ValueError, AttributeError): return False
+
 def check():
     url = os.getenv("REGISTRY_URL", "")
     if not url: return []
@@ -20,7 +25,7 @@ def check():
     have = installed_versions(); updates = []
     for item in idx.get("items", []):
         key = f"{item['kind']}:{item['id']}"
-        if key in have and item["version"] != have[key]:
+        if key in have and newer(item["version"], have[key]):
             updates.append({"key": key, "from": have[key], "to": item["version"],
                             "changelog": item.get("changelog", ""), "url": item["url"]})
     return updates
