@@ -1,4 +1,4 @@
-"""Jinnee dashboard – one page. Shows the brain/ files; the approval buttons write approvals.json."""
+"""Jinnee dashboard – one page. Shows the brain/ files; the approval buttons record the owner's decision through core/approvals.py."""
 import os, sys, json, pathlib, time, hmac, hashlib, secrets, ipaddress, asyncio
 from urllib.parse import parse_qs, urlsplit
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "core"))
@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
+import approvals, autonomy, heartbeat
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BRAIN = ROOT / "brain"
@@ -17,7 +18,8 @@ NAME = os.getenv("JINNEE_NAME", "Jinnee")
 COOKIE, SESSION_TTL = "jinnee_dash", 30 * 86400
 SECRET = secrets.token_bytes(32)  # per process: a restart signs everyone out
 PROXY_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "via", "cf-connecting-ip")
-DECISIONS = ("ok", "edit", "drop")
+DECISIONS = approvals.DECISIONS
+CLOSED_SHOWN = 10
 
 app = FastAPI(title="Jinnee dashboard")
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
@@ -100,11 +102,15 @@ def logout(req: Request):
     r.delete_cookie(COOKIE, path="/")
     return r
 
+def book():
+    return approvals.Book(BRAIN)
+
 @app.get("/api/state")
 def state(req: Request):
     guard(req)
-    hb = rd("heartbeat.json", {}); now = int(time.time())
-    team = [{"agent": a, "ago_min": (now - v.get("ts", 0)) // 60, "note": v.get("note", "")} for a, v in hb.items()]
+    now = int(time.time())
+    team = [{"agent": a, "ago_min": (now - v.get("ts", 0)) // 60, "note": v.get("note", ""), "state": v.get("state", "ok")}
+            for a, v in heartbeat.load(BRAIN).items()]
     log = [l[2:] for l in rd("decisions.log.md", "").splitlines() if l.startswith("- ")][-30:]
     connectors = []
     for c in sorted((ROOT / "connectors").glob("*.manifest.json")):
@@ -113,25 +119,41 @@ def state(req: Request):
         envs = [envs] if isinstance(envs, str) else envs
         ok = all(os.getenv(e) for e in envs) if envs else None
         connectors.append({"id": d["id"], "name": d["name"], "category": d["category"], "ok": ok})
-    return {"name": NAME, "auth": bool(PASSWORD), "brief": rd("brief_today.md", ""), "approvals": rd("approvals.json", []),
+    bk = book()
+    items, problem = bk.read()
+    closed = sorted((i for i in items if i["state"] == "consumed"), key=lambda i: i["consumed_at"] or 0, reverse=True)[:CLOSED_SHOWN]
+    shown = [{**bk.view(i), "status": bk.status(i)} for i in items if i["state"] != "consumed"] + \
+            [{**bk.view(i), "status": bk.status(i), "preview": ""} for i in closed]
+    cfg = autonomy.Config(BRAIN)
+    table, levels_problem = cfg.read()
+    levels = [{"action": a, "label": e["label"], "level": autonomy.effective(e, a), "name": autonomy.NAMES[autonomy.effective(e, a)],
+               "locked": e["locked"], "max_level": e["max_level"]} for a, e in sorted(table.items())]
+    return {"name": NAME, "auth": bool(PASSWORD), "brief": rd("brief_today.md", ""), "approvals": shown,
+            "problems": [p for p in (problem, levels_problem) if p], "autonomy": levels,
             "team": team, "connectors": connectors, "log": log[::-1]}
+
+def refuse(e):
+    """The queue said no: 404 unknown item, 409 the item has moved on, 400 the request itself is incomplete."""
+    code = 404 if isinstance(e, approvals.Missing) else 409 if isinstance(e, approvals.Conflict) else 400
+    raise HTTPException(code, str(e)[:1].upper() + str(e)[1:])
 
 @app.post("/api/approve/{item_id}")
 async def approve(item_id: str, req: Request):
     guard(req)
-    try: body = await req.json()  # {"decision": "ok"|"edit"|"drop", "note": "..."}
+    try: body = await req.json()  # {"decision": "ok"|"edit"|"drop", "note": "..."}; a note is required for edit and drop
     except ValueError: body = None
     if not isinstance(body, dict) or body.get("decision") not in DECISIONS:
         raise HTTPException(400, 'Expected {"decision": "ok"|"edit"|"drop", "note": "..."}')
-    decision, note = body["decision"], " ".join(str(body.get("note") or "").split())  # one log line per decision
-    items = rd("approvals.json", [])
-    hits = [it for it in items if it.get("id") == item_id]
-    if not hits: raise HTTPException(404, "No such approval item")
-    for it in hits:
-        it.update(decision=decision, note=note, decided_at=int(time.time()))
-    (BRAIN / "approvals.json").write_text(json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8")
-    with (BRAIN / "decisions.log.md").open("a", encoding="utf-8") as f:
-        f.write(f"- {time.strftime('%Y-%m-%d')} dashboard: {item_id} → {decision} {note}\n")
+    try: it = book().decide(item_id, body["decision"], str(body.get("note") or ""), by="dashboard")
+    except approvals.Refused as e: refuse(e)
+    return JSONResponse({"ok": True, "status": approvals.Book.status(it), "sendable": it["sendable"]})
+
+@app.post("/api/undo/{item_id}")
+async def undo(item_id: str, req: Request):
+    """Back to pending. Works until the team has picked the decision up; after that the answer is 409."""
+    guard(req)
+    try: book().undo(item_id, by="dashboard")
+    except approvals.Refused as e: refuse(e)
     return JSONResponse({"ok": True})
 
 if __name__ == "__main__":

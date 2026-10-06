@@ -181,5 +181,112 @@ class WithPassword(Base):
         self.assertEqual(len(self.log().splitlines()), 1)
 
 
+class Approvals(Base):
+    """What the buttons do to an item. Access is covered above; here the request comes from the machine itself."""
+    ORIGIN = {"origin": LOCAL}
+
+    def setUp(self):
+        super().setUp()
+        self.brain = self.dash.BRAIN
+        self.c = self.client(headers=self.ORIGIN)
+        items = [{"id": "a1", "agent": "office", "action": "send_customer_email", "title": "Reply", "text": "Dear Anna, thank you."},
+                 {"id": "a2", "agent": "social", "action": "publish_social_post", "title": "Post", "text": "DRAFT: write me"},
+                 {"id": "a3", "agent": "social", "action": "publish_social_post", "title": "Empty post", "text": " "}]
+        (self.brain / "approvals.json").write_text(json.dumps(items))
+
+    def post(self, item_id, decision, note=None):
+        return self.c.post(f"/api/approve/{item_id}", json={"decision": decision, "note": note})
+
+    def shown(self):
+        return {a["id"]: a for a in self.c.get("/api/state").json()["approvals"]}
+
+    def test_state_shows_the_three_stages_and_the_text(self):
+        self.post("a1", "ok")
+        from approvals import Book
+        self.assertEqual(Book(self.brain).consume("a1").word, "GO")
+        self.post("a2", "edit", "finish it first")
+        got = self.shown()
+        self.assertEqual({i: a["state"] for i, a in got.items()}, {"a1": "consumed", "a2": "decided", "a3": "pending"})
+        self.assertEqual(got["a1"]["status"], "being carried out")
+        self.assertIn("sent back for a change", got["a2"]["status"])
+        self.assertEqual((got["a3"]["status"], got["a3"]["preview"]), ("waiting for the owner", " "))
+        self.assertIn("empty", got["a3"]["warning"])  # visible before the owner decides
+        self.assertEqual(got["a1"]["label"], "Send an email to a customer")
+        self.assertIsNone(got["a2"]["text"])  # the page gets the preview, cut to size
+
+    def test_decide_once_then_undo(self):
+        self.assertEqual(self.post("a1", "ok").json(), {"ok": True, "status": "approved, not picked up yet", "sendable": True})
+        for again in ("ok", "drop", "edit"):
+            r = self.post("a1", again, "changed my mind")
+            self.assertEqual(r.status_code, 409, again)
+            self.assertIn("already approved", r.json()["detail"])
+        self.assertEqual(self.c.post("/api/undo/a1").status_code, 200)
+        self.assertEqual(self.shown()["a1"]["state"], "pending")
+        self.assertEqual(self.c.post("/api/undo/a1").status_code, 409)  # nothing left to undo
+        self.assertEqual(self.post("a1", "drop", "not needed").status_code, 200)
+        self.assertEqual(self.c.post("/api/undo/nope").status_code, 404)
+        self.assertEqual(self.log().count("a1 → "), 3)  # ok, undo, drop
+
+    def test_undo_is_over_once_the_team_picked_it_up(self):
+        from approvals import Book
+        self.post("a1", "ok")
+        self.assertEqual(Book(self.brain).consume("a1").word, "GO")
+        r = self.c.post("/api/undo/a1")
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("can no longer be undone", r.json()["detail"])
+        self.assertEqual(self.post("a1", "drop", "stop").status_code, 409)
+        self.assertEqual(self.shown()["a1"]["state"], "consumed")
+
+    def test_undo_follows_the_same_access_rules(self):
+        self.post("a1", "ok")
+        self.assertEqual(self.client().post("/api/undo/a1").status_code, 403)  # no origin: cross-site
+        self.assertEqual(self.client(peer=LAN, base="http://203.0.113.5:8080").post("/api/undo/a1", headers={"origin": "http://203.0.113.5:8080"}).status_code, 403)
+        self.assertEqual(self.shown()["a1"]["state"], "decided")
+
+    def test_drop_and_change_need_words(self):
+        for decision in ("drop", "edit"):
+            for note in (None, "", "   "):
+                r = self.post("a1", decision, note)
+                self.assertEqual(r.status_code, 400, (decision, note))
+        self.assertIn("reason", self.post("a1", "drop").json()["detail"])
+        self.assertEqual(self.shown()["a1"]["state"], "pending")
+        self.assertEqual(self.post("a1", "drop", "we do not email on Sundays").status_code, 200)
+        self.assertIn("we do not email on Sundays [approval a1]", (self.brain / "lessons.md").read_text(encoding="utf-8"))
+
+    def test_empty_or_draft_text_is_approved_but_not_sendable(self):
+        for item_id, why in (("a2", "draft marker"), ("a3", "empty")):
+            r = self.post(item_id, "ok")
+            self.assertEqual((r.status_code, r.json()["sendable"]), (200, False))
+            self.assertIn("approved, but not sendable", r.json()["status"])
+            self.assertIn(why, self.shown()[item_id]["warning"])  # and the owner keeps seeing why
+
+    def test_levels_are_shown_and_cannot_be_written(self):
+        got = {a["action"]: a for a in self.c.get("/api/state").json()["autonomy"]}
+        self.assertEqual((got["spend_money"]["level"], got["spend_money"]["locked"], got["spend_money"]["name"]), (0, True, "forbidden"))
+        self.assertEqual((got["raise_autonomy"]["level"], got["raise_autonomy"]["locked"]), (1, True))
+        for method, path in (("post", "/api/autonomy"), ("put", "/api/autonomy/spend_money"), ("post", "/api/state"),
+                             ("patch", "/api/autonomy/spend_money")):
+            self.assertIn(getattr(self.c, method)(path, json={"level": 3}).status_code, (404, 405), path)
+        self.assertFalse((self.brain / "autonomy_config.json").exists())
+
+    def test_approving_a_forged_raise_changes_no_level(self):
+        """The only thing the dashboard can do about levels is approve a request; the lock is checked when it is applied."""
+        import autonomy
+        (self.brain / "approvals.json").write_text(json.dumps([{"id": "r1", "agent": "ops", "action": "raise_autonomy", "title": "spend",
+                                                                "payload": {"target": "spend_money", "to": 3}}]))
+        self.assertEqual(self.post("r1", "ok").status_code, 200)
+        cfg = autonomy.Config(self.brain)
+        with self.assertRaises(autonomy.Refused): cfg.apply("r1")
+        self.assertEqual(cfg.allowed("spend_money")[:2], (0, True))
+
+    def test_broken_files_are_reported_not_fatal(self):
+        (self.brain / "approvals.json").write_text('[{"id": "a1"')
+        (self.brain / "autonomy_config.json").write_text("{")
+        (self.brain / "heartbeat.json").write_text("nope")
+        got = self.c.get("/api/state").json()
+        self.assertEqual((got["approvals"], got["team"], len(got["problems"])), ([], [], 2))
+        self.assertEqual(self.post("a1", "ok").status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

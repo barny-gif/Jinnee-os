@@ -91,6 +91,8 @@ class Book:
                     it.update(state="consumed", outcome="closed", result=OLD, consumed_at=r.get("decided_at") or now)
                 else:
                     it.update(state="pending", decision=None)
+            if not isinstance(r.get("outbound"), bool):  # not said: content is taken to be what goes out
+                it["outbound"] = isinstance(it["text"], str) or bool(it["file"])
             if not it["created_at"]: it["created_at"] = now
             out.append(it)
         return out
