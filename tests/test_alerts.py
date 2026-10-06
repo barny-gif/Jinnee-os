@@ -454,6 +454,15 @@ class Ticking(Bridge):
         self.assertEqual(got[3]["sent"], [[OWNER, "agent reply"]])
         self.assertEqual(got[4], {"replies": [], "ran": [], "sent": []})
 
+    def test_a_drop_is_closed_without_an_agent_run(self):
+        a, b = self.add("One"), self.add("Two")
+        got = self.drive([["tick", 0, ""], ["msg", OWNER, f"/drop {a} not our tone"], ["msg", OWNER, f"/change {b} shorter"], ["tick", 0, ""]])
+        self.assertEqual(len(got[3]["ran"]), 1)
+        self.assertNotIn(f"[{a}]", got[3]["ran"][0]); self.assertIn(f"[{b}]", got[3]["ran"][0])
+        it = self.book.get(a)
+        self.assertEqual((it["state"], it["outcome"]), ("consumed", "dropped"))
+        self.assertEqual(self.book.get(b)["state"], "decided")  # the lead takes this one itself (the stand-in agent did nothing)
+
     def test_a_new_process_does_not_send_again(self):
         self.add()
         self.assertEqual(len(self.drive([["tick", 0, ""]])[0]["sent"]), 1)

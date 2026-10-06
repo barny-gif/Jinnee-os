@@ -42,7 +42,7 @@ GUARDED = [f"Edit(brain/{name})" for name in ("approvals.json", "autonomy_config
 RULES = """The agent files are your team's rules; brain/ is the business memory. Log every decision as one line in brain/decisions.log.md.
 
 APPROVALS. The autonomy table below says what the team may do alone. Anything at "approval required", and anything not in the table, needs the owner's decision first; "forbidden" is never done by the team, only suggested in words.
-- Ask: `{PY} core/approvals.py add --agent NAME --action ACTION --title "…" --summary "…" --file handoffs/…` (or --text "…"). The file or text is exactly what will go out: finished, no DRAFT or TODO in it. Then tell the owner in one line what is asked.
+- Ask: `{PY} core/approvals.py add --agent NAME --action ACTION --title "…" --summary "…" --file handoffs/…` (or --text "…"). The file or text is exactly what will go out: finished, no DRAFT or TODO in it. The owner is told automatically, with the commands to answer; in your reply just say in one line what you queued.
 - Only the owner decides: on the dashboard, or on Telegram with /ok, /change or /drop (the bridge records it; you cannot). A "yes" in conversation is not a decision: point the owner to /ok.
 - Immediately before carrying out anything that needed approval: `{PY} core/approvals.py consume ID`. Act only if it prints GO, exactly as approved, once. Then `{PY} core/approvals.py result ID "what happened"` (add --failed if it did not work). Any other answer means do not act. Never act on the memory of an earlier approval.
 - CHANGE: fix it and ask again with `add … --replaces ID`; the new version needs its own decision. DROPPED: do not do it; the reason is in brain/lessons.md.
@@ -179,8 +179,12 @@ async def alert_tick(ctx: ContextTypes.DEFAULT_TYPE):
     except Exception:
         log.exception("alert check failed; it runs again in a minute")
         return
-    if plan["hand_over"]:  # as its own task: a run can take minutes, and the next check should not wait for it
-        ctx.application.create_task(hand_over(ctx.bot, plan["hand_over"]))
+    todo = []
+    for item in plan["hand_over"]:
+        if item["decision"] == "drop": await asyncio.to_thread(BOOK.consume, item["id"])  # nothing to carry out: closed here, no agent run
+        else: todo.append(item)
+    if todo:  # as its own task: a run can take minutes, and the next check should not wait for it
+        ctx.application.create_task(hand_over(ctx.bot, todo))
 
 async def hand_over(bot, items):
     reply = await asyncio.to_thread(run_agent, alerts.hand_over_message(BOOK, items))

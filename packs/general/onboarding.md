@@ -18,7 +18,7 @@ At most 3 questions at a time, conversational, never a form. Output: `brain/comp
 - What matters about them: prices, promotions, new services, posting?
 
 ## 5. Limits and rhythm
-- What should I never spend on, and never do without asking?
+- What should I never spend on, and never do without asking? (money, prices, refunds, customer emails, invoices and posts are already locked to "ask first" or stricter)
 - When and where should the daily brief arrive? (default: 08:00, Telegram, 5 lines)
 
 If a vertical pack (ecom, photographer) is installed, its onboarding follows and asks only for the extras.

@@ -26,4 +26,5 @@ claude login
 Start-Process python -ArgumentList "core\jinnee.py" -WindowStyle Hidden
 Start-Process python -ArgumentList "dashboard\app.py" -WindowStyle Hidden
 Write-Host "`nDone. Message $name on Telegram and open: http://localhost:8080" -ForegroundColor Green
-Write-Host "Autostart on login: Task Scheduler → python $dir\core\jinnee.py"
+Write-Host "Autostart on login: Task Scheduler → python $dir\core\jinnee.py (and one for dashboard\app.py)"
+Write-Host "Running this installer again starts a second copy: close the running python processes in Task Manager first."

@@ -15,7 +15,7 @@ jinnee-os.com/registry/
 1. The lead reads `index.json` once a day.
 2. If an installed pack/connector has a newer version: one line in the morning brief – "Billingo connector 0.2 available: X fixed. Update?"
 3. Owner says yes → Forge downloads it, **keeps the old one as `.bak`**, tests it on the owner's account with one read operation, reports. On error: automatic rollback.
-4. Never updates without asking – updating is level 1.
+4. Never updates without asking – updating (`update_from_registry`) is level 1 and locked there.
 
 ## Swapping a connector (e.g. Billingo → Számlázz.hu)
 The owner says it on the website or to the lead: "switching to Számlázz.hu".
@@ -33,4 +33,4 @@ The other agents **notice nothing**, because they call the same operation set.
 - Login, licence keys, payments: **v2**. In v1 the registry is public; revenue is setup + monthly plan.
 
 ## Versioning
-Semver. Pack minor = new agent or new required connector; patch = persona fix. Connector minor = new operation; major = auth change (always goes to the owner).
+Semver. Pack minor = new agent, new required connector, or a change in the shape of `pack.json`; patch = persona fix. Connector minor = new operation; major = auth change (always goes to the owner).

@@ -1,5 +1,6 @@
 """Autonomy levels: the gate, locks, and files from before locks existed. Run: python -m unittest discover tests"""
 import json, pathlib, sys, tempfile, unittest
+import unittest.mock
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "core"))
@@ -225,6 +226,28 @@ class Raising(Brain):
         r = run("apply", item_id)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(self.file()["issue_invoice"]["level"], 2)
+
+
+class Registry(unittest.TestCase):
+    def test_only_a_newer_version_is_an_update(self):
+        """The repo's packs can be ahead of what the registry serves; an older registry entry is not an 'update'."""
+        import types
+        fake = types.ModuleType("requests")
+        index = {"items": [{"kind": "pack", "id": "general", "version": "0.1.0", "url": "u"},
+                           {"kind": "pack", "id": "ecom", "version": "9.0.0", "url": "u", "changelog": "c"},
+                           {"kind": "connector", "id": "gls", "version": "latest", "url": "u"}]}
+        fake.get = lambda *a, **k: types.SimpleNamespace(json=lambda: index)
+        with unittest.mock.patch.dict(sys.modules, {"requests": fake}), unittest.mock.patch.dict("os.environ", {"REGISTRY_URL": "http://x"}):
+            sys.modules.pop("registry_client", None)
+            import registry_client
+            self.assertEqual([(u["key"], u["to"]) for u in registry_client.check()], [("pack:ecom", "9.0.0")])
+        sys.modules.pop("registry_client", None)
+
+    def test_registry_and_packs_agree(self):
+        index = {(i["kind"], i["id"]): i["version"] for i in json.loads((REPO / "registry" / "index.json").read_text())["items"]}
+        for pack in ("general", "ecom"):
+            self.assertEqual(index[("pack", pack)], json.loads((REPO / "packs" / pack / "pack.json").read_text())["version"])
+            self.assertEqual(index[("pack", pack)], "0.2.0")
 
 
 if __name__ == "__main__":

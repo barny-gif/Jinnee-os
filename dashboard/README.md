@@ -1,10 +1,17 @@
 # Dashboard
 
-One page, five parts: Today · Awaiting approval · Team · Connections · Decision log.
+One page: Today · Awaiting your decision · Decided, not carried out yet · Recently closed · Team · Connections · What the team may do · Decision log.
 The owner works on Telegram; this exists so they can *see*.
 
 - Runs at `http://localhost:8080` (in Docker it's bound to the VPS only; Caddy exposes it).
-- The buttons write `brain/approvals.json`; Jinnee reads and executes on its next turn.
+- **Approve / Change / Drop** record your decision (through `core/approvals.py`). Change asks what to change; Drop asks why, and the reason
+  is saved in `brain/lessons.md` for the team. The team picks a decision up about two minutes later, without you writing on Telegram.
+- **Undo** is there until the decision has been picked up. After that the item is closed and shows what came of it.
+- One decision per item: a second click, another tab or a repeated request gets "already approved" (HTTP 409) and changes nothing.
+- "Not sendable as it is" means the text is empty or still marked as a draft. You can approve it, but it will not go out; the team fixes it
+  and asks again.
+- "What the team may do" shows the autonomy levels and which are locked. It is read only: there is nothing on the dashboard that changes a
+  level. A request to raise one arrives as an ordinary item; a lock can only be lifted by editing `brain/autonomy_config.json` yourself.
 
 ## Access
 - **No password** (`DASHBOARD_PASSWORD` empty): this machine only. The dashboard listens on `127.0.0.1` and refuses anything
