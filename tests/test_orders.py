@@ -52,3 +52,34 @@ class Panel(unittest.TestCase):
         self.assertIsNone(out["summary"]["no_invoice"]); self.assertTrue(out["errors"])
 
 if __name__ == "__main__": unittest.main()
+
+
+class Flow(unittest.TestCase):
+    def order(self, **kw):
+        o = {"name": "#1042", "id": 1, "currency": "HUF", "taxes_included": True, "gateways": ["Bank deposit"], "email": "a@b.hu", "phone": "",
+             "billing": {"name": "Teszt Elek", "zip": "9970", "city": "Szentgotthárd", "address1": "Fő u. 1", "country_code": "HU"}, "shipping": {},
+             "lines": [{"title": "Fa puzzle", "sku": "P1", "qty": 2, "price": "5000", "discount": "1000"}], "shipping_lines": [{"title": "GLS", "price": "1490"}]}
+        o.update(kw); return o
+
+    def run_flow(self, order, existing=()):
+        import order_flow
+        shop = mock.Mock(order_private=lambda i: order)
+        bill = mock.Mock(list_invoices=lambda days: list(existing), create_partner=mock.Mock(return_value=7), block_id=lambda: 3, post_document=mock.Mock(return_value={"id": 99, "type": "draft"}))
+        return order_flow.invoice_draft("1", shop, bill), bill
+
+    def test_draft_body(self):
+        out, bill = self.run_flow(self.order())
+        body = bill.post_document.call_args.args[0]
+        self.assertEqual(out["draft_id"], 99); self.assertEqual(body["type"], "draft"); self.assertEqual(body["comment"], "Shopify #1042")
+        self.assertEqual(body["items"][0]["unit_price"], 4500.0); self.assertEqual(body["items"][1]["unit_price"], 1490.0)
+        self.assertNotIn("Teszt", json.dumps(out)); self.assertEqual(body["payment_method"], "bankcard")
+    def test_cod(self):
+        _, bill = self.run_flow(self.order(gateways=["Cash on Delivery (COD)"]))
+        self.assertEqual(bill.post_document.call_args.args[0]["payment_method"], "cash_on_delivery")
+    def test_no_second_invoice(self):
+        out, bill = self.run_flow(self.order(), existing=[{"number": "A-1", "id": 1, "comment": "Shopify #1042"}])
+        self.assertIn("skipped", out); bill.post_document.assert_not_called()
+    def test_incomplete_address(self):
+        with self.assertRaises(ConnectorError): self.run_flow(self.order(billing={"name": "X"}))
+    def test_only_drafts(self):
+        with self.assertRaises(ConnectorError): load("billingo").post_document({"type": "invoice"})

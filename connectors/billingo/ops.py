@@ -44,5 +44,20 @@ def create_draft(payload_file):
     d = _call("POST", "/documents", body=body).json()
     return {"id": d.get("id"), "type": d.get("type")}
 
+def block_id():
+    """BILLINGO_BLOCK_ID if set, else the first document block (the numbering series) of the account."""
+    if os.getenv("BILLINGO_BLOCK_ID", "").strip(): return int(os.environ["BILLINGO_BLOCK_ID"])
+    data = _call("GET", "/document-blocks").json().get("data", [])
+    if not data: raise ConnectorError("Billingo: no document block (számlatömb) found - create one in Billingo first")
+    return data[0]["id"]
+
+def create_partner(body):
+    """Customer record from order_flow only. Same name+address twice makes a duplicate in Billingo; accepted for now."""
+    return _call("POST", "/partners", body=body).json()["id"]
+
+def post_document(body):
+    if body.get("type") != "draft": raise ConnectorError("only drafts are created here; issuing needs an approved issue_invoice")
+    return _call("POST", "/documents", body=body).json()
+
 OPS = {"list": list_invoices, "status": status, "get_pdf": get_pdf, "create_draft": create_draft}
 if __name__ == "__main__": sys.exit(run_cli(OPS))
