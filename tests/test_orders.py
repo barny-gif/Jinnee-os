@@ -72,7 +72,7 @@ class Flow(unittest.TestCase):
         body = bill.post_document.call_args.args[0]
         self.assertEqual(out["draft_id"], 99); self.assertEqual(body["type"], "draft"); self.assertEqual(body["comment"], "Shopify #1042")
         self.assertEqual(body["items"][0]["unit_price"], 4500.0); self.assertEqual(body["items"][1]["unit_price"], 1490.0)
-        self.assertNotIn("Teszt", json.dumps(out)); self.assertEqual(body["payment_method"], "bankcard")
+        self.assertNotIn("Teszt", json.dumps(out)); self.assertEqual(body["payment_method"], "wire_transfer")
     def test_cod(self):
         _, bill = self.run_flow(self.order(gateways=["Cash on Delivery (COD)"]))
         self.assertEqual(bill.post_document.call_args.args[0]["payment_method"], "cash_on_delivery")
@@ -100,3 +100,36 @@ class ClientCredentials(unittest.TestCase):
         os.environ.update(SHOPIFY_STORE="demo", SHOPIFY_ADMIN_TOKEN="", SHOPIFY_CLIENT_ID="id", SHOPIFY_CLIENT_SECRET="bad")
         with mock.patch("requests.post", return_value=Resp({}, 400)):
             with self.assertRaises(ConnectorError): load("shopify").list_orders()
+
+
+class Gls(unittest.TestCase):
+    def setUp(self):
+        os.environ.update(GLS_CLIENT_NUMBER="123", GLS_USERNAME="u", GLS_PASSWORD="p", GLS_PICKUP_NAME="Monti", GLS_PICKUP_STREET="Fő u.",
+                          GLS_PICKUP_HOUSE="1", GLS_PICKUP_CITY="Szentgotthárd", GLS_PICKUP_ZIP="9970", GLS_PICKUP_PHONE="06301234567")
+    def order(self, **kw):
+        o = Flow().order(); o["shipping"] = {"name": "Teszt Elek", "zip": "1011", "city": "Budapest", "address1": "Kossuth Lajos utca 12/B", "country_code": "HU"}
+        o["phone"] = "06 20 123 4567"; o.update(kw); return o
+    def test_street_split_and_phone(self):
+        import order_flow
+        self.assertEqual(order_flow.split_street("Kossuth Lajos utca 12/B"), ("Kossuth Lajos utca", "12/B"))
+        self.assertEqual(order_flow.split_street("Fő u. 1"), ("Fő u.", "1"))
+        self.assertEqual(order_flow.phone("06 20 123 4567"), "+36201234567")
+        self.assertEqual(order_flow.phone("+43 660 1234"), "+436601234")
+    def test_dry_run_sends_nothing_and_cod(self):
+        import order_flow
+        gls = mock.Mock(client_number=lambda: 123, prepare_labels=mock.Mock(return_value=[{"parcel_id": 1}]))
+        shop = mock.Mock(order_private=lambda i: self.order(gateways=["Cash on Delivery (COD)"]))
+        out = order_flow.parcel_prepare("1", "no", shop, gls)
+        self.assertTrue(out["dry_run"]); gls.prepare_labels.assert_not_called(); self.assertEqual(out["cod_amount"], 9000 + 1490)  # 2 x 5000 - 1000 discount + shipping
+        self.assertNotIn("Teszt", json.dumps(out))
+        out = order_flow.parcel_prepare("1", "yes", shop, gls)
+        sent = gls.prepare_labels.call_args.args[0][0]
+        self.assertEqual(sent["DeliveryAddress"]["HouseNumber"], "12/B"); self.assertEqual(sent["ClientReference"], "#1042"); self.assertGreater(sent["CODAmount"], 0)
+        self.assertNotIn("Teszt", json.dumps(out))
+    def test_gls_errors_surface(self):
+        m = load("gls")
+        with mock.patch("requests.post", return_value=Resp({"PrepareLabelsError": [{"ErrorCode": 9, "ErrorDescription": "bad zip"}]})):
+            with self.assertRaises(ConnectorError): m.prepare_labels([{}])
+    def test_hash_password(self):
+        import hashlib; m = load("gls")
+        self.assertEqual(m._auth()["Password"], list(hashlib.sha512(b"p").digest()))
