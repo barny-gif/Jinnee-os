@@ -104,6 +104,8 @@ class ClientCredentials(unittest.TestCase):
 
 class Gls(unittest.TestCase):
     def setUp(self):
+        import order_flow, tempfile
+        order_flow.UPLOADED = pathlib.Path(tempfile.mkdtemp()) / "up.json"  # never touch the real brain/
         os.environ.update(GLS_CLIENT_NUMBER="123", GLS_USERNAME="u", GLS_PASSWORD="p", GLS_PICKUP_NAME="Monti", GLS_PICKUP_STREET="Fő u.",
                           GLS_PICKUP_HOUSE="1", GLS_PICKUP_CITY="Szentgotthárd", GLS_PICKUP_ZIP="9970", GLS_PICKUP_PHONE="06301234567")
     def order(self, **kw):

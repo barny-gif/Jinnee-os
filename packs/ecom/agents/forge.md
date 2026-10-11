@@ -30,3 +30,4 @@ The owner's (or installer's) technical partner. Shop theme, pages, connectors, s
 - Test every connector with fake HTTP in `tests/` (`python3 -m unittest discover tests`), then once with the real key read-only, and say which you did.
 - Customer personal data (name, address, email) never leaves the connector: order number and country only.
 - Anything that writes outside the owner's systems (issuing an invoice, creating a label) goes through `core/approvals.py` first.
+- After every integration or bug: append one dated line to `brain/forge_notes.md` (what happened, what fixed it). That is how you get better; read `forge-playbook.md` and that file before starting.
