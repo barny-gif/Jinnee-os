@@ -133,3 +133,18 @@ class Gls(unittest.TestCase):
     def test_hash_password(self):
         import hashlib; m = load("gls")
         self.assertEqual(m._auth()["Password"], list(hashlib.sha512(b"p").digest()))
+
+
+class GlsDedupe(unittest.TestCase):
+    def test_engine_sent_and_no_second_upload(self):
+        import order_flow, tempfile
+        os.environ.update(GLS_CLIENT_NUMBER="1", GLS_USERNAME="u", GLS_PASSWORD="p")
+        with mock.patch("requests.post", return_value=Resp({"ParcelInfoList": [{"ParcelId": 7, "ClientReference": "#1"}]})) as post:
+            load("gls").prepare_labels([{}])
+        self.assertEqual(post.call_args.kwargs["json"]["WebshopEngine"], "Shopify")
+        order_flow.UPLOADED = pathlib.Path(tempfile.mkdtemp()) / "up.json"
+        g = Gls(); g.setUp()
+        gls = mock.Mock(client_number=lambda: 1, prepare_labels=mock.Mock(return_value=[{"parcel_id": 7}]))
+        shop = mock.Mock(order_private=lambda i: g.order())
+        order_flow.parcel_prepare("1", "yes", shop, gls); second = order_flow.parcel_prepare("1", "yes", shop, gls)
+        self.assertEqual(gls.prepare_labels.call_count, 1); self.assertIn("skipped", second)

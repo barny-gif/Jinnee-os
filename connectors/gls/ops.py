@@ -28,7 +28,7 @@ def client_number():
 
 def prepare_labels(parcels):
     """parcels: list of MyGLS 'Parcel' dicts (built by order_flow). → [{"parcel_id", "reference"}]; errors raise with GLS's own words."""
-    data = _post("PrepareLabels", {"ParcelList": parcels})
+    data = _post("PrepareLabels", {"WebshopEngine": os.getenv("GLS_WEBSHOP_ENGINE", "Shopify"), "ParcelList": parcels})
     errs = data.get("PrepareLabelsError") or []
     if errs: raise ConnectorError("MyGLS: " + "; ".join(f"{e.get('ErrorCode')}: {e.get('ErrorDescription')}" for e in errs))
     return [{"parcel_id": p.get("ParcelId"), "reference": p.get("ClientReference")} for p in data.get("ParcelInfoList") or []]

@@ -1,7 +1,7 @@
 """Order -> invoice DRAFT in Billingo. Customer contact data passes through this code only: it is never printed or logged
 (the CLI prints order number, draft id and warnings). Issuing and sending are separate steps behind the approval queue.
 CLI: python3 connectors/order_flow.py invoice_draft --order_id 123456789"""
-import sys, os, re, time, pathlib, datetime as dt, importlib.util
+import sys, os, re, json, time, pathlib, datetime as dt, importlib.util
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from cbase import ConnectorError, run_cli
@@ -59,6 +59,12 @@ def invoice_draft(order_id, shop=None, bill=None):
     d = step("create draft", bill.post_document, body)
     return {"order": o["name"], "draft_id": d.get("id"), "type": d.get("type")}
 
+UPLOADED = HERE.parent / "brain" / "gls_uploaded.json"  # order name -> parcel id; brain/ is kept across rebuilds
+
+def _uploaded():
+    try: return json.loads(UPLOADED.read_text(encoding="utf-8"))
+    except (OSError, ValueError): return {}
+
 def split_street(address):
     """'Fő u. 12/B' -> ('Fő u.', '12/B'). GLS wants street and house number apart. No number found -> ('whole text', '')."""
     m = re.match(r"^(.*?)[\s,]+(\d[\w/.\-]*(?:\s*(?:em|fsz|ép|lh)\.?\s*\S*)?)$", address.strip(), re.I)
@@ -102,6 +108,9 @@ def parcel_prepare(order_id, send="no", shop=None, gls=None):
     """Dry run by default: checks the data and says what WOULD be uploaded. send=yes uploads it to MyGLS (prepared, not printed)."""
     shop = shop or _load("shopify"); gls = gls or _load("gls")
     o = shop.order_private(order_id)
+    done = _uploaded().get(o["name"])
+    if done:  # one order, one parcel: never a second upload
+        return {"order": o["name"], "skipped": "already uploaded to MyGLS", "parcel_id": done}
     parcel = gls_parcel(o, gls)
     d = parcel["DeliveryAddress"]
     warn = [w for w, bad in (("house number not found in the address: GLS may refuse or deliver badly", not d["HouseNumber"]),
@@ -110,6 +119,10 @@ def parcel_prepare(order_id, send="no", shop=None, gls=None):
         return {"order": o["name"], "dry_run": True, "cod_amount": parcel["CODAmount"], "pickup": parcel["PickupDate"], "warnings": warn,
                 "next": "run again with --send yes to upload to MyGLS"}
     out = step("upload to MyGLS", gls.prepare_labels, [parcel])
+    try:
+        UPLOADED.parent.mkdir(parents=True, exist_ok=True)
+        UPLOADED.write_text(json.dumps({**_uploaded(), o["name"]: (out[0]["parcel_id"] if out else True)}), encoding="utf-8")
+    except OSError: warn.append("could not record the upload: do not run this order again")
     return {"order": o["name"], "uploaded": out, "warnings": warn}
 
 OPS = {"invoice_draft": invoice_draft, "parcel_prepare": parcel_prepare}
