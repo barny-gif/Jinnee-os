@@ -1,7 +1,7 @@
 """Order -> invoice DRAFT in Billingo. Customer contact data passes through this code only: it is never printed or logged
 (the CLI prints order number, draft id and warnings). Issuing and sending are separate steps behind the approval queue.
 CLI: python3 connectors/order_flow.py invoice_draft --order_id 123456789"""
-import sys, os, pathlib, datetime as dt, importlib.util
+import sys, os, re, time, pathlib, datetime as dt, importlib.util
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from cbase import ConnectorError, run_cli
@@ -16,7 +16,7 @@ COD = ("cash on delivery", "cod", "utánvét", "utanvet")
 
 def payment_method(gateways):
     g = " ".join(gateways).lower()
-    return "cash_on_delivery" if any(c in g for c in COD) else "bankcard"
+    return "cash_on_delivery" if any(c in g for c in COD) else "wire_transfer" if any(w in g for w in ("bank deposit", "átutal", "atutal", "wire", "bank transfer")) else "bankcard"
 
 def items(o):
     """Shopify prices are gross (VAT included) in a Hungarian shop. A line discount is spread into the unit price."""
@@ -59,5 +59,58 @@ def invoice_draft(order_id, shop=None, bill=None):
     d = step("create draft", bill.post_document, body)
     return {"order": o["name"], "draft_id": d.get("id"), "type": d.get("type")}
 
-OPS = {"invoice_draft": invoice_draft}
+def split_street(address):
+    """'Fő u. 12/B' -> ('Fő u.', '12/B'). GLS wants street and house number apart. No number found -> ('whole text', '')."""
+    m = re.match(r"^(.*?)[\s,]+(\d[\w/.\-]*(?:\s*(?:em|fsz|ép|lh)\.?\s*\S*)?)$", address.strip(), re.I)
+    return (m.group(1).strip(), m.group(2).strip()) if m else (address.strip(), "")
+
+def phone(p, country="HU"):
+    d = re.sub(r"[^\d+]", "", p or "")
+    if d.startswith("00"): d = "+" + d[2:]
+    if d.startswith("06"): d = "+36" + d[2:]
+    if d and not d.startswith("+") and country == "HU": d = "+36" + d.lstrip("0")
+    return d
+
+def next_workday(today=None):
+    d = (today or dt.date.today()) + dt.timedelta(days=1)
+    while d.weekday() >= 5: d += dt.timedelta(days=1)
+    return d
+
+def gls_parcel(o, gls):
+    """The MyGLS Parcel for an order. Pickup data (your address) comes from GLS_PICKUP_* in .env."""
+    sh = o["shipping"] or o["billing"]
+    street, house = split_street(" ".join(x for x in (sh.get("address1"), sh.get("address2")) if x))
+    missing = [k for k, v in (("name", sh.get("name")), ("zip", sh.get("zip")), ("city", sh.get("city")), ("street", street)) if not v]
+    if missing: raise ConnectorError(f"{o['name']}: shipping address incomplete ({', '.join(missing)})")
+    pick = {k: os.getenv("GLS_PICKUP_" + k.upper(), "").strip() for k in ("name", "street", "house", "city", "zip", "phone", "email")}
+    gone = [k for k in ("name", "street", "city", "zip") if not pick[k]]
+    if gone: raise ConnectorError("Missing in .env: " + ", ".join("GLS_PICKUP_" + k.upper() for k in gone))
+    cod = payment_method(o["gateways"]) == "cash_on_delivery"
+    total = round(sum(float(i["unit_price"]) * i["quantity"] for i in items(o)), 0)
+    ms = int(time.mktime(next_workday().timetuple()) * 1000)
+    return {"ClientNumber": gls.client_number(), "ClientReference": o["name"], "CODAmount": total if cod else 0,
+            "CODReference": o["name"] if cod else "", "Content": f"Monti Világ {o['name']}", "Count": 1,
+            "PickupDate": f"/Date({ms})/",
+            "PickupAddress": {"Name": pick["name"], "Street": pick["street"], "HouseNumber": pick["house"], "City": pick["city"],
+                              "ZipCode": pick["zip"], "CountryIsoCode": "HU", "ContactName": pick["name"], "ContactPhone": phone(pick["phone"]),
+                              "ContactEmail": pick["email"]},
+            "DeliveryAddress": {"Name": sh["name"], "Street": street, "HouseNumber": house, "City": sh["city"], "ZipCode": sh["zip"],
+                                "CountryIsoCode": sh.get("country_code") or "HU", "ContactName": sh["name"],
+                                "ContactPhone": phone(o["phone"] or sh.get("phone"), sh.get("country_code") or "HU"), "ContactEmail": o["email"]}}
+
+def parcel_prepare(order_id, send="no", shop=None, gls=None):
+    """Dry run by default: checks the data and says what WOULD be uploaded. send=yes uploads it to MyGLS (prepared, not printed)."""
+    shop = shop or _load("shopify"); gls = gls or _load("gls")
+    o = shop.order_private(order_id)
+    parcel = gls_parcel(o, gls)
+    d = parcel["DeliveryAddress"]
+    warn = [w for w, bad in (("house number not found in the address: GLS may refuse or deliver badly", not d["HouseNumber"]),
+                             ("no phone number: the courier cannot call", not d["ContactPhone"])) if bad]
+    if send != "yes":
+        return {"order": o["name"], "dry_run": True, "cod_amount": parcel["CODAmount"], "pickup": parcel["PickupDate"], "warnings": warn,
+                "next": "run again with --send yes to upload to MyGLS"}
+    out = step("upload to MyGLS", gls.prepare_labels, [parcel])
+    return {"order": o["name"], "uploaded": out, "warnings": warn}
+
+OPS = {"invoice_draft": invoice_draft, "parcel_prepare": parcel_prepare}
 if __name__ == "__main__": sys.exit(run_cli(OPS))

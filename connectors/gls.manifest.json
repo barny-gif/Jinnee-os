@@ -1,3 +1,19 @@
-{ "id": "gls", "name": "GLS (MyGLS)", "category": "shipping", "version": "0.1.0",
-  "auth": { "type": "api_credentials", "env": ["GLS_CLIENT_NUMBER", "GLS_USERNAME", "GLS_PASSWORD"] },
-  "ops": ["create_label_draft", "track"] }
+{
+  "id": "gls",
+  "name": "GLS (MyGLS)",
+  "category": "shipping",
+  "version": "0.2.0",
+  "auth": {
+    "type": "api_credentials",
+    "env": [
+      "GLS_CLIENT_NUMBER",
+      "GLS_USERNAME",
+      "GLS_PASSWORD"
+    ]
+  },
+  "ops": [
+    "track",
+    "prepare_labels"
+  ],
+  "notes": "prepare_labels uploads parcel data to MyGLS without printing. Pickup address: GLS_PICKUP_* in .env. Implemented in connectors/gls/ops.py; order_flow.py parcel_prepare builds the parcel (dry run by default)."
+}
