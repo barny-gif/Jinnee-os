@@ -11,6 +11,7 @@ def _load(name):
     m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); return m
 
 VAT = os.getenv("BILLINGO_VAT", "27%")
+ELECTRONIC = os.getenv("BILLINGO_ELECTRONIC", "0").strip().lower() in ("1", "true", "yes")  # e-számla is a separate Billingo feature
 COD = ("cash on delivery", "cod", "utánvét", "utanvet")
 
 def payment_method(gateways):
@@ -38,19 +39,24 @@ def partner_body(o):
             "address": {"country_code": b.get("country_code") or "HU", "post_code": b["zip"], "city": b["city"],
                         "address": " ".join(x for x in (b.get("address1"), b.get("address2")) if x)}}
 
+def step(label, fn, *a):
+    """Say which step failed: 'create partner', 'create draft'..."""
+    try: return fn(*a)
+    except ConnectorError as e: raise ConnectorError(f"[{label}] {e}")
+
 def invoice_draft(order_id, shop=None, bill=None):
     shop = shop or _load("shopify"); bill = bill or _load("billingo")
     o = shop.order_private(order_id)
-    existing = [d for d in bill.list_invoices(days="60") if o["name"] in (d["comment"] or "")]
+    existing = [d for d in step("list invoices", bill.list_invoices, "60") if o["name"] in (d["comment"] or "")]
     if existing:  # one order, one invoice: never a second one
         return {"order": o["name"], "skipped": "an invoice or draft already mentions this order", "invoice": existing[0]["number"] or existing[0]["id"]}
-    partner = bill.create_partner(partner_body(o))
+    partner = step("create partner", bill.create_partner, partner_body(o))
     today = dt.date.today()
-    body = {"partner_id": partner, "block_id": bill.block_id(), "type": "draft", "fulfillment_date": today.isoformat(),
+    body = {"partner_id": partner, "block_id": step("find numbering block", bill.block_id), "type": "draft", "fulfillment_date": today.isoformat(),
             "due_date": (today + dt.timedelta(days=8)).isoformat(), "payment_method": payment_method(o["gateways"]),
-            "language": "hu", "currency": o["currency"] or "HUF", "electronic": True, "items": items(o),
+            "language": "hu", "currency": o["currency"] or "HUF", "electronic": ELECTRONIC, "items": items(o),
             "comment": f"Shopify {o['name']}"}
-    d = bill.post_document(body)
+    d = step("create draft", bill.post_document, body)
     return {"order": o["name"], "draft_id": d.get("id"), "type": d.get("type")}
 
 OPS = {"invoice_draft": invoice_draft}
