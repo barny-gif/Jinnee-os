@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 import approvals, autonomy, heartbeat, logs
+import orders
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BRAIN = ROOT / "brain"
@@ -131,6 +132,11 @@ def state(req: Request):
     return {"name": NAME, "auth": bool(PASSWORD), "brief": rd("brief_today.md", ""), "approvals": shown,
             "problems": [p for p in (problem, levels_problem) if p], "autonomy": levels,
             "team": team, "connectors": connectors, "log": log[::-1]}
+
+@app.get("/api/orders")
+def api_orders(req: Request):
+    guard(req)
+    return orders.get()
 
 def refuse(e):
     """The queue said no: 404 unknown item, 409 the item has moved on, 400 the request itself is incomplete."""

@@ -1,4 +1,18 @@
-{ "id": "shopify", "name": "Shopify", "category": "shop", "version": "0.1.0",
-  "auth": { "type": "admin_api_token", "env": "SHOPIFY_ADMIN_TOKEN", "store_env": "SHOPIFY_STORE" },
-  "ops": ["list_orders", "get_order", "list_products", "get_product", "update_product_draft", "inventory_levels"],
-  "notes": "Custom app in the shop admin with only the needed scopes (read_orders, read_products, write_products)." }
+{
+  "id": "shopify",
+  "name": "Shopify",
+  "category": "shop",
+  "version": "0.2.0",
+  "auth": {
+    "type": "admin_api_token",
+    "env": "SHOPIFY_ADMIN_TOKEN",
+    "store_env": "SHOPIFY_STORE"
+  },
+  "ops": [
+    "list_orders",
+    "get_order",
+    "list_products",
+    "get_product"
+  ],
+  "notes": "Read-only. Scopes: read_orders, read_products, read_inventory. Implemented in connectors/shopify/ops.py. No customer personal data leaves the connector."
+}

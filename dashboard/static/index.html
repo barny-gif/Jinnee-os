@@ -41,6 +41,7 @@ button.ok{border-color:var(--ok);color:var(--ok)}button.drop{border-color:var(--
 <header><h1>{{NAME}}</h1><p id="stamp">Loading…</p><form method="post" action="/logout" id="out" hidden><button>Sign out</button></form></header>
 <main>
   <section><h2>Today</h2><div class="brief" id="brief"></div></section>
+  <section><h2>Orders</h2><div id="ordsum" class="brief"></div><div id="orderr"></div><div id="orders"></div></section>
   <section><h2>Awaiting your decision</h2><div id="problems"></div><div id="approvals"></div></section>
   <section id="decidedBox" hidden><h2>Decided, not carried out yet</h2><div id="decided"></div></section>
   <section id="closedBox" hidden><h2>Recently closed</h2><div id="closed"></div></section>
@@ -83,6 +84,13 @@ async function load(){
   el('connectors').innerHTML=s.connectors.map(c=>`<div class="row"><span><span class="dot ${c.ok===null?'n':c.ok?'g':'r'}"></span>${esc(c.name)}</span><span>${c.ok===null?'no key':c.ok?'connected':'missing key'}</span></div>`).join('');
   el('log').innerHTML=s.log.length?s.log.map(esc).join('<br>'):'<span class="empty">No decisions yet.</span>';
 }
+async function loadOrders(){
+  const r=await fetch('/api/orders',{headers:H}); if(!r.ok){el('ordsum').textContent='Orders unavailable ('+r.status+')';return;}
+  const o=await r.json(), s=o.summary;
+  el('ordsum').textContent=s.orders+' orders (14 days) · '+s.revenue+' '+s.currency+' · no invoice: '+(s.no_invoice===null?'unknown':s.no_invoice)+' · no label yet: '+s.no_label;
+  el('orderr').innerHTML=o.errors.map(p=>`<p class="note">${esc(p)}</p>`).join('');
+  el('orders').innerHTML=o.orders.map(x=>`<div class="row"><span><span class="dot ${x.cancelled?'n':x.invoice===false?'r':x.invoice===null?'y':'g'}"></span>${esc(x.name)} · ${esc(x.total)} ${esc(x.currency)}</span><span>${x.cancelled?'cancelled':(x.invoice===null?'invoice ?':x.invoice?'invoice '+esc(x.invoice.number):'NO invoice')} · ${x.label?'tracking '+esc(x.tracking[0]):esc(x.shipped)}</span></div>`).join('')||'<p class="empty">No orders in the last 14 days.</p>';
+}
 async function dec(id,d){let note='';
   if(d==='edit'){note=(prompt('What should change?')||'').trim();if(!note)return;}
   if(d==='drop'){note=(prompt('Why are you dropping it? One sentence. The team reads it and learns from it.')||'').trim();if(!note)return;}
@@ -90,7 +98,7 @@ async function dec(id,d){let note='';
   if(!r.ok)alert((await r.json().catch(()=>({}))).detail||'That did not work ('+r.status+').');
   load();}
 document.addEventListener('click',e=>{const b=e.target.closest('button[data-id]');if(b)dec(b.dataset.id,b.dataset.d);});
-load();setInterval(load,60000);
+load();loadOrders();setInterval(load,60000);setInterval(loadOrders,120000);
 </script>
 </body>
 </html>

@@ -37,6 +37,8 @@ BOOK = approvals.Book(BRAIN)
 WATCH = alerts.Watch(BRAIN)
 # The agent may run these three programs and nothing else in the shell, and may not edit the files they guard.
 TOOLS = [f"Bash({py} core/{prog}.py *)" for prog in ("approvals", "autonomy", "heartbeat") for py in ("python3", "python")]
+# Forge needs to read API docs and run the connectors and tests it writes; still no curl, rm or free shell.
+TOOLS += ["WebFetch", "WebSearch"] + [f"Bash({py} {cmd})" for py in ("python3", "python") for cmd in ("connectors/*", "-m unittest *", "-I connectors/*")]
 GUARDED = [f"Edit(brain/{name})" for name in ("approvals.json", "autonomy_config.json", "alerts_state.json")]
 
 RULES = """The agent files are your team's rules; brain/ is the business memory. Log every decision as one line in brain/decisions.log.md.
