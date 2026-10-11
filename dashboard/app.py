@@ -119,6 +119,8 @@ def state(req: Request):
         envs = d.get("auth", {}).get("env", [])
         envs = [envs] if isinstance(envs, str) else envs
         ok = all(os.getenv(e) for e in envs) if envs else None
+        groups = d.get("auth", {}).get("env_any")  # alternatives: any one complete group is enough
+        if groups: ok = bool(ok is not False) and any(all(os.getenv(e) for e in g) for g in groups)
         connectors.append({"id": d["id"], "name": d["name"], "category": d["category"], "ok": ok})
     bk = book()
     items, problem = bk.read()

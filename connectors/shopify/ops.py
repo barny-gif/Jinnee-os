@@ -1,23 +1,48 @@
 """Shopify connector, READ-ONLY (scopes: read_orders, read_products, read_inventory). Op names follow connectors/README.md.
 CLI: python3 connectors/shopify/ops.py list_orders --days 7"""
-import os, sys, pathlib, datetime as dt
+import os, sys, time, pathlib, datetime as dt
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import requests
 from cbase import ConnectorError, need, run_cli
 
 VERSION = os.getenv("SHOPIFY_API_VERSION", "2026-07")
 
-def _get(path, params=None):
-    store, token = need("SHOPIFY_STORE", "SHOPIFY_ADMIN_TOKEN")
+_TOKEN = {"value": "", "until": 0.0}
+
+def _shop_host():
+    (store,) = need("SHOPIFY_STORE")
     store = store.replace("https://", "").replace("http://", "").strip("/")
-    if "." not in store: store += ".myshopify.com"
+    return store if "." in store else store + ".myshopify.com"
+
+def _token(host):
+    """SHOPIFY_ADMIN_TOKEN if set (old custom app). Otherwise the client credentials grant of a Dev Dashboard app:
+    SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET are exchanged for a token that lasts 24 h; it is kept in memory and renewed."""
+    fixed = os.getenv("SHOPIFY_ADMIN_TOKEN", "").strip()
+    if fixed: return fixed
+    if _TOKEN["value"] and time.time() < _TOKEN["until"]: return _TOKEN["value"]
+    cid, secret = need("SHOPIFY_CLIENT_ID", "SHOPIFY_CLIENT_SECRET")
     try:
-        r = requests.get(f"https://{store}/admin/api/{VERSION}/{path}", params=params, timeout=20,
-                         headers={"X-Shopify-Access-Token": token})
+        r = requests.post(f"https://{host}/admin/oauth/access_token", timeout=20,
+                          data={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret})
+    except requests.RequestException as e:
+        raise ConnectorError(f"Shopify did not answer the token request: {type(e).__name__}")
+    if not r.ok: raise ConnectorError(f"Shopify refused the client id/secret ({r.status_code}): is the app installed on this store, and SHOPIFY_STORE correct?")
+    d = r.json()
+    if not d.get("access_token"): raise ConnectorError("Shopify returned no access token")
+    _TOKEN.update(value=d["access_token"], until=time.time() + max(int(d.get("expires_in", 86400)) - 300, 60))
+    return _TOKEN["value"]
+
+def _get(path, params=None):
+    host = _shop_host()
+    try:
+        r = requests.get(f"https://{host}/admin/api/{VERSION}/{path}", params=params, timeout=20,
+                         headers={"X-Shopify-Access-Token": _token(host)})
     except requests.RequestException as e:
         raise ConnectorError(f"Shopify did not answer: {type(e).__name__}")
-    if r.status_code == 401: raise ConnectorError("Shopify: the token was refused (401) - check SHOPIFY_ADMIN_TOKEN")
-    if r.status_code == 403: raise ConnectorError("Shopify: missing scope (403) - the custom app needs read_orders")
+    if r.status_code == 401:
+        _TOKEN.update(value="", until=0.0)
+        raise ConnectorError("Shopify: the token was refused (401) - check the Shopify credentials in .env")
+    if r.status_code == 403: raise ConnectorError("Shopify: missing scope (403) - the app needs read_orders (and read_products)")
     if r.status_code == 429: raise ConnectorError("Shopify: rate limit (429), try again in a minute")
     if not r.ok: raise ConnectorError(f"Shopify answered {r.status_code}")
     return r.json()

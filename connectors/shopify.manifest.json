@@ -4,8 +4,19 @@
   "category": "shop",
   "version": "0.2.0",
   "auth": {
-    "type": "admin_api_token",
-    "env": "SHOPIFY_ADMIN_TOKEN",
+    "type": "client_credentials_or_token",
+    "env": [
+      "SHOPIFY_STORE"
+    ],
+    "env_any": [
+      [
+        "SHOPIFY_ADMIN_TOKEN"
+      ],
+      [
+        "SHOPIFY_CLIENT_ID",
+        "SHOPIFY_CLIENT_SECRET"
+      ]
+    ],
     "store_env": "SHOPIFY_STORE"
   },
   "ops": [

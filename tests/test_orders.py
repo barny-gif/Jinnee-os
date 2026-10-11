@@ -83,3 +83,20 @@ class Flow(unittest.TestCase):
         with self.assertRaises(ConnectorError): self.run_flow(self.order(billing={"name": "X"}))
     def test_only_drafts(self):
         with self.assertRaises(ConnectorError): load("billingo").post_document({"type": "invoice"})
+
+
+class ClientCredentials(unittest.TestCase):
+    def test_token_exchange_and_cache(self):
+        for k in ("SHOPIFY_ADMIN_TOKEN",): os.environ[k] = ""
+        os.environ.update(SHOPIFY_STORE="demo", SHOPIFY_CLIENT_ID="id", SHOPIFY_CLIENT_SECRET="sec")
+        m = load("shopify")
+        with mock.patch("requests.post", return_value=Resp({"access_token": "tok", "expires_in": 86399})) as post, \
+             mock.patch("requests.get", return_value=Resp({"orders": []})) as get:
+            m.list_orders(); m.list_orders()
+        self.assertEqual(post.call_count, 1)  # cached for the second call
+        self.assertEqual(get.call_args.kwargs["headers"]["X-Shopify-Access-Token"], "tok")
+        self.assertEqual(post.call_args.kwargs["data"]["grant_type"], "client_credentials")
+    def test_refused_secret(self):
+        os.environ.update(SHOPIFY_STORE="demo", SHOPIFY_ADMIN_TOKEN="", SHOPIFY_CLIENT_ID="id", SHOPIFY_CLIENT_SECRET="bad")
+        with mock.patch("requests.post", return_value=Resp({}, 400)):
+            with self.assertRaises(ConnectorError): load("shopify").list_orders()
