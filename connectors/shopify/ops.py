@@ -32,6 +32,19 @@ def _order(o):
             "items": sum(i.get("quantity", 0) for i in o.get("line_items") or []),
             "tracking": tracking, "note": o.get("note") or ""}
 
+def order_private(order_id):
+    """FOR CODE ONLY, not in OPS and not in the CLI: the customer's contact data, needed to issue the invoice and the parcel.
+    It must never be printed, logged or sent to an agent or Telegram. Only order_flow.py calls this."""
+    o = _get(f"orders/{order_id}.json")["order"]
+    b = o.get("billing_address") or o.get("shipping_address") or {}
+    sh = o.get("shipping_address") or b
+    return {"name": o.get("name"), "id": o["id"], "currency": o.get("currency"), "taxes_included": o.get("taxes_included", True),
+            "gateways": o.get("payment_gateway_names") or [], "email": o.get("email") or (o.get("customer") or {}).get("email") or "",
+            "phone": sh.get("phone") or o.get("phone") or "", "billing": b, "shipping": sh,
+            "lines": [{"title": i.get("title"), "sku": i.get("sku"), "qty": i.get("quantity", 1), "price": i.get("price"),
+                       "discount": i.get("total_discount") or "0"} for i in o.get("line_items") or []],
+            "shipping_lines": [{"title": l.get("title"), "price": l.get("price")} for l in o.get("shipping_lines") or []]}
+
 def list_orders(days="7", limit="100"):
     since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=int(days))).isoformat(timespec="seconds")
     data = _get("orders.json", {"status": "any", "limit": min(int(limit), 250), "created_at_min": since, "order": "created_at desc"})
