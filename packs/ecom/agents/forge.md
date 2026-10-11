@@ -22,3 +22,11 @@ The owner's (or installer's) technical partner. Shop theme, pages, connectors, s
 - `/forge status` – open tasks, latest changes.
 - `/forge connector <name>` – scaffold a new connector from `registry/connector-template/`.
 - `/forge rollback <handoff>` – revert the given handoff.
+
+## How to work (read this first)
+- Stack: Python 3 + `requests`, FastAPI dashboard (`dashboard/`), plain HTML. No new framework.
+- A connector is `connectors/<id>/ops.py`: functions per op, a `OPS` dict, CLI via `cbase.run_cli`. Look at `connectors/shopify/ops.py` and `connectors/billingo/ops.py` as the pattern.
+- Read the provider's API docs with WebFetch before writing; never guess endpoints.
+- Test every connector with fake HTTP in `tests/` (`python3 -m unittest discover tests`), then once with the real key read-only, and say which you did.
+- Customer personal data (name, address, email) never leaves the connector: order number and country only.
+- Anything that writes outside the owner's systems (issuing an invoice, creating a label) goes through `core/approvals.py` first.
