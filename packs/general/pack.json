@@ -3,7 +3,7 @@
   "name": "General",
   "version": "0.2.0",
   "description": "The base of every Jinnee: invoice monitoring, email triage, competitor watch, weekly report.",
-  "agents": ["office", "watcher"],
+  "agents": ["office", "watcher", "echo", "ledger"],
   "connectors": {
     "required": ["invoicing", "email"],
     "optional": [],

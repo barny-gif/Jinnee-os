@@ -7,8 +7,8 @@ run_agent() is the hook for the full orchestration logic (sessions, intake, dele
 import os, re, sys, time, subprocess, pathlib, asyncio, logging, threading, datetime as dt
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import env; env.load()  # before anything below reads the environment
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, CallbackQueryHandler, ContextTypes, filters
 from pack_loader import agent_files, resolve
 from heartbeat import beat, trouble
 from registry_client import check as registry_check
@@ -40,6 +40,9 @@ TOOLS = [f"Bash({py} core/{prog}.py *)" for prog in ("approvals", "autonomy", "h
 # Lovable: reading is free. send_message/get_message let Forge build, which spends the owner's credits, so the
 # agent files require the owner's yes on the exact prompt first. respond_to_approval stays with the owner.
 TOOLS += [f"mcp__claude_ai_Lovable__{t}" for t in ("list_workspaces", "list_projects", "get_project", "list_files", "read_file", "list_edits", "get_diff", "send_message", "get_message")]
+# Shopify through the owner's claude.ai connector: the shop's catalogue, stock and sales numbers only. Orders and customers
+# (names, addresses, e-mails) are deliberately NOT here: they stay behind connectors/shopify, which shows order numbers only.
+TOOLS += [f"mcp__claude_ai_Shopify__{t}" for t in ("get-shop-info", "search_products", "get-product", "get-inventory-levels", "run-analytics-query", "search_collections", "get-collection")]
 # Forge needs to read API docs and run the connectors and tests it writes; still no curl, rm or free shell.
 TOOLS += ["WebFetch", "WebSearch"] + [f"Bash({py} {cmd})" for py in ("python3", "python") for cmd in ("connectors/*", "-m unittest *", "-I connectors/*")]
 GUARDED = [f"Edit(brain/{name})" for name in ("approvals.json", "autonomy_config.json", "alerts_state.json")]
@@ -174,12 +177,29 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return await say(update.message.reply_text, reply)
     await say(update.message.reply_text, await asyncio.to_thread(run_agent, text))
 
+def buttons(ids):
+    """Tap instead of typing: one row per waiting item. The tap goes through the same owner_command as /ok, /change, /drop."""
+    if not ids: return None
+    return InlineKeyboardMarkup([[InlineKeyboardButton("✅ OK " + i, callback_data=f"ok:{i}"),
+                                  InlineKeyboardButton("✏️ Change", callback_data=f"change:{i}"),
+                                  InlineKeyboardButton("🗑 Drop", callback_data=f"drop:{i}")] for i in ids])
+
+async def on_tap(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q is None or not from_owner(update): return  # a stranger's tap is dropped without a reply
+    word, _, item_id = (q.data or "").partition(":")
+    if word not in ("ok", "change", "drop") or not item_id: return await q.answer()
+    await q.answer()
+    reply = await asyncio.to_thread(owner_command, f"/{word} {item_id}")
+    await q.message.reply_text(reply[:4000])
+
 async def alert_tick(ctx: ContextTypes.DEFAULT_TYPE):
     """Once a minute: tell the owner what core/alerts.py says is due, then give decided items to the lead."""
     try:
         plan = await asyncio.to_thread(WATCH.due)
         for message in plan["messages"]:
-            await ctx.bot.send_message(chat_id=OWNER, text=message[:4000])
+            await ctx.bot.send_message(chat_id=OWNER, text=message[:4000],
+                                       reply_markup=buttons(plan.get("ask", [])) if message.startswith("Waiting for your decision") else None)
         await asyncio.to_thread(WATCH.done, plan)  # only now: a message that could not be sent is tried again
     except Exception:
         log.exception("alert check failed; it runs again in a minute")
@@ -226,6 +246,7 @@ def main():
     BOOK.tidy()          # items from before the lifecycle: decided ones are closed, never carried out twice
     app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("new", cmd_new))
+    app.add_handler(CallbackQueryHandler(on_tap))
     app.add_handler(MessageHandler(filters.COMMAND, on_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     if app.job_queue:  # both go to OWNER, which is always set here

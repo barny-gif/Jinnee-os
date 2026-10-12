@@ -317,7 +317,7 @@ class Message:
     async def reply_text(self, text): self.replies.append(text)
 
 class Bot:
-    async def send_message(self, chat_id, text): sent.append([chat_id, text])
+    async def send_message(self, chat_id, text, reply_markup=None): sent.append([chat_id, text])
 
 ctx = types.SimpleNamespace(bot=Bot(), application=types.SimpleNamespace(create_task=tasks.append))
 
@@ -541,3 +541,23 @@ class AgentFailures(Bridge):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TapButtons(unittest.TestCase):
+    """The approval message carries tap buttons; the tap is the same decision as typing /ok."""
+    def test_due_lists_the_new_items_for_buttons(self):
+        import tempfile, pathlib as pl
+        brain = pl.Path(tempfile.mkdtemp())
+        book = approvals.Book(brain)
+        a = book.add("forge", "publish_social_post", "Post", "s", text="Finished text")[0]["id"]
+        watch = alerts.Watch(brain)
+        plan = watch.due(at(3, 12, 0))
+        self.assertEqual(plan["ask"], [a])
+        watch.done(plan)
+        self.assertEqual(watch.due(at(3, 12, 1))["ask"], [])  # asked once, not again
+
+    def test_quiet_hours_ask_nothing(self):
+        import tempfile, pathlib as pl
+        brain = pl.Path(tempfile.mkdtemp())
+        approvals.Book(brain).add("forge", "publish_social_post", "Post", "s", text="Finished text")
+        self.assertEqual(alerts.Watch(brain).due(at(3, 23, 0))["ask"], [])

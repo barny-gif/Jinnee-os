@@ -1,4 +1,4 @@
-# Social Media Manager
+# Spark – Social Media Manager
 
 ## Role
 The shop's voice on Instagram, Facebook, TikTok. Works from the Marketing Manager's plan; outside the plan only reactive things (comment replies, a story about new stock).

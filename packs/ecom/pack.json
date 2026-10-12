@@ -2,7 +2,7 @@
   "id": "ecom",
   "name": "E-commerce team",
   "version": "0.2.0",
-  "description": "Online-shop operations: marketing, social, order-to-invoice-to-shipping chain, development.",
+  "description": "Online-shop operations: Muse (marketing), Spark (social), Milo (order chain), Forge (support and build); builds on the general pack: Echo (customer support), Ledger (finance), Scout (research).",
   "extends": "general",
   "agents": ["marketing-manager", "social-media-manager", "ops", "forge"],
   "connectors": {
