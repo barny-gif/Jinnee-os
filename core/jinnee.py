@@ -43,6 +43,8 @@ TOOLS += [f"mcp__claude_ai_Lovable__{t}" for t in ("list_workspaces", "list_proj
 # Shopify through the owner's claude.ai connector: the shop's catalogue, stock and sales numbers only. Orders and customers
 # (names, addresses, e-mails) are deliberately NOT here: they stay behind connectors/shopify, which shows order numbers only.
 TOOLS += [f"mcp__claude_ai_Shopify__{t}" for t in ("get-shop-info", "search_products", "get-product", "get-inventory-levels", "run-analytics-query", "search_collections", "get-collection")]
+# Forge's only way to git: this helper (own branch forge/*, tests must pass, pull request, never main).
+TOOLS += [f"Bash({py} core/forge_git.py *)" for py in ("python3", "python")]
 # Forge needs to read API docs and run the connectors and tests it writes; still no curl, rm or free shell.
 TOOLS += ["WebFetch", "WebSearch"] + [f"Bash({py} {cmd})" for py in ("python3", "python") for cmd in ("connectors/*", "-m unittest *", "-I connectors/*")]
 GUARDED = [f"Edit(brain/{name})" for name in ("approvals.json", "autonomy_config.json", "alerts_state.json")]
@@ -70,7 +72,9 @@ def system_prompt() -> str:
     return "".join(parts)
 
 FRESH = {"next": True}  # first message after start or /new opens a new session
-TIMEOUT = 600  # seconds for one run
+TIMEOUT = int(alerts.number("JINNEE_TIMEOUT", 600))  # seconds for one run; raise it in .env for long build jobs
+MINUTES = max(1, TIMEOUT // 60)
+MODEL = os.getenv("JINNEE_MODEL", "").strip()  # e.g. the strongest model for Forge's jobs; empty = the CLI default
 RUNNING = threading.Lock()  # one agent run at a time: the owner's message and a hand-over must not share a session mid-run
 HELP = ("What you can do: send it again. If it keeps happening, send /new to start a clean conversation. "
         "/pending shows what is waiting.")
@@ -78,7 +82,7 @@ HELP = ("What you can do: send it again. If it keeps happening, send /new to sta
 def call_claude(message: str):
     """→ (worked, text for the owner, short note for the heartbeat)."""
     base = ["claude", "-p", message, "--permission-mode", "acceptEdits", "--allowedTools", *TOOLS, "--disallowedTools", *GUARDED,
-            "--append-system-prompt", system_prompt(), "--output-format", "text"]
+            "--append-system-prompt", system_prompt(), "--output-format", "text"] + (["--model", MODEL] if MODEL else [])
     cmd = base if FRESH["next"] else base[:2] + ["--continue"] + base[2:]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=TIMEOUT)
@@ -88,9 +92,9 @@ def call_claude(message: str):
         return False, ("I could not start: the `claude` program is not installed on this machine, or not found. Nothing was done. "
                        "What you can do: install Claude Code and run `claude login` on the machine, then send your message again."), "claude not found"
     except subprocess.TimeoutExpired:
-        return False, ("I worked on this for 10 minutes without finishing, so I stopped. Some steps may be done and others not; "
+        return False, (f"I worked on this for {MINUTES} minutes without finishing, so I stopped. Some steps may be done and others not; "
                        "an approval that was already taken will not be used a second time. "
-                       "What you can do: ask for a smaller step, or send /pending to see what is open."), "timed out after 10 minutes"
+                       "What you can do: ask for a smaller step, or send /pending to see what is open."), f"timed out after {MINUTES} minutes"
     if r.returncode != 0:
         detail = " ".join((r.stderr.strip() or r.stdout.strip()).split())[-300:]
         return False, ("I could not finish this: the Claude program stopped with an error, so nothing more was done. " + HELP +

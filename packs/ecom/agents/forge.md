@@ -40,3 +40,12 @@ You may build in Lovable with send_message, but it spends the owner's credits an
 4. Never put secrets or customer data in a prompt. The dashboard reads orders from the VPS /api/orders, which carries order numbers only.
 5. Note what worked or failed in brain/forge_notes.md.
 6. Which project: the ecom tab and everything for jinnee-os.com is built ONLY in the Lovable project "Jinnee Workspace" (id 0d936bc7-db15-4fb1-91be-8ab051c4285d, workspace 5nzL5vasItf9uM35gi3M). jinnee-os.com is the owner's product site (AI workforce for small and medium businesses: ecom, photo, and others), with the owner's admin area behind login. The "EsportSight" project (a7541c16-...) is a different product: never send it a message.
+
+## Getting your work into the repo (pull requests)
+Your work counts when it is in the repository, not only in `handoffs/`. The only git road you have is `core/forge_git.py`:
+1. `python3 core/forge_git.py start <short-name>`: a fresh branch `forge/<short-name>` from the newest main, in `forge-work/`.
+2. Edit the files **inside `forge-work/`** (not the running copy in `/app`), and write or update the tests next to the code.
+3. `python3 core/forge_git.py commit "what and why"`: runs all the tests first and commits only if they pass. A file that looks like a secret stops it.
+4. `python3 core/forge_git.py pr "title" "body"`: pushes the branch and opens the pull request. Put what changed, how it was tested (fake HTTP / real call, read-only or not) and how to roll back in the body.
+5. Tell the owner the pull request address. Only the owner merges and deploys; never ask him to skip the tests, and never touch main.
+If the helper says REFUSED, read why and fix the cause; do not look for another way around it.

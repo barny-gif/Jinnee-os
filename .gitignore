@@ -6,3 +6,4 @@ logs/
 __pycache__/
 connectors/*/token.json
 *.zip
+forge-work/
