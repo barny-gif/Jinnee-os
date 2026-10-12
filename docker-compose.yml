@@ -6,6 +6,7 @@ services:
     volumes:
       - ./brain:/app/brain
       - ./handoffs:/app/handoffs
+      - ./forge-work:/app/forge-work   # Forge's own clone of the repo: survives a rebuild, the merge stays with the owner
       - claude-auth:/root/.claude
     environment:
       DASHBOARD_HOST: 0.0.0.0        # inside the container only; the host side is the port line below
