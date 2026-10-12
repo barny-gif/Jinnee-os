@@ -121,10 +121,10 @@ class Gls(unittest.TestCase):
         import order_flow
         gls = mock.Mock(client_number=lambda: 123, prepare_labels=mock.Mock(return_value=[{"parcel_id": 1}]))
         shop = mock.Mock(order_private=lambda i: self.order(gateways=["Cash on Delivery (COD)"]))
-        out = order_flow.parcel_prepare("1", "no", shop, gls)
+        out = order_flow.parcel_prepare("1", "no", shop=shop, gls=gls)
         self.assertTrue(out["dry_run"]); gls.prepare_labels.assert_not_called(); self.assertEqual(out["cod_amount"], 9000 + 1490)  # 2 x 5000 - 1000 discount + shipping
         self.assertNotIn("Teszt", json.dumps(out))
-        out = order_flow.parcel_prepare("1", "yes", shop, gls)
+        out = order_flow.parcel_prepare("1", "yes", shop=shop, gls=gls)
         sent = gls.prepare_labels.call_args.args[0][0]
         self.assertEqual(sent["DeliveryAddress"]["HouseNumber"], "12/B"); self.assertEqual(sent["ClientReference"], "#1042"); self.assertGreater(sent["CODAmount"], 0)
         self.assertNotIn("Teszt", json.dumps(out))
@@ -148,5 +148,28 @@ class GlsDedupe(unittest.TestCase):
         g = Gls(); g.setUp()
         gls = mock.Mock(client_number=lambda: 1, prepare_labels=mock.Mock(return_value=[{"parcel_id": 7}]))
         shop = mock.Mock(order_private=lambda i: g.order())
-        order_flow.parcel_prepare("1", "yes", shop, gls); second = order_flow.parcel_prepare("1", "yes", shop, gls)
+        order_flow.parcel_prepare("1", "yes", shop=shop, gls=gls); second = order_flow.parcel_prepare("1", "yes", shop=shop, gls=gls)
         self.assertEqual(gls.prepare_labels.call_count, 1); self.assertIn("skipped", second)
+
+
+class GlsReplace(unittest.TestCase):
+    def test_correction_deletes_then_uploads(self):
+        import order_flow, tempfile
+        g = Gls(); g.setUp()
+        order_flow.UPLOADED = pathlib.Path(tempfile.mkdtemp()) / "up.json"
+        order_flow.UPLOADED.write_text(json.dumps({"#1042": 555}))
+        gls = mock.Mock(client_number=lambda: 1, delete_labels=mock.Mock(return_value=True), prepare_labels=mock.Mock(return_value=[{"parcel_id": 556}]))
+        shop = mock.Mock(order_private=lambda i: g.order(shipping={"name": "T E", "zip": "1011", "city": "Budapest", "address1": "Molnár utca", "country_code": "HU"}))
+        skipped = order_flow.parcel_prepare("1", "yes", shop=shop, gls=gls); self.assertIn("skipped", skipped); gls.delete_labels.assert_not_called()
+        out = order_flow.parcel_prepare("1", "yes", "13", "3. emelet 16. ajtó", "yes", shop, gls)
+        gls.delete_labels.assert_called_once_with([555])
+        sent = gls.prepare_labels.call_args.args[0][0]["DeliveryAddress"]
+        self.assertEqual((sent["HouseNumber"], sent["HouseNumberInfo"]), ("13", "3. emelet 16. ajtó"))
+        self.assertEqual(json.loads(order_flow.UPLOADED.read_text())["#1042"], 556); self.assertNotIn("Molnár", json.dumps(out))
+    def test_failed_delete_uploads_nothing(self):
+        import order_flow, tempfile
+        g = Gls(); g.setUp()
+        order_flow.UPLOADED = pathlib.Path(tempfile.mkdtemp()) / "up.json"; order_flow.UPLOADED.write_text(json.dumps({"#1042": 555}))
+        gls = mock.Mock(client_number=lambda: 1, delete_labels=mock.Mock(side_effect=ConnectorError("printed")), prepare_labels=mock.Mock())
+        with self.assertRaises(ConnectorError): order_flow.parcel_prepare("1", "yes", "9", "", "yes", mock.Mock(order_private=lambda i: g.order()), gls)
+        gls.prepare_labels.assert_not_called()
