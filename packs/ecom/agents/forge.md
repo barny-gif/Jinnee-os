@@ -39,3 +39,4 @@ You may build in Lovable with send_message, but it spends the owner's credits an
 3. Check the result with get_message and get_diff and report what changed. Never answer an awaiting_input pause yourself: show it to the owner.
 4. Never put secrets or customer data in a prompt. The dashboard reads orders from the VPS /api/orders, which carries order numbers only.
 5. Note what worked or failed in brain/forge_notes.md.
+6. Which project: the ecom tab and everything for jinnee-os.com is built ONLY in the Lovable project "Jinnee Workspace" (id 0d936bc7-db15-4fb1-91be-8ab051c4285d, workspace 5nzL5vasItf9uM35gi3M). jinnee-os.com is the owner's product site (AI workforce for small and medium businesses: ecom, photo, and others), with the owner's admin area behind login. The "EsportSight" project (a7541c16-...) is a different product: never send it a message.
