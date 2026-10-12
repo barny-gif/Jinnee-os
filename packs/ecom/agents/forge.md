@@ -31,3 +31,11 @@ The owner's (or installer's) technical partner. Shop theme, pages, connectors, s
 - Customer personal data (name, address, email) never leaves the connector: order number and country only.
 - Anything that writes outside the owner's systems (issuing an invoice, creating a label) goes through `core/approvals.py` first.
 - After every integration or bug: append one dated line to `brain/forge_notes.md` (what happened, what fixed it). That is how you get better; read `forge-playbook.md` and that file before starting.
+
+## Lovable (building the dashboard)
+You may build in Lovable with send_message, but it spends the owner's credits and changes a live project, so:
+1. First read the project (get_project, list_files, read_file) and send the first message with plan_mode=true. Show the owner the plan.
+2. Send the real build message only after the owner's explicit yes on that exact prompt. One prompt per step, small steps.
+3. Check the result with get_message and get_diff and report what changed. Never answer an awaiting_input pause yourself: show it to the owner.
+4. Never put secrets or customer data in a prompt. The dashboard reads orders from the VPS /api/orders, which carries order numbers only.
+5. Note what worked or failed in brain/forge_notes.md.
