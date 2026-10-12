@@ -59,5 +59,21 @@ def post_document(body):
     if body.get("type") != "draft": raise ConnectorError("only drafts are created here; issuing needs an approved issue_invoice")
     return _call("POST", "/documents", body=body).json()
 
+def document(id):
+    """Raw document, for code only (it carries the customer's data)."""
+    return _call("GET", f"/documents/{id}").json()
+
+def partner_email(partner_id):
+    emails = _call("GET", f"/partners/{partner_id}").json().get("emails") or []
+    return emails[0] if emails else ""
+
+def create_from_draft(id):
+    """Turns a draft into a real, numbered invoice. IRREVERSIBLE (a tax document: only a storno can undo it)."""
+    return _call("POST", f"/documents/{id}/create-from-draft").json()
+
+def send_by_email(id, emails):
+    _call("POST", f"/documents/{id}/send", body={"emails": list(emails)})
+    return True
+
 OPS = {"list": list_invoices, "status": status, "get_pdf": get_pdf, "create_draft": create_draft}
 if __name__ == "__main__": sys.exit(run_cli(OPS))

@@ -150,3 +150,31 @@ class GlsDedupe(unittest.TestCase):
         shop = mock.Mock(order_private=lambda i: g.order())
         order_flow.parcel_prepare("1", "yes", shop, gls); second = order_flow.parcel_prepare("1", "yes", shop, gls)
         self.assertEqual(gls.prepare_labels.call_count, 1); self.assertIn("skipped", second)
+
+
+class Issue(unittest.TestCase):
+    def setUp(self):
+        import order_flow, tempfile
+        order_flow.ISSUED = pathlib.Path(tempfile.mkdtemp()) / "inv.json"
+        self.bill = mock.Mock(document=lambda i: {"type": "draft", "comment": "Shopify #1042", "gross_total": 15282, "partner": {"id": 5}},
+                              partner_email=lambda p: "a@b.hu", create_from_draft=mock.Mock(return_value={"id": 77, "invoice_number": "A-2026-9"}),
+                              send_by_email=mock.Mock(return_value=True))
+    def test_dry_run_changes_nothing(self):
+        import order_flow
+        out = order_flow.invoice_issue(1, bill=self.bill); self.assertTrue(out["dry_run"]); self.bill.create_from_draft.assert_not_called()
+        self.assertNotIn("a@b.hu", json.dumps(out))
+    def test_issue_and_send_once(self):
+        import order_flow
+        out = order_flow.invoice_issue(1, "yes", "yes", bill=self.bill)
+        self.assertEqual(out, {"invoice": "A-2026-9", "sent": True}); self.bill.send_by_email.assert_called_once_with(77, ["a@b.hu"])
+        again = order_flow.invoice_issue(1, "yes", "yes", bill=self.bill)
+        self.assertIn("skipped", again); self.assertEqual(self.bill.create_from_draft.call_count, 1); self.assertEqual(self.bill.send_by_email.call_count, 1)
+    def test_issue_then_send_later_does_not_issue_twice(self):
+        import order_flow
+        order_flow.invoice_issue(1, "yes", "no", bill=self.bill)
+        order_flow.invoice_issue(1, "yes", "yes", bill=self.bill)
+        self.assertEqual(self.bill.create_from_draft.call_count, 1); self.assertEqual(self.bill.send_by_email.call_count, 1)
+    def test_not_a_draft(self):
+        import order_flow
+        self.bill.document = lambda i: {"type": "invoice", "partner": {"id": 5}}
+        with self.assertRaises(ConnectorError): order_flow.invoice_issue(1, "yes", bill=self.bill)
