@@ -314,7 +314,7 @@ jinnee.TIMEOUT = 2
 
 class Message:
     def __init__(self, text): self.text, self.replies = text, []
-    async def reply_text(self, text): self.replies.append(text)
+    async def reply_text(self, text, reply_markup=None): self.replies.append(text)
 
 class Bot:
     async def send_message(self, chat_id, text, reply_markup=None): sent.append([chat_id, text])
@@ -561,3 +561,39 @@ class TapButtons(unittest.TestCase):
         brain = pl.Path(tempfile.mkdtemp())
         approvals.Book(brain).add("forge", "publish_social_post", "Post", "s", text="Finished text")
         self.assertEqual(alerts.Watch(brain).due(at(3, 23, 0))["ask"], [])
+
+
+class PlainOk(Bridge):
+    """A bare 'ok' is the owner's decision, recorded by the bridge; it never reaches the agent."""
+    def test_ok_alone_approves_the_single_waiting_item(self):
+        a = self.add()
+        got = self.drive([["msg", OWNER, "ok"]])
+        self.assertEqual(got[0]["ran"], [])
+        self.assertIn("Approved", got[0]["replies"][0])
+        self.assertEqual(self.state(a), ("decided", "ok", "telegram"))
+
+    def test_go_and_oke_work_too_and_are_undoable(self):
+        a = self.add()
+        got = self.drive([["msg", OWNER, "Oké!"], ["msg", OWNER, f"/undo_{a}"]])
+        self.assertIn("Approved", got[0]["replies"][0]); self.assertIn("Undone", got[1]["replies"][0])
+        self.assertEqual(self.state(a)[0], "pending")
+
+    def test_several_items_are_asked_not_guessed(self):
+        a, b = self.add("One"), self.add("Two")
+        got = self.drive([["msg", OWNER, "ok"]])
+        self.assertIn("Which one?", got[0]["replies"][0]); self.assertEqual(got[0]["ran"], [])
+        self.assertEqual((self.state(a)[0], self.state(b)[0]), ("pending", "pending"))
+
+    def test_nothing_waiting_goes_to_the_agent_as_usual(self):
+        got = self.drive([["msg", OWNER, "ok"]])
+        self.assertEqual(got[0]["ran"], ["ok"])
+
+    def test_a_stranger_cannot_approve(self):
+        a = self.add()
+        self.drive([["msg", STRANGER, "ok"]])
+        self.assertEqual(self.state(a)[0], "pending")
+
+    def test_other_sentences_are_not_approvals(self):
+        a = self.add()
+        got = self.drive([["msg", OWNER, "ok, but change the greeting"]])
+        self.assertEqual(got[0]["ran"], ["ok, but change the greeting"]); self.assertEqual(self.state(a)[0], "pending")
