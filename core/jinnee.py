@@ -37,6 +37,8 @@ BOOK = approvals.Book(BRAIN)
 WATCH = alerts.Watch(BRAIN)
 # The agent may run these three programs and nothing else in the shell, and may not edit the files they guard.
 TOOLS = [f"Bash({py} core/{prog}.py *)" for prog in ("approvals", "autonomy", "heartbeat") for py in ("python3", "python")]
+# Lovable (read only: look, never build: building spends the owner's credits and goes through him)
+TOOLS += [f"mcp__claude_ai_Lovable__{t}" for t in ("list_workspaces", "list_projects", "get_project", "list_files", "read_file", "list_edits", "get_diff")]
 # Forge needs to read API docs and run the connectors and tests it writes; still no curl, rm or free shell.
 TOOLS += ["WebFetch", "WebSearch"] + [f"Bash({py} {cmd})" for py in ("python3", "python") for cmd in ("connectors/*", "-m unittest *", "-I connectors/*")]
 GUARDED = [f"Edit(brain/{name})" for name in ("approvals.json", "autonomy_config.json", "alerts_state.json")]
@@ -56,7 +58,7 @@ def system_prompt() -> str:
     parts = [f"Your name is {NAME}. You speak with the owner in language '{LANG}'. Working directory: {ROOT}.\n" + RULES]
     for f in agent_files(PACKS):
         parts.append(f"\n\n===== {f.name} =====\n{f.read_text(encoding='utf-8')}")
-    for b in ("company.md", "lessons.md"):
+    for b in ("company.md", "lessons.md", "forge_notes.md"):
         p = BRAIN / b
         if p.exists(): parts.append(f"\n\n===== brain/{b} =====\n{p.read_text(encoding='utf-8')}")
     parts.append("\n\n===== autonomy levels (what the gate answers right now) =====\n" + BOOK.gate.describe())
