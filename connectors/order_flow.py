@@ -115,10 +115,11 @@ def next_workday(today=None):
     while d.weekday() >= 5: d += dt.timedelta(days=1)
     return d
 
-def gls_parcel(o, gls):
+def gls_parcel(o, gls, house="", info=""):
     """The MyGLS Parcel for an order. Pickup data (your address) comes from GLS_PICKUP_* in .env."""
     sh = o["shipping"] or o["billing"]
-    street, house = split_street(" ".join(x for x in (sh.get("address1"), sh.get("address2")) if x))
+    street, found = split_street(" ".join(x for x in (sh.get("address1"), sh.get("address2")) if x))
+    house = house or found  # a house number given by hand wins
     missing = [k for k, v in (("name", sh.get("name")), ("zip", sh.get("zip")), ("city", sh.get("city")), ("street", street)) if not v]
     if missing: raise ConnectorError(f"{o['name']}: shipping address incomplete ({', '.join(missing)})")
     pick = {k: os.getenv("GLS_PICKUP_" + k.upper(), "").strip() for k in ("name", "street", "house", "city", "zip", "phone", "email")}
@@ -133,24 +134,26 @@ def gls_parcel(o, gls):
             "PickupAddress": {"Name": pick["name"], "Street": pick["street"], "HouseNumber": pick["house"], "City": pick["city"],
                               "ZipCode": pick["zip"], "CountryIsoCode": "HU", "ContactName": pick["name"], "ContactPhone": phone(pick["phone"]),
                               "ContactEmail": pick["email"]},
-            "DeliveryAddress": {"Name": sh["name"], "Street": street, "HouseNumber": house, "City": sh["city"], "ZipCode": sh["zip"],
+            "DeliveryAddress": {"Name": sh["name"], "Street": street, "HouseNumber": house, "HouseNumberInfo": info, "City": sh["city"], "ZipCode": sh["zip"],
                                 "CountryIsoCode": sh.get("country_code") or "HU", "ContactName": sh["name"],
                                 "ContactPhone": phone(o["phone"] or sh.get("phone"), sh.get("country_code") or "HU"), "ContactEmail": o["email"]}}
 
-def parcel_prepare(order_id, send="no", shop=None, gls=None):
+def parcel_prepare(order_id, send="no", house="", info="", replace="no", shop=None, gls=None):
     """Dry run by default: checks the data and says what WOULD be uploaded. send=yes uploads it to MyGLS (prepared, not printed)."""
     shop = shop or _load("shopify"); gls = gls or _load("gls")
     o = shop.order_private(order_id)
     done = _uploaded().get(o["name"])
-    if done:  # one order, one parcel: never a second upload
-        return {"order": o["name"], "skipped": "already uploaded to MyGLS", "parcel_id": done}
-    parcel = gls_parcel(o, gls)
+    if done and replace != "yes":  # one order, one parcel: never a second upload
+        return {"order": o["name"], "skipped": "already uploaded to MyGLS (replace=yes deletes the prepared parcel and uploads it again)", "parcel_id": done}
+    parcel = gls_parcel(o, gls, house, info)
     d = parcel["DeliveryAddress"]
     warn = [w for w, bad in (("house number not found in the address: GLS may refuse or deliver badly", not d["HouseNumber"]),
                              ("no phone number: the courier cannot call", not d["ContactPhone"])) if bad]
     if send != "yes":
-        return {"order": o["name"], "dry_run": True, "cod_amount": parcel["CODAmount"], "pickup": parcel["PickupDate"], "warnings": warn,
+        return {"order": o["name"], "dry_run": True, "replaces": done or None, "cod_amount": parcel["CODAmount"], "pickup": parcel["PickupDate"], "warnings": warn,
                 "next": "run again with --send yes to upload to MyGLS"}
+    if done and done is not True:  # correction: the old prepared parcel goes first; if that fails nothing is uploaded
+        step("delete the old parcel", gls.delete_labels, [done])
     out = step("upload to MyGLS", gls.prepare_labels, [parcel])
     try:
         UPLOADED.parent.mkdir(parents=True, exist_ok=True)

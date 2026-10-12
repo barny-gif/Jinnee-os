@@ -33,6 +33,13 @@ def prepare_labels(parcels):
     if errs: raise ConnectorError("MyGLS: " + "; ".join(f"{e.get('ErrorCode')}: {e.get('ErrorDescription')}" for e in errs))
     return [{"parcel_id": p.get("ParcelId"), "reference": p.get("ClientReference")} for p in data.get("ParcelInfoList") or []]
 
+def delete_labels(parcel_ids):
+    """Deletes PREPARED parcels (not yet printed). Used to correct an upload: delete, then prepare again."""
+    data = _post("DeleteLabels", {"ParcelIdList": [int(i) for i in parcel_ids]})
+    errs = data.get("DeleteLabelsErrorList") or []
+    if errs: raise ConnectorError("MyGLS: " + "; ".join(f"{e.get('ErrorCode')}: {e.get('ErrorDescription')}" for e in errs))
+    return True
+
 def track(parcel_number):
     data = _post("GetParcelStatuses", {"ParcelNumber": int(parcel_number), "ReturnPOD": False, "LanguageIsoCode": "HU"})
     errs = data.get("GetParcelStatusErrors") or []
