@@ -59,11 +59,44 @@ def invoice_draft(order_id, shop=None, bill=None):
     d = step("create draft", bill.post_document, body)
     return {"order": o["name"], "draft_id": d.get("id"), "type": d.get("type")}
 
+ISSUED = HERE.parent / "brain" / "invoices_issued.json"  # draft id -> {"number", "sent"}
 UPLOADED = HERE.parent / "brain" / "gls_uploaded.json"  # order name -> parcel id; brain/ is kept across rebuilds
 
 def _uploaded():
     try: return json.loads(UPLOADED.read_text(encoding="utf-8"))
     except (OSError, ValueError): return {}
+
+def _issued():
+    try: return json.loads(ISSUED.read_text(encoding="utf-8"))
+    except (OSError, ValueError): return {}
+
+def invoice_issue(draft_id, confirm="no", send="no", bill=None):
+    """Draft -> real invoice -> (optionally) e-mailed to the customer. Dry run unless confirm=yes.
+    Only run it for an item that has a GO from `core/approvals.py consume` (action issue_invoice / send_customer_email)."""
+    bill = bill or _load("billingo")
+    done = _issued().get(str(draft_id))
+    if done and (send != "yes" or done.get("sent")):
+        return {"skipped": "already issued" + (" and sent" if done.get("sent") else ""), "invoice": done.get("number")}
+    doc = bill.document(draft_id)
+    if not done and doc.get("type") != "draft":
+        raise ConnectorError(f"document {draft_id} is not a draft (type {doc.get('type')}): nothing to issue")
+    mail = bill.partner_email((doc.get("partner") or {}).get("id")) if send == "yes" else ""
+    if send == "yes" and not mail: raise ConnectorError("the customer has no e-mail address in Billingo: issue without sending, or add one")
+    if confirm != "yes":
+        return {"dry_run": True, "comment": doc.get("comment"), "total": doc.get("gross_total"), "would_send": send == "yes",
+                "next": "--confirm yes issues the invoice (cannot be undone); add --send yes to e-mail it"}
+    if done: inv = {"id": done.get("id"), "invoice_number": done.get("number")}
+    else:
+        inv = step("issue invoice", bill.create_from_draft, draft_id)
+        rec = {"id": inv.get("id"), "number": inv.get("invoice_number"), "sent": False}
+        ISSUED.parent.mkdir(parents=True, exist_ok=True)
+        ISSUED.write_text(json.dumps({**_issued(), str(draft_id): rec}), encoding="utf-8")  # recorded BEFORE sending
+    out = {"invoice": inv.get("invoice_number")}
+    if send == "yes":
+        step("send e-mail", bill.send_by_email, inv.get("id"), [mail])
+        ISSUED.write_text(json.dumps({**_issued(), str(draft_id): {"id": inv.get("id"), "number": inv.get("invoice_number"), "sent": True}}), encoding="utf-8")
+        out["sent"] = True
+    return out
 
 def split_street(address):
     """'Fő u. 12/B' -> ('Fő u.', '12/B'). GLS wants street and house number apart. No number found -> ('whole text', '')."""
@@ -128,5 +161,5 @@ def parcel_prepare(order_id, send="no", house="", info="", replace="no", shop=No
     except OSError: warn.append("could not record the upload: do not run this order again")
     return {"order": o["name"], "uploaded": out, "warnings": warn}
 
-OPS = {"invoice_draft": invoice_draft, "parcel_prepare": parcel_prepare}
+OPS = {"invoice_draft": invoice_draft, "invoice_issue": invoice_issue, "parcel_prepare": parcel_prepare}
 if __name__ == "__main__": sys.exit(run_cli(OPS))
