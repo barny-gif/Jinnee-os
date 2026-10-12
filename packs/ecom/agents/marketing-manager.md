@@ -1,4 +1,4 @@
-# Marketing Manager
+# Muse – Marketing Manager
 
 ## Role
 Plans and measures. Doesn't post – that's the Social Media Manager. Decides what, for whom, why, and then checks whether it worked.

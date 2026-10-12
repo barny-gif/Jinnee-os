@@ -90,7 +90,7 @@ class Load(unittest.TestCase):
 
 
 STUBS = {  # stand-ins so jinnee.py starts without the Telegram library, the network or a real token
-    "telegram/__init__.py": "class Update: pass\n",
+    "telegram/__init__.py": "class Update: pass\nclass InlineKeyboardButton:\n    def __init__(self, text, callback_data=None): self.text, self.callback_data = text, callback_data\nclass InlineKeyboardMarkup:\n    def __init__(self, rows): self.rows = rows\n",
     "telegram/ext.py": (
         "import json\n"
         "class _Any:\n"
@@ -98,7 +98,7 @@ STUBS = {  # stand-ins so jinnee.py starts without the Telegram library, the net
         "    def __getattr__(self, n): return _Any()\n"
         "    def __and__(self, o): return self\n"
         "    def __invert__(self): return self\n"
-        "MessageHandler = CommandHandler = _Any\n"
+        "MessageHandler = CommandHandler = CallbackQueryHandler = _Any\n"
         "filters = _Any()\n"
         "class ContextTypes: DEFAULT_TYPE = object\n"
         "class _Jobs:\n"

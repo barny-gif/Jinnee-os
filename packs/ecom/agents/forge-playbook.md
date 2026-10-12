@@ -25,3 +25,8 @@ Facts below were confirmed against the real systems on 2026-10-11. New lessons g
 ## Habits that paid off
 - Make errors name the failing step (`[create draft] ...`), so one run is enough to diagnose.
 - A value that "is in .env" is only seen by the container after `docker compose up -d` recreates it.
+
+## Shopify through the claude.ai connector (read only, no personal data)
+Besides `connectors/shopify`, the team can read the shop through the owner's Shopify connector (tools `mcp__claude_ai_Shopify__*`): shop info, products, collections, stock levels and ShopifyQL sales numbers (`run-analytics-query`). Use it for catalogue, stock and revenue questions.
+- Orders and customers are not allowed through it: use `connectors/shopify` (order numbers only). In a ShopifyQL query never group or select by customer, name, e-mail or address.
+- If the tool is missing on a run, say so; do not guess data.

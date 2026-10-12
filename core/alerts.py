@@ -87,7 +87,7 @@ class Watch:
     def due(self, now=None):
         """→ {"messages": [...], "hand_over": [items], "state": {...}}. Writes nothing: call done() once the messages are out."""
         now = now or time.time()
-        s, messages = self.state(), []
+        s, messages, ask = self.state(), [], []
         pending, decided, running = self.book.open_items()
         alive = {i["id"] for i in pending + decided + running}
         for key in ("asked", "handed", "stuck"):
@@ -99,7 +99,7 @@ class Watch:
         for i in hand_over: s["handed"][i["id"]] = int(now)
 
         if quiet(now):
-            return {"messages": [], "hand_over": hand_over, "state": s}
+            return {"messages": [], "hand_over": hand_over, "ask": [], "state": s}
 
         new = [i for i in pending if i["id"] not in s["asked"]]
         if new:
@@ -110,6 +110,7 @@ class Watch:
                 if warning: rows.append(f"   not sendable as it is: {warning}")
                 s["asked"][i["id"]] = int(now)
             one = new[0]["id"]
+            ask = [i["id"] for i in new][:5]  # the bridge puts tap buttons under this message
             messages.append("Waiting for your decision:\n" + "\n".join(rows) +
                             f"\n\n/ok {one} · /change {one} what to change · /drop {one} why\nOr use the dashboard.")
 
@@ -152,7 +153,7 @@ class Watch:
         for p in problems:
             if p not in s["problems"]: messages.append("Something needs your attention: " + p)
         s["problems"] = problems
-        return {"messages": messages, "hand_over": hand_over, "state": s}
+        return {"messages": messages, "hand_over": hand_over, "ask": ask, "state": s}
 
     def done(self, plan):
         with store.locked(self.brain):
