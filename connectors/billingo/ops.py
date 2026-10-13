@@ -27,7 +27,8 @@ def _validation(r):
 def _doc(d):
     return {"id": d.get("id"), "number": d.get("invoice_number"), "type": d.get("type"), "date": d.get("invoice_date"),
             "paid": d.get("payment_status"), "total": d.get("gross_total"), "currency": d.get("currency"),
-            "comment": d.get("comment") or "", "partner": (d.get("partner") or {}).get("name")}
+            "comment": d.get("comment") or "", "partner": (d.get("partner") or {}).get("name"),
+            "email": d.get("notification_status")}  # what happened to the e-mailed invoice: none / opened / readed / downloaded / closed / failed
 
 def list_invoices(days="14", per_page="100"):
     since = (dt.date.today() - dt.timedelta(days=int(days))).isoformat()

@@ -5,4 +5,4 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-CMD ["bash", "-c", "python core/jinnee.py & python dashboard/app.py"]
+CMD ["bash", "-c", "python core/jinnee.py & python connectors/ecom_sync.py loop & python dashboard/app.py"]
