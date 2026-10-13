@@ -15,8 +15,14 @@ def _call(method, path, params=None, body=None):
         raise ConnectorError(f"Billingo did not answer: {type(e).__name__}")
     if r.status_code in (401, 403): raise ConnectorError("Billingo: the API key was refused - check BILLINGO_API_KEY")
     if r.status_code == 429: raise ConnectorError("Billingo: rate limit (429), try again in a minute")
+    if r.status_code == 422: raise ConnectorError(f"Billingo answered 422: {_validation(r)}")  # field names and rules only: show them all
     if not r.ok: raise ConnectorError(f"Billingo answered {r.status_code}: {r.text[:200]}")
     return r
+
+def _validation(r):
+    try: errors = r.json().get("errors") or []
+    except ValueError: return r.text[:200]
+    return "; ".join(f"{e.get('field')}: {e.get('message')}" for e in errors if isinstance(e, dict))[:800] or r.text[:200]
 
 def _doc(d):
     return {"id": d.get("id"), "number": d.get("invoice_number"), "type": d.get("type"), "date": d.get("invoice_date"),
@@ -88,7 +94,8 @@ def create_from_draft(id):
             "fulfillment_date": d.get("fulfillment_date"), "due_date": max(d.get("due_date") or today, today),  # a due date in the past is refused
             "payment_method": d.get("payment_method"), "language": d.get("language"), "currency": d.get("currency"),
             "conversion_rate": d.get("conversion_rate") or 1, "electronic": bool(d.get("electronic")), "items": items, "comment": d.get("comment") or ""}
-    if d.get("settings"): body["settings"] = d["settings"]
+    settings = {k: v for k, v in (d.get("settings") or {}).items() if v not in (None, "")}  # a draft comes back with empty settings (place_id: null), which the PUT refuses (422)
+    if settings: body["settings"] = settings
     missing = [k for k in ("partner_id", "block_id", "fulfillment_date", "payment_method", "language", "currency") if not body.get(k)]
     if missing: raise ConnectorError(f"draft {id}: {', '.join(missing)} missing, not issued")
     return _call("PUT", f"/documents/{id}", body=body).json()

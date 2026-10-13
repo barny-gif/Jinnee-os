@@ -49,6 +49,19 @@ class Bill(unittest.TestCase):
         self.assertEqual((body["partner_id"], body["block_id"], body["payment_method"], body["comment"]), (5, 3, "bankcard", "Shopify #1042"))
         self.assertEqual(body["items"][0], {"name": "Kalandkönyv", "unit_price": 6696.0, "unit_price_type": "gross", "quantity": 2.0, "unit": "db", "vat": "AAM"})
         self.assertGreaterEqual(body["due_date"], __import__("datetime").date.today().isoformat()); self.assertNotIn("Secret", json.dumps(body))
+    def test_issue_leaves_out_empty_settings(self):
+        draft = {**self.DRAFT, "settings": {"place_id": None, "dont_send_to_nav_reason": "", "round": "one", "without_financial_fulfillment": False}}
+        with mock.patch("requests.request", side_effect=[Resp(draft), Resp({"id": 9, "invoice_number": "MV-2026-1"})]) as r:
+            self.m.create_from_draft(9)
+        self.assertEqual(r.call_args_list[1].kwargs["json"]["settings"], {"round": "one", "without_financial_fulfillment": False})
+        with mock.patch("requests.request", side_effect=[Resp({**self.DRAFT, "settings": {"place_id": None}}), Resp({"id": 9})]) as r:
+            self.m.create_from_draft(9)
+        self.assertNotIn("settings", r.call_args_list[1].kwargs["json"])
+    def test_validation_error_names_every_field(self):
+        errors = [{"field": "settings.place_id", "message": "must be an integer"}, {"field": "settings.dont_send_to_nav_reason", "message": "is invalid " + "x" * 300}]
+        with mock.patch("requests.request", side_effect=[Resp(self.DRAFT), Resp({"message": "Validation Failed", "errors": errors}, 422)]):
+            with self.assertRaises(ConnectorError) as e: self.m.create_from_draft(9)
+        self.assertIn("settings.place_id", str(e.exception)); self.assertIn("settings.dont_send_to_nav_reason", str(e.exception))
     def test_issue_refused_when_lines_do_not_add_up(self):
         with mock.patch("requests.request", side_effect=[Resp({**self.DRAFT, "gross_total": 20000})]) as r:
             with self.assertRaises(ConnectorError): self.m.create_from_draft(9)
