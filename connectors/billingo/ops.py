@@ -68,8 +68,30 @@ def partner_email(partner_id):
     return emails[0] if emails else ""
 
 def create_from_draft(id):
-    """Turns a draft into a real, numbered invoice. IRREVERSIBLE (a tax document: only a storno can undo it)."""
-    return _call("POST", f"/documents/{id}/create-from-draft").json()
+    """Turns a draft into a real, numbered invoice. IRREVERSIBLE (a tax document: only a storno can undo it).
+    Billingo has no "issue this draft" call: PUT /documents/{id} takes the whole document again (DocumentInsert) with type=invoice,
+    so the body is rebuilt from the stored draft. If the rebuilt lines do not add up to the draft's total, nothing is issued."""
+    d = document(id)
+    if d.get("type") != "draft": raise ConnectorError(f"document {id} is not a draft (type {d.get('type')}): nothing to issue")
+    items = []
+    for i in d.get("items") or []:
+        q = float(i.get("quantity") or 0)
+        if q <= 0: raise ConnectorError(f"draft {id}: a line has no quantity, issue it in Billingo by hand")
+        line = {"name": i.get("name"), "unit_price": round(float(i.get("gross_amount") or 0) / q, 2), "unit_price_type": "gross",
+                "quantity": q, "unit": i.get("unit"), "vat": i.get("vat")}
+        items.append({**line, **{k: i[k] for k in ("comment", "entitlement") if i.get(k)}})
+    total = round(sum(l["unit_price"] * l["quantity"] for l in items), 2)
+    if not items or abs(total - float(d.get("gross_total") or 0)) > 1:
+        raise ConnectorError(f"draft {id}: the lines add up to {total}, the draft says {d.get('gross_total')}; not issued, check it in Billingo")
+    today = dt.date.today().isoformat()
+    body = {"partner_id": (d.get("partner") or {}).get("id"), "block_id": d.get("block_id"), "type": "invoice",
+            "fulfillment_date": d.get("fulfillment_date"), "due_date": max(d.get("due_date") or today, today),  # a due date in the past is refused
+            "payment_method": d.get("payment_method"), "language": d.get("language"), "currency": d.get("currency"),
+            "conversion_rate": d.get("conversion_rate") or 1, "electronic": bool(d.get("electronic")), "items": items, "comment": d.get("comment") or ""}
+    if d.get("settings"): body["settings"] = d["settings"]
+    missing = [k for k in ("partner_id", "block_id", "fulfillment_date", "payment_method", "language", "currency") if not body.get(k)]
+    if missing: raise ConnectorError(f"draft {id}: {', '.join(missing)} missing, not issued")
+    return _call("PUT", f"/documents/{id}", body=body).json()
 
 def mark_paid(id, price, payment_method, date=""):
     """Records the payment on an issued invoice, so it shows as paid (not as outstanding). Replaces the payment history."""

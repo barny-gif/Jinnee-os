@@ -36,6 +36,27 @@ class Bill(unittest.TestCase):
         with mock.patch("requests.request", return_value=Resp({"id": 5, "type": "draft"})) as r:
             self.m.create_draft(str(p))
         self.assertEqual(r.call_args.kwargs["json"]["type"], "draft")
+    DRAFT = {"id": 9, "type": "draft", "block_id": 3, "partner": {"id": 5, "name": "Secret"}, "fulfillment_date": "2026-10-13", "due_date": "2020-01-01",
+             "payment_method": "bankcard", "language": "hu", "currency": "HUF", "conversion_rate": 1, "electronic": False, "comment": "Shopify #1042",
+             "gross_total": 15282, "items": [{"name": "Kalandkönyv", "quantity": 2, "unit": "db", "vat": "AAM", "gross_amount": 13392, "net_amount": 13392},
+                                             {"name": "Szállítás", "quantity": 1, "unit": "db", "vat": "AAM", "gross_amount": 1890}]}
+    def test_issue_from_draft_puts_the_whole_document(self):
+        with mock.patch("requests.request", side_effect=[Resp(self.DRAFT), Resp({"id": 9, "invoice_number": "MV-2026-1"})]) as r:
+            out = self.m.create_from_draft(9)
+        self.assertEqual(out["invoice_number"], "MV-2026-1"); self.assertEqual(r.call_count, 2)
+        put = r.call_args_list[1]; body = put.kwargs["json"]
+        self.assertEqual(put.args[:2], ("PUT", self.m.BASE + "/documents/9")); self.assertEqual(body["type"], "invoice")
+        self.assertEqual((body["partner_id"], body["block_id"], body["payment_method"], body["comment"]), (5, 3, "bankcard", "Shopify #1042"))
+        self.assertEqual(body["items"][0], {"name": "Kalandkönyv", "unit_price": 6696.0, "unit_price_type": "gross", "quantity": 2.0, "unit": "db", "vat": "AAM"})
+        self.assertGreaterEqual(body["due_date"], __import__("datetime").date.today().isoformat()); self.assertNotIn("Secret", json.dumps(body))
+    def test_issue_refused_when_lines_do_not_add_up(self):
+        with mock.patch("requests.request", side_effect=[Resp({**self.DRAFT, "gross_total": 20000})]) as r:
+            with self.assertRaises(ConnectorError): self.m.create_from_draft(9)
+        self.assertEqual(r.call_count, 1)  # only the read, nothing issued
+    def test_issue_refused_when_not_a_draft(self):
+        with mock.patch("requests.request", side_effect=[Resp({**self.DRAFT, "type": "invoice"})]) as r:
+            with self.assertRaises(ConnectorError): self.m.create_from_draft(9)
+        self.assertEqual(r.call_count, 1)
 
 class Panel(unittest.TestCase):
     def test_match_and_gaps(self):
