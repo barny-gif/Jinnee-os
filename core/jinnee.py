@@ -114,13 +114,15 @@ def run_agent(message: str) -> str:
     if not ok: log.warning("agent run failed: %s", note)
     return out
 
-async def say(send, text):
+async def say(send, text, markup=None):
     for i in range(0, len(text), 4000):
-        await send(text[i:i+4000])
+        last = i + 4000 >= len(text)
+        await send(text[i:i+4000], **({"reply_markup": markup} if markup is not None and last else {}))
 
 # --- the owner's decisions, recorded without the agent in between
 COMMAND = re.compile(r"/(ok|change|drop|undo|pending)(?:@\w+)?(?:[_ ]+(\S+))?(?:\s+(.*))?", re.S)
 DECISION = {"ok": "ok", "change": "edit", "drop": "drop"}
+PLAIN_OK = {"ok", "oké", "oke", "go", "mehet"}  # said alone, they approve the one waiting item; the /undo window still applies
 AWAITING = {}  # {"id", "decision", "until"} while the bridge waits for the owner's words after a bare /change or /drop
 AWAIT_SECONDS = 600  # after that the next message is an ordinary message again
 
@@ -179,7 +181,16 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try: reply = await asyncio.to_thread(decide, item_id, decision, text)
         except approvals.Refused as e: reply = str(e)[:1].upper() + str(e)[1:]
         return await say(update.message.reply_text, reply)
-    await say(update.message.reply_text, await asyncio.to_thread(run_agent, text))
+    if text.strip().strip(".!").lower() in PLAIN_OK:  # a bare "ok" from the owner: one waiting item is approved, several are asked about
+        pending = BOOK.open_items()[0]
+        if len(pending) == 1:
+            return await say(update.message.reply_text, await asyncio.to_thread(decide, pending[0]["id"], "ok", ""))
+        if len(pending) > 1:
+            ids = [i["id"] for i in pending][:5]
+            return await say(update.message.reply_text, "Which one?\n" + "\n".join(f"• {alerts.line(BOOK, i)}" for i in pending), buttons(ids))
+    reply = await asyncio.to_thread(run_agent, text)
+    ids = [i["id"] for i in BOOK.open_items()[0] if i["id"] in reply][:5]  # the agent named a waiting item: put the tap buttons under it
+    await say(update.message.reply_text, reply, buttons(ids))
 
 def buttons(ids):
     """Tap instead of typing: one row per waiting item. The tap goes through the same owner_command as /ok, /change, /drop."""
