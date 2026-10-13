@@ -36,6 +36,9 @@ class Bill(unittest.TestCase):
         with mock.patch("requests.request", return_value=Resp({"id": 5, "type": "draft"})) as r:
             self.m.create_draft(str(p))
         self.assertEqual(r.call_args.kwargs["json"]["type"], "draft")
+    def test_status_shows_what_happened_to_the_email(self):
+        with mock.patch("requests.request", return_value=Resp({"id": 5, "type": "invoice", "invoice_number": "MV-2026-1", "notification_status": "opened"})):
+            self.assertEqual(self.m.status("5")["email"], "opened")
     DRAFT = {"id": 9, "type": "draft", "block_id": 3, "partner": {"id": 5, "name": "Secret"}, "fulfillment_date": "2026-10-13", "due_date": "2020-01-01",
              "payment_method": "bankcard", "language": "hu", "currency": "HUF", "conversion_rate": 1, "electronic": False, "comment": "Shopify #1042",
              "gross_total": 15282, "items": [{"name": "Kalandkönyv", "quantity": 2, "unit": "db", "vat": "AAM", "gross_amount": 13392, "net_amount": 13392},
