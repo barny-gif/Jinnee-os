@@ -47,6 +47,8 @@ class Watching(unittest.TestCase):
 
 
 class QuietHours(unittest.TestCase):
+    def setUp(self):  # at() is this machine's clock: a JINNEE_TZ set on the machine (the container has one) would shift every hour
+        p = mock.patch.dict(os.environ); p.start(); self.addCleanup(p.stop); os.environ.pop("JINNEE_TZ", None)
     def test_default_window_wraps_midnight(self):
         for hour, minute, expected in ((20, 59, False), (21, 0, True), (23, 30, True), (0, 0, True), (6, 59, True), (7, 0, False), (12, 0, False)):
             self.assertEqual(alerts.quiet(at(3, hour, minute), "21:00-07:00"), expected, (hour, minute))
