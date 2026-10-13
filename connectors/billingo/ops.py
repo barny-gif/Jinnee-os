@@ -71,6 +71,12 @@ def create_from_draft(id):
     """Turns a draft into a real, numbered invoice. IRREVERSIBLE (a tax document: only a storno can undo it)."""
     return _call("POST", f"/documents/{id}/create-from-draft").json()
 
+def mark_paid(id, price, payment_method, date=""):
+    """Records the payment on an issued invoice, so it shows as paid (not as outstanding). Replaces the payment history."""
+    day = date or dt.date.today().isoformat()
+    _call("PUT", f"/documents/{id}/payments", body=[{"date": day, "price": price, "payment_method": payment_method}])
+    return True
+
 def send_by_email(id, emails):
     _call("POST", f"/documents/{id}/send", body={"emails": list(emails)})
     return True

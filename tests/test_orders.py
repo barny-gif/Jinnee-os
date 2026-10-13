@@ -197,6 +197,16 @@ class Issue(unittest.TestCase):
         order_flow.invoice_issue(1, "yes", "no", bill=self.bill)
         order_flow.invoice_issue(1, "yes", "yes", bill=self.bill)
         self.assertEqual(self.bill.create_from_draft.call_count, 1); self.assertEqual(self.bill.send_by_email.call_count, 1)
+    def test_paid_order_records_payment_once(self):
+        import order_flow
+        self.bill.document = lambda i: {"type": "draft", "comment": "Shopify #1042", "gross_total": 15282, "payment_method": "bankcard", "partner": {"id": 5}}
+        out = order_flow.invoice_issue(1, "yes", "yes", "yes", bill=self.bill)
+        self.assertEqual(out, {"invoice": "A-2026-9", "paid": True, "sent": True})
+        self.bill.mark_paid.assert_called_once_with(77, 15282, "bankcard")
+        self.assertIn("skipped", order_flow.invoice_issue(1, "yes", "yes", "yes", bill=self.bill)); self.assertEqual(self.bill.mark_paid.call_count, 1)
+    def test_unpaid_order_is_not_marked_paid(self):
+        import order_flow
+        order_flow.invoice_issue(1, "yes", "yes", bill=self.bill); self.bill.mark_paid.assert_not_called()
     def test_not_a_draft(self):
         import order_flow
         self.bill.document = lambda i: {"type": "invoice", "partner": {"id": 5}}

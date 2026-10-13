@@ -70,12 +70,13 @@ def _issued():
     try: return json.loads(ISSUED.read_text(encoding="utf-8"))
     except (OSError, ValueError): return {}
 
-def invoice_issue(draft_id, confirm="no", send="no", bill=None):
+def invoice_issue(draft_id, confirm="no", send="no", paid="no", bill=None):
     """Draft -> real invoice -> (optionally) e-mailed to the customer. Dry run unless confirm=yes.
+    paid=yes records the payment on the invoice (use it only when the Shopify order is PAID, e.g. card or already transferred).
     Only run it for an item that has a GO from `core/approvals.py consume` (action issue_invoice / send_customer_email)."""
     bill = bill or _load("billingo")
     done = _issued().get(str(draft_id))
-    if done and (send != "yes" or done.get("sent")):
+    if done and (send != "yes" or done.get("sent")) and (paid != "yes" or done.get("paid")):
         return {"skipped": "already issued" + (" and sent" if done.get("sent") else ""), "invoice": done.get("number")}
     doc = bill.document(draft_id)
     if not done and doc.get("type") != "draft":
@@ -83,19 +84,24 @@ def invoice_issue(draft_id, confirm="no", send="no", bill=None):
     mail = bill.partner_email((doc.get("partner") or {}).get("id")) if send == "yes" else ""
     if send == "yes" and not mail: raise ConnectorError("the customer has no e-mail address in Billingo: issue without sending, or add one")
     if confirm != "yes":
-        return {"dry_run": True, "comment": doc.get("comment"), "total": doc.get("gross_total"), "would_send": send == "yes",
+        return {"dry_run": True, "comment": doc.get("comment"), "total": doc.get("gross_total"), "would_send": send == "yes", "would_mark_paid": paid == "yes",
                 "next": "--confirm yes issues the invoice (cannot be undone); add --send yes to e-mail it"}
     if done: inv = {"id": done.get("id"), "invoice_number": done.get("number")}
     else:
         inv = step("issue invoice", bill.create_from_draft, draft_id)
-        rec = {"id": inv.get("id"), "number": inv.get("invoice_number"), "sent": False}
+        rec = {"id": inv.get("id"), "number": inv.get("invoice_number"), "sent": False, "paid": False}
         ISSUED.parent.mkdir(parents=True, exist_ok=True)
         ISSUED.write_text(json.dumps({**_issued(), str(draft_id): rec}), encoding="utf-8")  # recorded BEFORE sending
     out = {"invoice": inv.get("invoice_number")}
+    def remember(**more):
+        rec = {**_issued().get(str(draft_id), {"id": inv.get("id"), "number": inv.get("invoice_number")}), **more}
+        ISSUED.write_text(json.dumps({**_issued(), str(draft_id): rec}), encoding="utf-8")
+    if paid == "yes" and not (done or {}).get("paid"):
+        step("mark paid", bill.mark_paid, inv.get("id"), doc.get("gross_total"), doc.get("payment_method"))
+        remember(paid=True); out["paid"] = True
     if send == "yes":
         step("send e-mail", bill.send_by_email, inv.get("id"), [mail])
-        ISSUED.write_text(json.dumps({**_issued(), str(draft_id): {"id": inv.get("id"), "number": inv.get("invoice_number"), "sent": True}}), encoding="utf-8")
-        out["sent"] = True
+        remember(sent=True); out["sent"] = True
     return out
 
 def split_street(address):
