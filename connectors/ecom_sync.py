@@ -2,7 +2,8 @@
 product list, the store's visitors and the Shopify app's scopes. It reads Shopify, Billingo, MyGLS tracking (each parcel at most
 hourly, state in brain/gls_status.json) and brain/gls_uploaded.json. Its one write: when GLS has picked a parcel up, the order is
 marked fulfilled in Shopify with the parcel number, without e-mailing the customer (owner, 2026-10-15), once per order
-(brain/shopify_fulfilled.json); only when really sending, never in a dry run; SHOPIFY_AUTO_FULFILL=no switches it off.
+(brain/shopify_fulfilled.json); only when really sending, never in a dry run. OFF unless SHOPIFY_AUTO_FULFILL=yes, and once on
+it only fulfills parcels picked up after it was switched on (brain/shopify_fulfill_start.json; SHOPIFY_FULFILL_SINCE back-fills).
 The site never calls this machine.
 Customer contact data (name, e-mail, phone, addresses) is sent too, in a separate "private" block per order: the owner decided
 on 2026-10-12 that it may live in the site's protected table. It goes nowhere else: this file never prints or logs it, and the
@@ -39,6 +40,9 @@ GLS_FINAL = ("delivered", "returned")  # never asked again
 FULFILLED = HERE.parent / "brain" / "shopify_fulfilled.json"  # order name -> {order_id, tracking, at, fulfillment_id} or {..., error, tried}
 FULFILL_RETRY = 1800  # a failed Shopify fulfillment is tried again after 30 minutes, not every round
 PICKED_UP = ("handed_to_gls", "in_transit", "out_for_delivery", "delivered", "returned", "problem")  # GLS had the parcel
+# When automatic fulfillment was first switched on: only parcels GLS picked up at or after this moment are fulfilled, so turning
+# it on never back-fills older orders. SHOPIFY_FULFILL_SINCE (ISO date/time) in .env is the explicit way to ask for older ones.
+FULFILL_START = HERE.parent / "brain" / "shopify_fulfill_start.json"
 _bill_cache = {"at": 0.0, "days": None, "docs": None}
 _gls_fail = {"at": 0.0, "error": None}
 
@@ -120,9 +124,33 @@ def _ship_fields(s, is_cod, invoice):
     return out
 
 def _auto_fulfill():
-    """SHOPIFY_AUTO_FULFILL=no switches the automatic Shopify fulfillment off (rollback without a deploy). On by default:
-    the owner asked for it on 2026-10-15."""
-    return os.getenv("SHOPIFY_AUTO_FULFILL", "yes").strip().lower() not in ("no", "0", "false", "off")
+    """OFF by default (owner, 2026-10-15): only SHOPIFY_AUTO_FULFILL=yes in .env switches the automatic Shopify fulfillment on."""
+    return os.getenv("SHOPIFY_AUTO_FULFILL", "").strip().lower() == "yes"
+
+def _iso(ts): return dt.datetime.fromtimestamp(ts, dt.timezone.utc).isoformat(timespec="seconds")
+
+def _ts(value):
+    """ISO date or date/time -> epoch seconds (a date or a time without zone counts as UTC); None if unreadable."""
+    try: d = dt.datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except ValueError: return None
+    return (d if d.tzinfo else d.replace(tzinfo=dt.timezone.utc)).timestamp()
+
+def _fulfill_since(now, write=True):
+    """→ (epoch seconds, error). SHOPIFY_FULFILL_SINCE wins (explicit back-fill); otherwise the moment recorded in
+    brain/shopify_fulfill_start.json, written the first time this really runs with fulfillment switched on (a dry run
+    only assumes 'now' and writes nothing)."""
+    env = os.getenv("SHOPIFY_FULFILL_SINCE", "").strip()
+    if env:
+        t = _ts(env)
+        return (t, None) if t is not None else (None, "[Shopify fulfillment] SHOPIFY_FULFILL_SINCE is not a date: nothing fulfilled")
+    try:
+        t = _ts(json.loads(FULFILL_START.read_text(encoding="utf-8"))["since"])
+        if t is not None: return t, None
+    except (OSError, ValueError, KeyError, TypeError): pass
+    if not write: return now, None
+    FULFILL_START.parent.mkdir(parents=True, exist_ok=True)
+    FULFILL_START.write_text(json.dumps({"since": _iso(now), "note": "auto fulfillment switched on; older pickups are not back-filled"}), encoding="utf-8")
+    return now, None
 
 def _fulfilled():
     try: return json.loads(FULFILLED.read_text(encoding="utf-8"))
@@ -136,15 +164,20 @@ def _fulfillments(raw, shipping, shop, now, act=False):
     (they normally have no GLS label, so they never reach this point). act=False (dry run): nothing is sent or written, the
     names are only listed. → (record, errors, names fulfilled (or, in a dry run, to be fulfilled) in this round)"""
     done, errors, new, changed = _fulfilled(), [], [], False
-    if raw is None: return done, errors, new
+    if raw is None or not _auto_fulfill(): return done, errors, new  # off by default: nothing is read, written or sent
+    since, err = _fulfill_since(now, write=act)
+    if err: return done, [err], new
     try:
         for o in raw:
             name = o.get("name") or ""
             s = (shipping or {}).get(name) or {}
             rec = done.get(name) or {}
-            if rec.get("at") or o.get("cancelled_at") or not _auto_fulfill(): continue
+            if rec.get("at") or o.get("cancelled_at"): continue
             if (o.get("fulfillment_status") or "") == "fulfilled": continue  # done in Shopify by hand: nothing to do
             if not (s.get("handed_at") or s.get("state") in PICKED_UP) or not s.get("parcel_number"): continue
+            # Picked up before fulfillment was switched on (or pickup time unknown): never back-filled unless SHOPIFY_FULFILL_SINCE asks
+            handed = _ts(s["handed_at"]) if s.get("handed_at") else None
+            if handed is None or handed < since: continue
             if rec.get("error") and now - rec.get("tried", 0) < FULFILL_RETRY: errors.append(rec["error"]); continue
             if not act: new.append(name); continue
             kind = any(c.get("field") == "kind" for c in order_checks.check(o))
@@ -257,8 +290,8 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False):
                             {"key": "shopify_products", "label": "Shopify products", "ok": prod_err is None, "error": prod_err},
                             {"key": "shopify_visitors", "label": "Shopify visitors", "ok": traffic_err is None, "error": traffic_err},
                             {"key": "gls_tracking", "label": "GLS tracking", "ok": gls_err is None, "error": gls_err},
-                            {"key": "shopify_fulfillment", "label": "Shopify fulfillment", "ok": fulfill_err is None and _auto_fulfill(),
-                             "error": fulfill_err or (None if _auto_fulfill() else "switched off (SHOPIFY_AUTO_FULFILL=no)")},
+                            {"key": "shopify_fulfillment", "label": "Shopify fulfillment" if _auto_fulfill() else "Shopify fulfillment (off)",
+                             "ok": fulfill_err is None, "error": fulfill_err},
                             {"key": "shopify_scopes", "label": "Shopify scopes", "ok": bool(scopes and scopes["ok"]),
                              "error": scopes_err or (f"missing: {', '.join(scopes['missing'])}" if scopes and scopes["missing"] else None)}],
             "traffic": traffic,  # None = could not be read: the site keeps what it has and says so, never shows zero

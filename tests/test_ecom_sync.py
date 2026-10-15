@@ -13,6 +13,7 @@ def load(traffic=True):
     s = importlib.util.spec_from_file_location("t_ecom_sync2", path); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
     tmp = pathlib.Path(tempfile.mkdtemp())
     m.UPLOADED, m.GLS_STATUS, m.FULFILLED = tmp / "up.json", tmp / "gls_status.json", tmp / "fulfilled.json"  # never the real brain/
+    m.FULFILL_START = tmp / "fulfill_start.json"
     m._gls_fail.update(at=0.0, error=None)
     real = m._load
     m._load = lambda name: fake_gls() if name == "gls" else real(name)  # no test ever reaches MyGLS
@@ -201,6 +202,16 @@ class GlsTracking(unittest.TestCase):
         _, cod = self.m.build(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill([{"comment": "#1025", "type": "invoice", "number": "MV-2026-9"}]),
                               now=10_000 + 3600, gls=self.gls)["orders"]
         self.assertFalse(cod["cod_invoice_due"])
+    def test_cod_held_at_depot_code_07_is_picked_up_but_no_invoice(self):
+        """Live 2026-10-15: #1024 COD, newest status 07 'Depó tárolás' after 86 'Lehívás - felvett csomag'."""
+        held = [{**S("Depó tárolás", "2026-10-15T04:07:03+00:00"), "code": "07"}, {**S("Meghat. időpontra történő kisz", "2026-10-14T05:34:03+00:00"), "code": "09"},
+                {**S("Lehívás - felvett csomag", "2026-10-13T08:24:28+00:00"), "code": "86"}, {**S("Utánvét adat rögzítve", "2026-10-12T10:56:03+00:00"), "code": "52"}]
+        self.m.UPLOADED.write_text(json.dumps({"#1025": 549107707}))
+        g = fake_gls({"549107707": "3423946814"}, {"3423946814": held})
+        cod = self.m.build(shop=shop(orders=(COD_ORDER,)), bill=bill(), now=10_000, gls=g)["orders"][0]
+        self.assertEqual((cod["shipping"]["state"], cod["shipping"]["code"]), ("problem", "07"))
+        self.assertEqual(cod["shipping"]["handed_at"], "2026-10-13T08:24:28+00:00")  # GLS picked it up from us
+        self.assertEqual(cod["delivered"], {"state": "no", "at": None}); self.assertFalse(cod["cod_invoice_due"])
     def test_hourly_and_never_again_once_delivered(self):
         self.run_build(now=10_000); self.assertEqual(self.gls.statuses.call_count, 2); self.assertEqual(self.gls.parcel_numbers.call_count, 1)
         self.run_build(now=10_000 + 1800); self.assertEqual(self.gls.statuses.call_count, 2)  # within the hour: nothing asked
@@ -239,6 +250,10 @@ class Fulfillment(unittest.TestCase):
         self.m = load()
         self.m.UPLOADED.write_text(json.dumps({"#1024": {"parcel_id": 548860860}, "#1025": 549107707}))
         self.gls = fake_gls({"548860860": "3423946814", "549107707": "3424008826"}, {"3423946814": HELD, "3424008826": DELIVERED})
+        # switched on long before these pickups (now=10_000 is 1970), unless a test says otherwise
+        env = {k: v for k, v in os.environ.items() if k not in ("SHOPIFY_AUTO_FULFILL", "SHOPIFY_FULFILL_SINCE")}
+        self.env = mock.patch.dict(os.environ, {**env, "SHOPIFY_AUTO_FULFILL": "yes"}, clear=True); self.env.start()
+    def tearDown(self): self.env.stop()
     def build(self, s, now=10_000, act=True, gls=None):
         return self.m.build(shop=s, bill=bill(), now=now, gls=gls or self.gls, act=act)
     def test_picked_up_orders_are_fulfilled_once_with_the_parcel_number(self):
@@ -258,8 +273,11 @@ class Fulfillment(unittest.TestCase):
         s.fulfill.assert_not_called(); self.assertFalse(self.m.FULFILLED.exists())
         self.assertEqual(sorted(out["fulfilled_now"]), ["#1024", "#1025"])
         self.assertEqual(out["orders"][0]["shopify_fulfillment"]["state"], "pending")
+        p = self.m.push(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill(), gls=self.gls)  # real clock: switched on now, older pickups wait
+        self.assertEqual(p["would_fulfill"], []); self.assertNotIn("fulfilled_now", p)
+        self.m.FULFILL_START.write_text(json.dumps({"since": "2026-10-01"}))
         p = self.m.push(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill(), gls=self.gls)
-        self.assertEqual(sorted(p["would_fulfill"]), ["#1024", "#1025"]); self.assertNotIn("fulfilled_now", p)
+        self.assertEqual(sorted(p["would_fulfill"]), ["#1024", "#1025"])
     def test_not_picked_up_not_fulfilled(self):
         g = fake_gls({"548860860": "3423946814", "549107707": "3424008826"}, {"3423946814": DELIVERED[3:], "3424008826": []})
         s = shop(orders=(ORDER, COD_ORDER)); out = self.build(s, gls=g)
@@ -282,11 +300,40 @@ class Fulfillment(unittest.TestCase):
         self.build(s, now=10_600); self.assertEqual(s.fulfill.call_count, 1)  # backs off
         ok = shop(orders=(COD_ORDER,)); out = self.build(ok, now=10_000 + self.m.FULFILL_RETRY)
         self.assertEqual(ok.fulfill.call_count, 1); self.assertEqual(out["orders"][0]["shopify_fulfillment"]["state"], "fulfilled")
-    def test_switch_off(self):
-        s = shop(orders=(ORDER, COD_ORDER))
-        with mock.patch.dict(os.environ, {"SHOPIFY_AUTO_FULFILL": "no"}): out = self.build(s)
-        s.fulfill.assert_not_called()
-        self.assertFalse(next(a for a in out["automations"] if a["key"] == "shopify_fulfillment")["ok"])
+    def test_off_by_default_and_only_explicit_yes_turns_it_on(self):
+        for value in (None, "", "no", "true", "1", "on", "YES please"):
+            s = shop(orders=(ORDER, COD_ORDER))
+            os.environ.pop("SHOPIFY_AUTO_FULFILL", None)
+            if value is not None: os.environ["SHOPIFY_AUTO_FULFILL"] = value
+            out = self.build(s)
+            s.fulfill.assert_not_called(); self.assertFalse(self.m.FULFILLED.exists()); self.assertFalse(self.m.FULFILL_START.exists())
+            self.assertEqual(out["fulfilled_now"], [])
+            self.assertEqual(next(a for a in out["automations"] if a["key"] == "shopify_fulfillment")["label"], "Shopify fulfillment (off)")
+    def test_switching_on_does_not_back_fill_earlier_pickups(self):
+        on_at = 1792044000  # 2026-10-15 06:00 UTC, after both pickups (2026-10-13)
+        s = shop(orders=(ORDER, COD_ORDER)); out = self.build(s, now=on_at)
+        s.fulfill.assert_not_called(); self.assertEqual(out["fulfilled_now"], [])
+        self.assertEqual(json.loads(self.m.FULFILL_START.read_text())["since"], "2026-10-15T06:00:00+00:00")
+        s = shop(orders=(ORDER, COD_ORDER)); self.build(s, now=on_at + 7200); s.fulfill.assert_not_called()  # the start stays
+    def test_pickup_after_switch_on_is_fulfilled(self):
+        self.m.FULFILL_START.write_text(json.dumps({"since": "2026-10-13T08:24:27+00:00"}))  # between the two pickups
+        s = shop(orders=(ORDER, COD_ORDER)); out = self.build(s, now=1792044000)
+        self.assertEqual(out["fulfilled_now"], ["#1024"])  # picked up 08:24:28; #1025 at 08:24:26 is older
+    def test_explicit_back_fill(self):
+        self.m.FULFILL_START.write_text(json.dumps({"since": "2026-10-15T06:00:00+00:00"}))
+        os.environ["SHOPIFY_FULFILL_SINCE"] = "2026-10-13"
+        s = shop(orders=(ORDER, COD_ORDER)); out = self.build(s, now=1792044000)
+        self.assertEqual(sorted(out["fulfilled_now"]), ["#1024", "#1025"])
+        os.environ["SHOPIFY_FULFILL_SINCE"] = "soon"
+        self.m.FULFILLED.unlink(); s = shop(orders=(ORDER, COD_ORDER)); out = self.build(s, now=1792044000)
+        s.fulfill.assert_not_called(); self.assertIn("SHOPIFY_FULFILL_SINCE", " ".join(out["errors"]))
+    def test_dry_run_writes_no_start(self):
+        self.build(shop(orders=(ORDER, COD_ORDER)), act=False); self.assertFalse(self.m.FULFILL_START.exists())
+    def test_unknown_pickup_time_is_not_fulfilled(self):
+        self.m.GLS_STATUS.write_text(json.dumps({"#1025": {"parcel_id": "549107707", "parcel_number": "3424008826", "state": "delivered",
+                                                           "handed_at": None, "checked": 10_000, "checked_at": "x"}}))
+        self.m.UPLOADED.write_text(json.dumps({"#1025": 549107707}))
+        s = shop(orders=(COD_ORDER,)); self.build(s); s.fulfill.assert_not_called()
 
 class Scopes(unittest.TestCase):
     def setUp(self): self.m = load()
