@@ -13,6 +13,7 @@ import requests
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from cbase import ConnectorError, need, run_cli
+import order_checks
 
 def _load(name):
     spec = importlib.util.spec_from_file_location(f"sync_{name}", HERE / name / "ops.py")
@@ -135,6 +136,7 @@ def _order(o, invoices, uploaded, shipping=None):
             "shipped_at": min((f.get("created_at") for f in ships if f.get("created_at")), default=None),
             "tracking": [t for f in ships for t in (f.get("tracking_numbers") or [])],
             "invoice": invoice, "label": _label(uploaded.get(name)),
+            "checks": order_checks.check(o),  # what is missing before the draft / the label: field names only, never the data
             "lines": [{"title": l.get("title"), "variant_id": str(l["variant_id"]) if l.get("variant_id") else None, "sku": l.get("sku") or None,
                        "qty": l.get("quantity", 1), "price": float(l.get("price") or 0)} for l in o.get("line_items") or []],
             "private": _private(o)}
@@ -208,7 +210,9 @@ def push(send="no", days=DAYS, shop=None, bill=None, gls=None):
                  cod=sum(1 for o in payload["orders"] or [] if o["is_cod"]), paid=sum(1 for o in payload["orders"] or [] if o["paid"] == "paid"),
                  gls_tracked=sum(1 for o in payload["orders"] or [] if o.get("shipping")),
                  delivered=sum(1 for o in payload["orders"] or [] if (o.get("shipping") or {}).get("state") == "delivered"),
-                 cod_invoice_due=[o["name"] for o in payload["orders"] or [] if o.get("cod_invoice_due")])
+                 cod_invoice_due=[o["name"] for o in payload["orders"] or [] if o.get("cod_invoice_due")],
+                 missing_data={o["name"]: [f"{p['step']}: {p['label']}" for p in o["checks"] if p["level"] == "stop"]
+                               for o in payload["orders"] or [] if any(p["level"] == "stop" for p in o["checks"])})
     if send != "yes":  # counts only: the payload itself holds customer data and is never printed
         return {"dry_run": True, **count, "errors": payload["errors"], "next": "run again with --send yes to send it to the site"}
     site, secret = need("ECOM_SITE_URL", "ECOM_INGEST_SECRET")
