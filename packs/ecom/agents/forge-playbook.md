@@ -12,7 +12,8 @@ Facts below were confirmed against the real systems on 2026-10-11. New lessons g
 
 ## Shopify (store ykdtdb-gu.myshopify.com)
 - Login is a Dev Dashboard app (Jinnee-ecom): SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET are exchanged for a 24 h token. `app_not_installed` = the app is released but not installed on the store. The Installs counter in the dashboard lags behind the real state.
-- Scopes in use: read_orders, read_products, read_inventory. Name/address fields can come back empty without protected customer data access.
+- Required scopes (2026-10-15): read_orders, read_products, read_inventory, read_all_orders, read_reports, read_merchant_managed_fulfillment_orders, write_merchant_managed_fulfillment_orders. write_products was dropped on purpose and is not needed. Check with `python3 connectors/shopify/ops.py scopes` (never trust a scope by word of mouth); a new scope only shows after a Released app version that the store accepted. Name/address fields can come back empty without protected customer data access.
+- Sessions / visitors: `python3 connectors/shopify/ops.py sessions --days 7` (shopifyqlQuery, read_reports). Fulfillment: `fulfill` (REST fulfillment_orders + fulfillments.json, notify_customer false); the site sender does it automatically once GLS picked the parcel up, once per order (`brain/shopify_fulfilled.json`), SHOPIFY_AUTO_FULFILL=no switches it off.
 
 ## Billingo
 - API v3, header X-API-KEY. GET calls work. `POST /documents` (draft and proforma) answered 402 "You do not have subscription for this operation" although the plan is Pro: an account-level switch, to be asked from Billingo support. Do not work around it.

@@ -1,6 +1,9 @@
 """Shop -> the admin site (jinnee-os.com). Sends the last days' orders with their payment, invoice and parcel state, and the
-product list. It only reads Shopify, Billingo, MyGLS tracking (each parcel at most hourly, state in brain/gls_status.json) and
-brain/gls_uploaded.json. The site never calls this machine.
+product list, the store's visitors and the Shopify app's scopes. It reads Shopify, Billingo, MyGLS tracking (each parcel at most
+hourly, state in brain/gls_status.json) and brain/gls_uploaded.json. Its one write: when GLS has picked a parcel up, the order is
+marked fulfilled in Shopify with the parcel number, without e-mailing the customer (owner, 2026-10-15), once per order
+(brain/shopify_fulfilled.json); only when really sending, never in a dry run; SHOPIFY_AUTO_FULFILL=no switches it off.
+The site never calls this machine.
 Customer contact data (name, e-mail, phone, addresses) is sent too, in a separate "private" block per order: the owner decided
 on 2026-10-12 that it may live in the site's protected table. It goes nowhere else: this file never prints or logs it, and the
 CLI only ever shows counts. The order note is not fetched.
@@ -33,6 +36,9 @@ GLS_STATUS = HERE.parent / "brain" / "gls_status.json"  # order name -> parcel i
 GLS_TTL = 3600       # a parcel is asked from GLS at most once an hour
 GLS_RETRY = 600      # after a failed GLS call, wait 10 minutes before asking again
 GLS_FINAL = ("delivered", "returned")  # never asked again
+FULFILLED = HERE.parent / "brain" / "shopify_fulfilled.json"  # order name -> {order_id, tracking, at, fulfillment_id} or {..., error, tried}
+FULFILL_RETRY = 1800  # a failed Shopify fulfillment is tried again after 30 minutes, not every round
+PICKED_UP = ("handed_to_gls", "in_transit", "out_for_delivery", "delivered", "returned", "problem")  # GLS had the parcel
 _bill_cache = {"at": 0.0, "days": None, "docs": None}
 _gls_fail = {"at": 0.0, "error": None}
 
@@ -113,6 +119,60 @@ def _ship_fields(s, is_cod, invoice):
     out["cod_invoice_due"] = bool(is_cod and s.get("state") == "delivered" and invoice.get("state") == "none")
     return out
 
+def _auto_fulfill():
+    """SHOPIFY_AUTO_FULFILL=no switches the automatic Shopify fulfillment off (rollback without a deploy). On by default:
+    the owner asked for it on 2026-10-15."""
+    return os.getenv("SHOPIFY_AUTO_FULFILL", "yes").strip().lower() not in ("no", "0", "false", "off")
+
+def _fulfilled():
+    try: return json.loads(FULFILLED.read_text(encoding="utf-8"))
+    except (OSError, ValueError): return {}
+
+def _fulfillments(raw, shipping, shop, now, act=False):
+    """Shopify fulfillment once GLS has picked the parcel up, with its parcel number, never e-mailing the customer.
+    Never twice: an order already fulfilled in Shopify, or recorded in brain/shopify_fulfilled.json, is not sent again, and
+    shop.fulfill only uses fulfillment orders that are still open. A failure is recorded and retried after FULFILL_RETRY.
+    The site's Barter / Influencer / Teszt / Ajándék mark is not visible from here: such orders are not skipped, only noted
+    (they normally have no GLS label, so they never reach this point). act=False (dry run): nothing is sent or written, the
+    names are only listed. → (record, errors, names fulfilled (or, in a dry run, to be fulfilled) in this round)"""
+    done, errors, new, changed = _fulfilled(), [], [], False
+    if raw is None: return done, errors, new
+    try:
+        for o in raw:
+            name = o.get("name") or ""
+            s = (shipping or {}).get(name) or {}
+            rec = done.get(name) or {}
+            if rec.get("at") or o.get("cancelled_at") or not _auto_fulfill(): continue
+            if (o.get("fulfillment_status") or "") == "fulfilled": continue  # done in Shopify by hand: nothing to do
+            if not (s.get("handed_at") or s.get("state") in PICKED_UP) or not s.get("parcel_number"): continue
+            if rec.get("error") and now - rec.get("tried", 0) < FULFILL_RETRY: errors.append(rec["error"]); continue
+            if not act: new.append(name); continue
+            kind = any(c.get("field") == "kind" for c in order_checks.check(o))
+            if kind: print(f"ecom sync: {name} may be barter / influencer / gift / test (0 Ft or test order); fulfilled anyway, the site mark is not visible here", flush=True)
+            try:
+                out = shop.fulfill(str(o["id"]), s["parcel_number"], confirm="yes")
+            except ConnectorError as e:
+                done[name] = {"order_id": str(o["id"]), "tracking": s["parcel_number"], "error": f"[Shopify fulfillment {name}] {e}", "tried": int(now)}
+                errors.append(done[name]["error"]); changed = True; continue
+            done[name] = {"order_id": str(o["id"]), "tracking": s["parcel_number"], "fulfillment_id": out.get("fulfillment_id") or None,
+                          "already": bool(out.get("already")), "at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat(timespec="seconds")}
+            changed = True
+            if not out.get("already"): new.append(name)
+    finally:
+        if changed:
+            FULFILLED.parent.mkdir(parents=True, exist_ok=True)
+            tmp = FULFILLED.with_suffix(".tmp"); tmp.write_text(json.dumps(done, ensure_ascii=False, indent=1), encoding="utf-8"); tmp.replace(FULFILLED)
+    return done, errors, new
+
+def _fulfill_fields(o, rec):
+    """What the site shows on the 'Shopify: teljesítve' step: fulfilled when Shopify says so or this machine did it."""
+    if (o.get("fulfillment_status") or "") == "fulfilled":
+        tr = [t for f in o.get("fulfillments") or [] for t in (f.get("tracking_numbers") or [])]
+        return {"state": "fulfilled", "tracking": (rec or {}).get("tracking") or (tr[0] if tr else None), "at": (rec or {}).get("at"), "by": "shopify" if not (rec or {}).get("at") else "auto", "error": None}
+    if (rec or {}).get("at"): return {"state": "fulfilled", "tracking": rec.get("tracking"), "at": rec["at"], "by": "auto", "error": None}
+    if (rec or {}).get("error"): return {"state": "failed", "tracking": rec.get("tracking"), "at": None, "by": None, "error": rec["error"]}
+    return {"state": "pending", "tracking": None, "at": None, "by": None, "error": None}
+
 def _address(a):
     return {k: a.get(k) for k in ADDRESS_KEYS if a.get(k)} if isinstance(a, dict) and a else None
 
@@ -122,7 +182,7 @@ def _private(o):
             "phone": sh.get("phone") or o.get("phone") or b.get("phone") or None,
             "shipping_address": _address(sh), "billing_address": _address(b)}
 
-def _order(o, invoices, uploaded, shipping=None):
+def _order(o, invoices, uploaded, shipping=None, fulfilled=None):
     name = o.get("name") or ""
     gateways = [g for g in o.get("payment_gateway_names") or [] if g]
     ships = o.get("fulfillments") or []
@@ -136,6 +196,7 @@ def _order(o, invoices, uploaded, shipping=None):
             "shipped_at": min((f.get("created_at") for f in ships if f.get("created_at")), default=None),
             "tracking": [t for f in ships for t in (f.get("tracking_numbers") or [])],
             "invoice": invoice, "label": _label(uploaded.get(name)),
+            "shopify_fulfillment": _fulfill_fields(o, (fulfilled or {}).get(name)),
             "checks": order_checks.check(o),  # what is missing before the draft / the label: field names only, never the data
             "lines": [{"title": l.get("title"), "variant_id": str(l["variant_id"]) if l.get("variant_id") else None, "sku": l.get("sku") or None,
                        "qty": l.get("quantity", 1), "price": float(l.get("price") or 0)} for l in o.get("line_items") or []],
@@ -146,36 +207,32 @@ def _variants(p):
              "variant_title": None if (v.get("title") or "") == "Default Title" else v.get("title"), "sku": v.get("sku") or None,
              "price": float(v.get("price") or 0), "stock": v.get("inventory_quantity"), "status": p.get("status")} for v in p.get("variants") or []]
 
-TRAFFIC_QUERY = "FROM sessions SHOW sessions, online_store_visitors TIMESERIES day SINCE -{days}d UNTIL today"
-GRAPHQL = "query($q: String!) { shopifyqlQuery(query: $q) { tableData { columns { name } rows } parseErrors } }"
-
 def _traffic(shop, days):
-    """Store sessions and visitors per day, from Shopify analytics (GraphQL Admin API, shopifyqlQuery; needs the read_reports scope).
-    Totals only: nothing here identifies a visitor."""
-    host = shop._shop_host()
-    try:
-        r = requests.post(f"https://{host}/admin/api/{shop.VERSION}/graphql.json", timeout=20, headers={"X-Shopify-Access-Token": shop._token(host)},
-                          json={"query": GRAPHQL, "variables": {"q": TRAFFIC_QUERY.format(days=int(days))}})
-    except requests.RequestException as e:
-        raise ConnectorError(f"Shopify did not answer: {type(e).__name__}")
-    if not r.ok: raise ConnectorError(f"Shopify answered {r.status_code}")
-    body = r.json()
-    if body.get("errors"):
-        text = json.dumps(body["errors"], ensure_ascii=False)
-        if "ACCESS_DENIED" in text or "access" in text.lower(): raise ConnectorError("the app has no access to analytics: it needs the read_reports scope")
-        raise ConnectorError(f"Shopify refused the analytics query: {text[:160]}")
-    q = (body.get("data") or {}).get("shopifyqlQuery") or {}
-    if q.get("parseErrors"): raise ConnectorError(f"Shopify could not read the analytics query: {str(q['parseErrors'])[:160]}")
-    table = q.get("tableData") or {}
-    names = [c.get("name") for c in table.get("columns") or []]
-    out = []
-    for row in table.get("rows") or []:
-        d = row if isinstance(row, dict) else dict(zip(names, row))
-        if d.get("day"): out.append({"day": str(d["day"])[:10], "sessions": int(d.get("sessions") or 0), "visitors": int(d.get("online_store_visitors") or 0)})
-    return out
+    """Store sessions and online store visitors per day (shopify ops `sessions`, read_reports). Totals only."""
+    return shop.sessions(str(days))
 
-def build(days=DAYS, shop=None, bill=None, now=None, gls=None):
+def _visitors(traffic, now):
+    """The Overview tile's numbers: today and the last 7 days (today included), from the daily rows. None when unreadable."""
+    if traffic is None: return None
+    today = dt.datetime.fromtimestamp(now, dt.timezone.utc).astimezone(_tz()).date()
+    week = {(today - dt.timedelta(days=i)).isoformat() for i in range(7)}
+    t = next((r for r in traffic if r["day"] == today.isoformat()), {"sessions": 0, "visitors": 0})
+    w = [r for r in traffic if r["day"] in week]
+    return {"today": {"sessions": t["sessions"], "visitors": t["visitors"]},
+            "last_7_days": {"sessions": sum(r["sessions"] for r in w), "visitors": sum(r["visitors"] for r in w)},
+            "days": [r for r in traffic if r["day"] in week], "day": today.isoformat()}
+
+def _tz():
+    """The shop's day boundary (Shopify analytics days are in the shop's time zone): JINNEE_TZ, else Europe/Budapest."""
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(os.getenv("JINNEE_TZ", "").strip() or "Europe/Budapest")
+    except Exception:
+        return dt.timezone.utc
+
+def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False):
     """The whole payload. A list that could not be read is None, never an empty list: the site then keeps what it has.
+    act=True also fulfills picked-up orders in Shopify (only when the payload is really sent).
     NOT a CLI op: the result holds customer data and must only go to the site."""
     shop = shop or _load("shopify"); bill = bill or _load("billingo"); gls = gls or _load("gls")
     now = now or time.time()
@@ -185,9 +242,13 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None):
     invoices, bill_err = _invoices(bill, days, now)
     prods, prod_err = _try("Shopify products", lambda: shop._get("products.json", {"limit": PAGE, "fields": PRODUCT_FIELDS}).get("products", []))
     traffic, traffic_err = _try("Shopify visitors", lambda: _traffic(shop, days))
+    scopes, scopes_err = _try("Shopify scopes", shop.scopes)
     uploaded = _uploaded()
     shipping, gls_err = _shipping(uploaded, gls, now)
-    errors = [e for e in (shop_err, bill_err, prod_err, traffic_err, gls_err) if e]
+    fulfilled, fulfill_errs, fulfilled_now = _fulfillments(raw, shipping, shop, now, act)
+    fulfill_err = "; ".join(dict.fromkeys(fulfill_errs)) or None
+    errors = [e for e in (shop_err, bill_err, prod_err, traffic_err, gls_err, scopes_err, fulfill_err) if e]
+    if scopes and scopes["missing"]: errors.append(f"[Shopify scopes] missing: {', '.join(scopes['missing'])}")
     if raw is not None and len(raw) >= PAGE: errors.append(f"[Shopify orders] more than {PAGE} orders in {days} days: only the newest {PAGE} are shown")
     if prods is not None and len(prods) >= PAGE: errors.append(f"[Shopify products] more than {PAGE} products: only the first {PAGE} are shown")
     return {"source": "jinnee-ecom", "sent_at": int(now), "window_days": int(days), "actions_enabled": ACTIONS, "errors": errors,
@@ -195,16 +256,29 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None):
                             {"key": "billingo", "label": "Billingo invoices", "ok": bill_err is None, "error": bill_err},
                             {"key": "shopify_products", "label": "Shopify products", "ok": prod_err is None, "error": prod_err},
                             {"key": "shopify_visitors", "label": "Shopify visitors", "ok": traffic_err is None, "error": traffic_err},
-                            {"key": "gls_tracking", "label": "GLS tracking", "ok": gls_err is None, "error": gls_err}],
+                            {"key": "gls_tracking", "label": "GLS tracking", "ok": gls_err is None, "error": gls_err},
+                            {"key": "shopify_fulfillment", "label": "Shopify fulfillment", "ok": fulfill_err is None and _auto_fulfill(),
+                             "error": fulfill_err or (None if _auto_fulfill() else "switched off (SHOPIFY_AUTO_FULFILL=no)")},
+                            {"key": "shopify_scopes", "label": "Shopify scopes", "ok": bool(scopes and scopes["ok"]),
+                             "error": scopes_err or (f"missing: {', '.join(scopes['missing'])}" if scopes and scopes["missing"] else None)}],
             "traffic": traffic,  # None = could not be read: the site keeps what it has and says so, never shows zero
-            "orders": None if raw is None else [_order(o, invoices, uploaded, shipping) for o in raw],
+            "visitors": _visitors(traffic, now),  # the Overview tile: today and last 7 days; None = unreadable, never zero
+            # None = could not be read (the site keeps the last known state and says when it was checked)
+            "shopify_scopes": None if scopes is None else {**scopes, "checked_at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat(timespec="seconds")},
+            "fulfilled_now": fulfilled_now,
+            "orders": None if raw is None else [_order(o, invoices, uploaded, shipping, fulfilled) for o in raw],
             "products": None if prods is None else [v for p in prods for v in _variants(p)]}
 
 def push(send="no", days=DAYS, shop=None, bill=None, gls=None):
-    payload = build(days, shop, bill, gls=gls)
+    payload = build(days, shop, bill, gls=gls, act=send == "yes")
     count = {k: None if payload[k] is None else len(payload[k]) for k in ("orders", "products")}
     count["traffic_days"] = None if payload["traffic"] is None else len(payload["traffic"])
     count["visitors"] = None if payload["traffic"] is None else sum(t["visitors"] for t in payload["traffic"])
+    count["visitors_today"] = None if payload["visitors"] is None else payload["visitors"]["today"]
+    count["visitors_7d"] = None if payload["visitors"] is None else payload["visitors"]["last_7_days"]
+    count["scopes_missing"] = None if payload["shopify_scopes"] is None else payload["shopify_scopes"]["missing"]
+    count["fulfilled_now" if send == "yes" else "would_fulfill"] = payload["fulfilled_now"]
+    count["shopify_fulfilled"] = sum(1 for o in payload["orders"] or [] if o["shopify_fulfillment"]["state"] == "fulfilled")
     private = [o["private"] for o in payload["orders"] or []]  # how many orders came with contact data: numbers only
     count.update(with_name=sum(1 for p in private if p["customer_name"]), with_address=sum(1 for p in private if p["shipping_address"]),
                  cod=sum(1 for o in payload["orders"] or [] if o["is_cod"]), paid=sum(1 for o in payload["orders"] or [] if o["paid"] == "paid"),
@@ -232,7 +306,9 @@ def loop(seconds=""):
     """Runs until stopped. A failed round is printed once per distinct reason and tried again at the next round."""
     wait, last = max(int(seconds or os.getenv("ECOM_SYNC_SECONDS", "60")), 30), None
     while True:
-        try: out = push("yes"); note = "; ".join(out["errors"]) or "ok"
+        try:
+            out = push("yes"); note = "; ".join(out["errors"]) or "ok"
+            if out.get("fulfilled_now"): print(f"ecom sync: fulfilled in Shopify (GLS picked up, no customer e-mail): {', '.join(out['fulfilled_now'])}", flush=True)
         except ConnectorError as e: note = str(e)
         if note != last: print(f"ecom sync: {note}", flush=True); last = note
         time.sleep(wait)
