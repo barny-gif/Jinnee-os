@@ -1,5 +1,6 @@
 """Shop -> the admin site (jinnee-os.com). Sends the last days' orders with their payment, invoice and parcel state, and the
-product list. It only reads Shopify, Billingo and brain/gls_uploaded.json. The site never calls this machine.
+product list. It only reads Shopify, Billingo, MyGLS tracking (each parcel at most hourly, state in brain/gls_status.json) and
+brain/gls_uploaded.json. The site never calls this machine.
 Customer contact data (name, e-mail, phone, addresses) is sent too, in a separate "private" block per order: the owner decided
 on 2026-10-12 that it may live in the site's protected table. It goes nowhere else: this file never prints or logs it, and the
 CLI only ever shows counts. The order note is not fetched.
@@ -27,7 +28,12 @@ PAGE = 250   # Shopify's largest page; more than this in the window is reported,
 BILL_TTL = 300  # Billingo is asked every 5 minutes, not every round
 UPLOADED = HERE.parent / "brain" / "gls_uploaded.json"  # order name -> parcel id, or {"parcel_id", "cod_amount", "at"}
 ACTIONS = False  # the site keeps its step buttons switched off until the command runner says otherwise
+GLS_STATUS = HERE.parent / "brain" / "gls_status.json"  # order name -> parcel id, parcel number, GLS state, when last asked
+GLS_TTL = 3600       # a parcel is asked from GLS at most once an hour
+GLS_RETRY = 600      # after a failed GLS call, wait 10 minutes before asking again
+GLS_FINAL = ("delivered", "returned")  # never asked again
 _bill_cache = {"at": 0.0, "days": None, "docs": None}
+_gls_fail = {"at": 0.0, "error": None}
 
 def _try(label, fn):
     try: return fn(), None
@@ -63,6 +69,49 @@ def _label(entry):
         return out
     return {"state": "uploaded", "parcel_id": None if entry is True else str(entry)}
 
+def _parcel_id(entry):
+    pid = entry.get("parcel_id") if isinstance(entry, dict) else entry
+    return None if pid in (None, True, "") else str(pid)
+
+def _shipping(uploaded, gls, now):
+    """GLS state per uploaded order, kept in brain/gls_status.json. Each parcel is asked at most once an hour, never again once
+    delivered or returned. A failed call keeps the stored state (unknown stays unknown) and is retried after GLS_RETRY.
+    A replaced label (new parcel id) starts over."""
+    try: state = json.loads(GLS_STATUS.read_text(encoding="utf-8"))
+    except (OSError, ValueError): state = {}
+    if now - _gls_fail["at"] < GLS_RETRY: return state, _gls_fail["error"]
+    numbers, changed = None, False
+    try:
+        for name, entry in uploaded.items():
+            pid = _parcel_id(entry)
+            if not pid: continue
+            s = state.get(name) if (state.get(name) or {}).get("parcel_id") == pid else {"parcel_id": pid}
+            if s.get("state") in GLS_FINAL or now - s.get("checked", 0) < GLS_TTL: state[name] = s; continue
+            if not s.get("parcel_number"):
+                if numbers is None: numbers = gls.parcel_numbers("30")
+                s["parcel_number"] = numbers.get(pid)
+            s.update(gls.classify(gls.statuses(s["parcel_number"])) if s["parcel_number"] else gls.classify([]))
+            s["checked"] = int(now); s["checked_at"] = dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat(timespec="seconds")
+            state[name] = s; changed = True
+    except ConnectorError as e:
+        _gls_fail.update(at=now, error=f"[GLS tracking] {e}")
+        return state, _gls_fail["error"]
+    finally:
+        if changed:
+            GLS_STATUS.parent.mkdir(parents=True, exist_ok=True)
+            tmp = GLS_STATUS.with_suffix(".tmp"); tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8"); tmp.replace(GLS_STATUS)
+    _gls_fail.update(at=0.0, error=None)
+    return state, None
+
+def _ship_fields(s, is_cod, invoice):
+    """What the site gets. 'delivered' only when GLS was asked: absent means the site keeps what it has."""
+    if not s or not s.get("checked_at"): return {}
+    out = {"shipping": {k: s.get(k) for k in ("state", "code", "text", "status_at", "handed_at", "delivered_at", "checked_at", "parcel_number")},
+           "delivered": {"state": "yes" if s.get("state") == "delivered" else "no", "at": s.get("delivered_at")}}
+    # COD: the invoice is due once the customer took the parcel (lessons 2026-10-13). A flag only: nothing is issued from here.
+    out["cod_invoice_due"] = bool(is_cod and s.get("state") == "delivered" and invoice.get("state") == "none")
+    return out
+
 def _address(a):
     return {k: a.get(k) for k in ADDRESS_KEYS if a.get(k)} if isinstance(a, dict) and a else None
 
@@ -72,19 +121,20 @@ def _private(o):
             "phone": sh.get("phone") or o.get("phone") or b.get("phone") or None,
             "shipping_address": _address(sh), "billing_address": _address(b)}
 
-def _order(o, invoices, uploaded):
+def _order(o, invoices, uploaded, shipping=None):
     name = o.get("name") or ""
     gateways = [g for g in o.get("payment_gateway_names") or [] if g]
     ships = o.get("fulfillments") or []
-    return {"id": str(o["id"]), "name": name, "created_at": o.get("created_at"), "total": float(o.get("total_price") or 0),
+    is_cod = any(c in " ".join(gateways).lower() for c in COD); invoice = _invoice(name, invoices)
+    return {**_ship_fields((shipping or {}).get(name), is_cod, invoice), "id": str(o["id"]), "name": name, "created_at": o.get("created_at"), "total": float(o.get("total_price") or 0),
             "currency": o.get("currency"), "paid": o.get("financial_status"), "shipped": o.get("fulfillment_status") or "unfulfilled",
             "cancelled": bool(o.get("cancelled_at")),
             "payment_method": ", ".join(gateways) or None,
             "shipping_method": ", ".join(l.get("title") for l in o.get("shipping_lines") or [] if l.get("title")) or None,
-            "is_cod": any(c in " ".join(gateways).lower() for c in COD), "shopify_test": bool(o.get("test")),
+            "is_cod": is_cod, "shopify_test": bool(o.get("test")),
             "shipped_at": min((f.get("created_at") for f in ships if f.get("created_at")), default=None),
             "tracking": [t for f in ships for t in (f.get("tracking_numbers") or [])],
-            "invoice": _invoice(name, invoices), "label": _label(uploaded.get(name)),
+            "invoice": invoice, "label": _label(uploaded.get(name)),
             "lines": [{"title": l.get("title"), "variant_id": str(l["variant_id"]) if l.get("variant_id") else None, "sku": l.get("sku") or None,
                        "qty": l.get("quantity", 1), "price": float(l.get("price") or 0)} for l in o.get("line_items") or []],
             "private": _private(o)}
@@ -122,10 +172,10 @@ def _traffic(shop, days):
         if d.get("day"): out.append({"day": str(d["day"])[:10], "sessions": int(d.get("sessions") or 0), "visitors": int(d.get("online_store_visitors") or 0)})
     return out
 
-def build(days=DAYS, shop=None, bill=None, now=None):
+def build(days=DAYS, shop=None, bill=None, now=None, gls=None):
     """The whole payload. A list that could not be read is None, never an empty list: the site then keeps what it has.
     NOT a CLI op: the result holds customer data and must only go to the site."""
-    shop = shop or _load("shopify"); bill = bill or _load("billingo")
+    shop = shop or _load("shopify"); bill = bill or _load("billingo"); gls = gls or _load("gls")
     now = now or time.time()
     since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=int(days))).isoformat(timespec="seconds")
     raw, shop_err = _try("Shopify orders", lambda: shop._get("orders.json", {"status": "any", "limit": PAGE, "created_at_min": since,
@@ -133,27 +183,32 @@ def build(days=DAYS, shop=None, bill=None, now=None):
     invoices, bill_err = _invoices(bill, days, now)
     prods, prod_err = _try("Shopify products", lambda: shop._get("products.json", {"limit": PAGE, "fields": PRODUCT_FIELDS}).get("products", []))
     traffic, traffic_err = _try("Shopify visitors", lambda: _traffic(shop, days))
-    errors = [e for e in (shop_err, bill_err, prod_err, traffic_err) if e]
+    uploaded = _uploaded()
+    shipping, gls_err = _shipping(uploaded, gls, now)
+    errors = [e for e in (shop_err, bill_err, prod_err, traffic_err, gls_err) if e]
     if raw is not None and len(raw) >= PAGE: errors.append(f"[Shopify orders] more than {PAGE} orders in {days} days: only the newest {PAGE} are shown")
     if prods is not None and len(prods) >= PAGE: errors.append(f"[Shopify products] more than {PAGE} products: only the first {PAGE} are shown")
-    uploaded = _uploaded()
     return {"source": "jinnee-ecom", "sent_at": int(now), "window_days": int(days), "actions_enabled": ACTIONS, "errors": errors,
             "automations": [{"key": "shopify_orders", "label": "Shopify orders", "ok": shop_err is None, "error": shop_err},
                             {"key": "billingo", "label": "Billingo invoices", "ok": bill_err is None, "error": bill_err},
                             {"key": "shopify_products", "label": "Shopify products", "ok": prod_err is None, "error": prod_err},
-                            {"key": "shopify_visitors", "label": "Shopify visitors", "ok": traffic_err is None, "error": traffic_err}],
+                            {"key": "shopify_visitors", "label": "Shopify visitors", "ok": traffic_err is None, "error": traffic_err},
+                            {"key": "gls_tracking", "label": "GLS tracking", "ok": gls_err is None, "error": gls_err}],
             "traffic": traffic,  # None = could not be read: the site keeps what it has and says so, never shows zero
-            "orders": None if raw is None else [_order(o, invoices, uploaded) for o in raw],
+            "orders": None if raw is None else [_order(o, invoices, uploaded, shipping) for o in raw],
             "products": None if prods is None else [v for p in prods for v in _variants(p)]}
 
-def push(send="no", days=DAYS, shop=None, bill=None):
-    payload = build(days, shop, bill)
+def push(send="no", days=DAYS, shop=None, bill=None, gls=None):
+    payload = build(days, shop, bill, gls=gls)
     count = {k: None if payload[k] is None else len(payload[k]) for k in ("orders", "products")}
     count["traffic_days"] = None if payload["traffic"] is None else len(payload["traffic"])
     count["visitors"] = None if payload["traffic"] is None else sum(t["visitors"] for t in payload["traffic"])
     private = [o["private"] for o in payload["orders"] or []]  # how many orders came with contact data: numbers only
     count.update(with_name=sum(1 for p in private if p["customer_name"]), with_address=sum(1 for p in private if p["shipping_address"]),
-                 cod=sum(1 for o in payload["orders"] or [] if o["is_cod"]), paid=sum(1 for o in payload["orders"] or [] if o["paid"] == "paid"))
+                 cod=sum(1 for o in payload["orders"] or [] if o["is_cod"]), paid=sum(1 for o in payload["orders"] or [] if o["paid"] == "paid"),
+                 gls_tracked=sum(1 for o in payload["orders"] or [] if o.get("shipping")),
+                 delivered=sum(1 for o in payload["orders"] or [] if (o.get("shipping") or {}).get("state") == "delivered"),
+                 cod_invoice_due=[o["name"] for o in payload["orders"] or [] if o.get("cod_invoice_due")])
     if send != "yes":  # counts only: the payload itself holds customer data and is never printed
         return {"dry_run": True, **count, "errors": payload["errors"], "next": "run again with --send yes to send it to the site"}
     site, secret = need("ECOM_SITE_URL", "ECOM_INGEST_SECRET")

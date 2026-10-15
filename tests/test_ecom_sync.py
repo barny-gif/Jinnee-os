@@ -11,9 +11,34 @@ TRAFFIC = [{"day": "2026-10-11", "sessions": 10, "visitors": 10}, {"day": "2026-
 def load(traffic=True):
     path = next(p for p in (HERE / "ecom_sync.py", ROOT / "connectors" / "ecom_sync.py") if p.exists())
     s = importlib.util.spec_from_file_location("t_ecom_sync2", path); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
-    m.UPLOADED = pathlib.Path(tempfile.mkdtemp()) / "up.json"  # never the real brain/
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    m.UPLOADED, m.GLS_STATUS = tmp / "up.json", tmp / "gls_status.json"  # never the real brain/
+    m._gls_fail.update(at=0.0, error=None)
+    real = m._load
+    m._load = lambda name: fake_gls() if name == "gls" else real(name)  # no test ever reaches MyGLS
     if traffic: m._traffic = lambda shop, days: list(TRAFFIC)  # the analytics call has its own tests below
     return m
+
+def gls_module():
+    s = importlib.util.spec_from_file_location("t_gls_ops", ROOT / "connectors" / "gls" / "ops.py"); g = importlib.util.module_from_spec(s); s.loader.exec_module(g)
+    return g
+
+def fake_gls(numbers=None, statuses=None, fail=None):
+    """numbers: parcel id -> parcel number; statuses: parcel number -> statuses() list (newest first)."""
+    g = gls_module()
+    def parcel_numbers(days):
+        if fail == "list": raise ConnectorError("[GLS parcel list] MyGLS did not answer: Timeout")
+        return dict(numbers or {})
+    def st(n):
+        if fail == "status": raise ConnectorError("[GLS status] MyGLS did not answer: Timeout")
+        return list((statuses or {}).get(n, []))
+    return mock.Mock(parcel_numbers=mock.Mock(side_effect=parcel_numbers), statuses=mock.Mock(side_effect=st), classify=g.classify)
+
+def S(text, at): return {"status": text, "at": at, "code": None}
+DELIVERED = [S("Kiszállítva", "2026-10-14T07:30:38+00:00"), S("Csomag kiszállítás alatt", "2026-10-14T04:53:05+00:00"),
+             S("Lehívás - felvett csomag", "2026-10-13T08:24:26+00:00"), S("Csomag rögzítve", "2026-10-12T11:40:30+00:00")]
+HELD = [S("Depó tárolás", "2026-10-15T04:07:03+00:00"), S("Csomag a kiszállító depóban", "2026-10-14T03:44:42+00:00"),
+        S("Lehívás - felvett csomag", "2026-10-13T08:24:28+00:00"), S("Utánvét adat rögzítve", "2026-10-12T08:56:03+00:00")]
 
 def gql(body, code=200):
     s = mock.Mock(_shop_host=lambda: "x.myshopify.com", _token=lambda host: "tok", VERSION="2026-07")
@@ -121,6 +146,87 @@ class Payload(unittest.TestCase):
     def test_shopify_down_sends_none_not_empty(self):
         out = self.m.build(shop=shop(fail="orders"), bill=bill())
         self.assertIsNone(out["orders"]); self.assertTrue(out["errors"])
+
+class GlsClassify(unittest.TestCase):
+    def setUp(self): self.g = gls_module()
+    def test_states_from_live_texts(self):
+        c = self.g.classify
+        self.assertEqual(c(DELIVERED)["state"], "delivered"); self.assertEqual(c(DELIVERED)["delivered_at"], "2026-10-14T07:30:38+00:00")
+        self.assertEqual(c(DELIVERED)["handed_at"], "2026-10-13T08:24:26+00:00")
+        self.assertEqual(c(DELIVERED[1:])["state"], "out_for_delivery")
+        self.assertEqual(c(DELIVERED[2:])["state"], "handed_to_gls")
+        self.assertEqual(c(DELIVERED[3:])["state"], "uploaded"); self.assertIsNone(c(DELIVERED[3:])["handed_at"])
+        self.assertEqual(c(HELD)["state"], "problem"); self.assertIsNone(c(HELD)["delivered_at"])
+        self.assertEqual(c(HELD[1:])["state"], "in_transit")
+        self.assertEqual(c([S("Visszaküldve a feladónak", "x")] + DELIVERED[1:])["state"], "returned")
+        self.assertEqual(c([])["state"], "uploaded")
+    def test_net_date(self):
+        self.assertEqual(self.g._date("/Date(1791963038000+0200)/"), "2026-10-14T07:30:38+00:00"); self.assertIsNone(self.g._date(None))
+    def test_parcel_list_keeps_only_ids_and_numbers(self):
+        body = {"GetParcelListErrors": [], "PrintDataInfoList": [{"ParcelId": 549107707, "ParcelNumber": 3424008826, "ClientReference": "#1025",
+                                                                  "Parcel": {"DeliveryAddress": {"Name": "Titkos Vevo"}}}, {"ParcelId": 1, "ParcelNumber": None}]}
+        with mock.patch.dict(os.environ, {"GLS_CLIENT_NUMBER": "1", "GLS_USERNAME": "u", "GLS_PASSWORD": "p"}), \
+             mock.patch.object(self.g.requests, "post", return_value=Resp(body)) as post:
+            self.assertEqual(self.g.parcel_numbers("30", now=1_000_000), {"549107707": "3424008826"})
+        sent = post.call_args.kwargs["json"]
+        self.assertTrue(post.call_args.args[0].endswith("/GetParcelList"))
+        self.assertEqual((sent["PrintDateFrom"], sent["PrintDateTo"]), ("/Date(-1592000000)/", "/Date(1000000000)/"))
+    def test_status_error_names_the_step(self):
+        with mock.patch.dict(os.environ, {"GLS_CLIENT_NUMBER": "1", "GLS_USERNAME": "u", "GLS_PASSWORD": "p"}), \
+             mock.patch.object(self.g.requests, "post", return_value=Resp({"GetParcelStatusErrors": [{"ErrorCode": 26, "ErrorDescription": "Parcel not found"}]})):
+            with self.assertRaisesRegex(ConnectorError, r"\[GLS status\].*26"): self.g.statuses("1")
+
+class GlsTracking(unittest.TestCase):
+    def setUp(self):
+        self.m = load()
+        self.m.UPLOADED.write_text(json.dumps({"#1024": {"parcel_id": 548860860, "cod_amount": 12990}, "#1025": 549107707}))
+        self.gls = fake_gls({"548860860": "3423946814", "549107707": "3424008826"}, {"3423946814": HELD, "3424008826": DELIVERED})
+    def run_build(self, now=10_000, gls=None, docs=()):
+        return self.m.build(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill(docs), now=now, gls=gls or self.gls)
+    def test_state_goes_to_site_and_brain(self):
+        paid, cod = self.run_build()["orders"]  # ORDER is #1024 (here held at the depot), COD_ORDER is #1025 (delivered)
+        self.assertEqual(paid["shipping"]["state"], "problem"); self.assertEqual(paid["delivered"], {"state": "no", "at": None})
+        self.assertEqual(cod["delivered"], {"state": "yes", "at": "2026-10-14T07:30:38+00:00"})
+        self.assertEqual(cod["shipping"]["parcel_number"], "3424008826")
+        stored = json.loads(self.m.GLS_STATUS.read_text())
+        self.assertEqual(stored["#1025"]["state"], "delivered"); self.assertEqual(stored["#1024"]["parcel_id"], "548860860")
+    def test_cod_delivered_without_invoice_is_flagged_only(self):
+        paid, cod = self.run_build()["orders"]
+        self.assertTrue(cod["cod_invoice_due"]); self.assertFalse(paid["cod_invoice_due"])
+        _, cod = self.m.build(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill([{"comment": "#1025", "type": "invoice", "number": "MV-2026-9"}]),
+                              now=10_000 + 3600, gls=self.gls)["orders"]
+        self.assertFalse(cod["cod_invoice_due"])
+    def test_hourly_and_never_again_once_delivered(self):
+        self.run_build(now=10_000); self.assertEqual(self.gls.statuses.call_count, 2); self.assertEqual(self.gls.parcel_numbers.call_count, 1)
+        self.run_build(now=10_000 + 1800); self.assertEqual(self.gls.statuses.call_count, 2)  # within the hour: nothing asked
+        self.run_build(now=10_000 + 3600); self.assertEqual(self.gls.statuses.call_count, 3)  # only the undelivered one
+        self.assertEqual(self.gls.parcel_numbers.call_count, 1)  # the parcel number is resolved once
+    def test_replaced_label_starts_over(self):
+        self.run_build(now=10_000)
+        self.m.UPLOADED.write_text(json.dumps({"#1025": 777}))
+        g = fake_gls({"777": "999"}, {"999": DELIVERED[2:]})
+        _, cod = self.run_build(now=10_100, gls=g)["orders"]
+        self.assertEqual((cod["shipping"]["parcel_number"], cod["shipping"]["state"]), ("999", "handed_to_gls"))
+    def test_not_printed_yet_is_uploaded(self):
+        g = fake_gls({}, {})
+        paid, _ = self.run_build(gls=g)["orders"]
+        self.assertEqual(paid["shipping"]["state"], "uploaded"); self.assertIsNone(paid["shipping"]["parcel_number"])
+        g.statuses.assert_not_called()
+    def test_gls_down_keeps_what_is_known_and_backs_off(self):
+        self.run_build(now=10_000)
+        down = fake_gls(fail="status")
+        out = self.run_build(now=10_000 + 3600, gls=down)
+        self.assertFalse(next(a for a in out["automations"] if a["key"] == "gls_tracking")["ok"])
+        self.assertEqual(out["orders"][1]["delivered"]["state"], "yes")  # stored state still goes
+        self.assertEqual(out["orders"][0]["shipping"]["state"], "problem")
+        self.run_build(now=10_000 + 3700, gls=down); self.assertEqual(down.statuses.call_count, 1)  # no new call within GLS_RETRY
+    def test_no_label_no_shipping_keys(self):
+        self.m.UPLOADED.write_text("{}")
+        o = self.run_build()["orders"][0]
+        self.assertNotIn("delivered", o); self.assertNotIn("shipping", o)
+    def test_dry_run_counts(self):
+        out = self.m.push(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill(), gls=self.gls)
+        self.assertEqual((out["gls_tracked"], out["delivered"], out["cod_invoice_due"]), (2, 1, ["#1025"]))
 
 class Push(unittest.TestCase):
     def setUp(self): self.m = load()
