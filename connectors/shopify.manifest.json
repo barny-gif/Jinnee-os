@@ -23,7 +23,10 @@
     "list_orders",
     "get_order",
     "list_products",
-    "get_product"
+    "get_product",
+    "scopes",
+    "sessions",
+    "fulfill"
   ],
-  "notes": "Read-only. Scopes: read_orders, read_products, read_inventory. Implemented in connectors/shopify/ops.py. No customer personal data leaves the connector."
+  "notes": "Reads orders, products, scopes and store sessions. One write: fulfill (order fulfilled with the GLS tracking number, notify_customer false; dry run unless --confirm yes). Required scopes: read_orders, read_products, read_inventory, read_all_orders, read_reports, read_merchant_managed_fulfillment_orders, write_merchant_managed_fulfillment_orders. Implemented in connectors/shopify/ops.py. No customer personal data leaves the connector."
 }
