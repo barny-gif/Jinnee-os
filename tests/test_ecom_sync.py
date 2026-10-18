@@ -91,11 +91,41 @@ def shop(orders=(ORDER,), products=(PRODUCT,), fail=None, scopes=ALL_SCOPES, ful
     return mock.Mock(_get=mock.Mock(side_effect=_get), scopes=mock.Mock(side_effect=_scopes), fulfill=mock.Mock(side_effect=_fulfill),
                      sessions=mock.Mock(return_value=list(TRAFFIC)))
 
-def bill(docs=(), fail=False):
+PAYMENTS = {"bank_accounts": [{"id": "1", "name": "Revolut", "currency": "HUF", "last4": "1234"}],
+            "invoices": [{"id": "5", "number": "MV-2026-1", "order": "#1025", "date": "2026-10-13", "due_date": "2026-10-13",
+                          "paid_date": "2026-10-13", "total": 15282, "currency": "HUF", "payment_status": "paid",
+                          "payment_method": "bankcard", "overdue": False}], "since": "2025-09-13", "complete": True}
+
+def bill(docs=(), fail=False, payments=None, pay_fail=False):
     def list_invoices(days):
         if fail: raise ConnectorError("Billingo did not answer")
         return list(docs)
-    return mock.Mock(list_invoices=mock.Mock(side_effect=list_invoices))
+    def _payments():
+        if fail or pay_fail: raise ConnectorError("Billingo did not answer")
+        return json.loads(json.dumps(payments or PAYMENTS))
+    return mock.Mock(list_invoices=mock.Mock(side_effect=list_invoices), payments=mock.Mock(side_effect=_payments))
+
+class Billing(unittest.TestCase):
+    def setUp(self): self.m = load()
+    def test_payments_tab_is_sent_with_check_time(self):
+        out = self.m.build(shop=shop(), bill=bill(), now=1792303200)
+        self.assertEqual(out["billing"]["invoices"][0]["number"], "MV-2026-1")
+        self.assertEqual(out["billing"]["checked_at"], "2026-10-18T06:00:00+00:00")
+        self.assertTrue(next(a for a in out["automations"] if a["key"] == "billingo_payments")["ok"])
+    def test_asked_once_an_hour(self):
+        b = bill()
+        self.m.build(shop=shop(), bill=b, now=1000); self.m.build(shop=shop(), bill=b, now=2000)
+        self.assertEqual(b.payments.call_count, 1)
+        self.m.build(shop=shop(), bill=b, now=1000 + 3600)
+        self.assertEqual(b.payments.call_count, 2)
+    def test_failure_is_none_not_empty_and_not_cached(self):
+        out = self.m.build(shop=shop(), bill=bill(pay_fail=True), now=1000)
+        self.assertIsNone(out["billing"])
+        self.assertFalse(next(a for a in out["automations"] if a["key"] == "billingo_payments")["ok"])
+        self.assertIsNotNone(self.m.build(shop=shop(), bill=bill(), now=1010)["billing"])
+    def test_incomplete_window_is_reported(self):
+        out = self.m.build(shop=shop(), bill=bill(payments={**PAYMENTS, "complete": False}))
+        self.assertTrue(any("Billingo payments" in e for e in out["errors"]))
 
 class Payload(unittest.TestCase):
     def setUp(self): self.m = load()
