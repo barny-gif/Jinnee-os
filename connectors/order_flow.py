@@ -158,12 +158,16 @@ def parcel_prepare(order_id, send="no", house="", info="", replace="no", shop=No
     if send != "yes":
         return {"order": o["name"], "dry_run": True, "replaces": done or None, "cod_amount": parcel["CODAmount"], "pickup": parcel["PickupDate"], "warnings": warn,
                 "next": "run again with --send yes to upload to MyGLS"}
-    if done and done is not True:  # correction: the old prepared parcel goes first; if that fails nothing is uploaded
-        step("delete the old parcel", gls.delete_labels, [done])
+    old = done.get("parcel_id") if isinstance(done, dict) else done
+    if old and old is not True:  # correction: the old prepared parcel goes first; if that fails nothing is uploaded
+        step("delete the old parcel", gls.delete_labels, [old])
     out = step("upload to MyGLS", gls.prepare_labels, [parcel])
     try:
         UPLOADED.parent.mkdir(parents=True, exist_ok=True)
-        UPLOADED.write_text(json.dumps({**_uploaded(), o["name"]: (out[0]["parcel_id"] if out else True)}), encoding="utf-8")
+        # the COD amount is recorded too, so the site shows "SENT · NO COD" / "SENT · COD …" instead of "check payment mode"
+        rec = {"parcel_id": out[0]["parcel_id"] if out else None, "cod_amount": parcel["CODAmount"],
+               "at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")}
+        UPLOADED.write_text(json.dumps({**_uploaded(), o["name"]: rec}), encoding="utf-8")
     except OSError: warn.append("could not record the upload: do not run this order again")
     return {"order": o["name"], "uploaded": out, "warnings": warn}
 
