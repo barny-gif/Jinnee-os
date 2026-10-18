@@ -43,7 +43,9 @@ PICKED_UP = ("handed_to_gls", "in_transit", "out_for_delivery", "delivered", "re
 # When automatic fulfillment was first switched on: only parcels GLS picked up at or after this moment are fulfilled, so turning
 # it on never back-fills older orders. SHOPIFY_FULFILL_SINCE (ISO date/time) in .env is the explicit way to ask for older ones.
 FULFILL_START = HERE.parent / "brain" / "shopify_fulfill_start.json"
+PAY_TTL = 3600  # the Payments tab (bank accounts, paid / open / overdue invoices) is asked from Billingo once an hour
 _bill_cache = {"at": 0.0, "days": None, "docs": None}
+_pay_cache = {"at": 0.0, "data": None}
 _gls_fail = {"at": 0.0, "error": None}
 
 def _try(label, fn):
@@ -61,6 +63,16 @@ def _invoices(bill, days, now):
     docs, err = _try("Billingo invoices", lambda: bill.list_invoices(days=str(int(days) + 7)))
     if docs is not None: c.update(at=now, days=days, docs=docs)
     return docs, err
+
+def _billing(bill, now):
+    """The Payments tab, at most PAY_TTL old. None = Billingo did not answer: the site keeps what it has (never zero).
+    Holds no partner data: invoice and order numbers, dates, totals, and the bank account's name and last 4 characters."""
+    c = _pay_cache
+    if c["data"] is not None and now - c["at"] < PAY_TTL: return c["data"], None
+    data, err = _try("Billingo payments", bill.payments)
+    if data is None: return None, err
+    c.update(at=now, data={**data, "checked_at": _iso(now)})
+    return c["data"], None
 
 def _invoice(name, invoices):
     """unknown = Billingo did not answer (never shown as 'no invoice'). '#1024' must not match a comment about '#10245'."""
@@ -273,6 +285,7 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False):
     raw, shop_err = _try("Shopify orders", lambda: shop._get("orders.json", {"status": "any", "limit": PAGE, "created_at_min": since,
                                                                                "order": "created_at desc", "fields": ORDER_FIELDS}).get("orders", []))
     invoices, bill_err = _invoices(bill, days, now)
+    billing, pay_err = _billing(bill, now)
     prods, prod_err = _try("Shopify products", lambda: shop._get("products.json", {"limit": PAGE, "fields": PRODUCT_FIELDS}).get("products", []))
     traffic, traffic_err = _try("Shopify visitors", lambda: _traffic(shop, days))
     scopes, scopes_err = _try("Shopify scopes", shop.scopes)
@@ -280,13 +293,15 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False):
     shipping, gls_err = _shipping(uploaded, gls, now)
     fulfilled, fulfill_errs, fulfilled_now = _fulfillments(raw, shipping, shop, now, act)
     fulfill_err = "; ".join(dict.fromkeys(fulfill_errs)) or None
-    errors = [e for e in (shop_err, bill_err, prod_err, traffic_err, gls_err, scopes_err, fulfill_err) if e]
+    errors = [e for e in (shop_err, bill_err, pay_err, prod_err, traffic_err, gls_err, scopes_err, fulfill_err) if e]
+    if billing is not None and not billing["complete"]: errors.append("[Billingo payments] more than 1000 invoices in the window: only the newest are shown")
     if scopes and scopes["missing"]: errors.append(f"[Shopify scopes] missing: {', '.join(scopes['missing'])}")
     if raw is not None and len(raw) >= PAGE: errors.append(f"[Shopify orders] more than {PAGE} orders in {days} days: only the newest {PAGE} are shown")
     if prods is not None and len(prods) >= PAGE: errors.append(f"[Shopify products] more than {PAGE} products: only the first {PAGE} are shown")
     return {"source": "jinnee-ecom", "sent_at": int(now), "window_days": int(days), "actions_enabled": ACTIONS, "errors": errors,
             "automations": [{"key": "shopify_orders", "label": "Shopify orders", "ok": shop_err is None, "error": shop_err},
                             {"key": "billingo", "label": "Billingo invoices", "ok": bill_err is None, "error": bill_err},
+                            {"key": "billingo_payments", "label": "Billingo payments (bank sync)", "ok": pay_err is None, "error": pay_err},
                             {"key": "shopify_products", "label": "Shopify products", "ok": prod_err is None, "error": prod_err},
                             {"key": "shopify_visitors", "label": "Shopify visitors", "ok": traffic_err is None, "error": traffic_err},
                             {"key": "gls_tracking", "label": "GLS tracking", "ok": gls_err is None, "error": gls_err},
@@ -299,6 +314,7 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False):
             # None = could not be read (the site keeps the last known state and says when it was checked)
             "shopify_scopes": None if scopes is None else {**scopes, "checked_at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat(timespec="seconds")},
             "fulfilled_now": fulfilled_now,
+            "billing": billing,  # the Payments tab; None = Billingo did not answer, the site keeps what it has
             "orders": None if raw is None else [_order(o, invoices, uploaded, shipping, fulfilled) for o in raw],
             "products": None if prods is None else [v for p in prods for v in _variants(p)]}
 
@@ -311,6 +327,10 @@ def push(send="no", days=DAYS, shop=None, bill=None, gls=None):
     count["visitors_7d"] = None if payload["visitors"] is None else payload["visitors"]["last_7_days"]
     count["scopes_missing"] = None if payload["shopify_scopes"] is None else payload["shopify_scopes"]["missing"]
     count["fulfilled_now" if send == "yes" else "would_fulfill"] = payload["fulfilled_now"]
+    b = payload["billing"]
+    count["billing"] = None if b is None else {"bank_accounts": len(b["bank_accounts"]), "invoices": len(b["invoices"]),
+                                               "paid": sum(1 for i in b["invoices"] if i["payment_status"] == "paid"),
+                                               "overdue": [i["number"] for i in b["invoices"] if i["overdue"]]}
     count["shopify_fulfilled"] = sum(1 for o in payload["orders"] or [] if o["shopify_fulfillment"]["state"] == "fulfilled")
     private = [o["private"] for o in payload["orders"] or []]  # how many orders came with contact data: numbers only
     count.update(with_name=sum(1 for p in private if p["customer_name"]), with_address=sum(1 for p in private if p["shipping_address"]),

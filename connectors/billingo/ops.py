@@ -1,6 +1,6 @@
 """Billingo v3 connector. Reads invoices; create_draft makes a DRAFT only (never an issued invoice).
 Auth: BILLINGO_API_KEY (header X-API-KEY). CLI: python3 connectors/billingo/ops.py list --days 14"""
-import os, sys, json, pathlib, datetime as dt
+import os, re, sys, json, pathlib, datetime as dt
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import requests
 from cbase import ConnectorError, need, run_cli
@@ -111,5 +111,36 @@ def send_by_email(id, emails):
     _call("POST", f"/documents/{id}/send", body={"emails": list(emails)})
     return True
 
-OPS = {"list": list_invoices, "status": status, "get_pdf": get_pdf, "create_draft": create_draft}
+def _last4(number):
+    digits = "".join(c for c in str(number or "") if c.isalnum())
+    return digits[-4:] or None
+
+def payments(days="400", pages="10"):
+    """The site's Payments tab: the owner's bank accounts (name, currency, last 4 characters only) and every issued invoice
+    of the window with its due and paid date. Since the Revolut bank sync (2026-10-18) Billingo marks invoices paid on its own;
+    the API gives no balance and no bank transactions (/bank-transactions is 404), so neither is here. No partner data."""
+    accounts = [{"id": str(a.get("id")), "name": a.get("name") or None, "currency": a.get("currency"),
+                 "last4": _last4(a.get("account_number_iban") or a.get("account_number"))}
+                for a in _call("GET", "/bank-accounts", {"page": 1, "per_page": 100}).json().get("data", [])]
+    since, today = (dt.date.today() - dt.timedelta(days=int(days))).isoformat(), dt.date.today().isoformat()
+    docs, page = [], 1
+    while True:
+        j = _call("GET", "/documents", {"page": page, "per_page": 100, "start_date": since}).json()
+        docs += j.get("data", [])
+        complete = page >= int(j.get("last_page") or 1)
+        if complete or page >= int(pages): break
+        page += 1
+    invoices = []
+    for d in docs:
+        if d.get("type") != "invoice" or d.get("cancelled"): continue
+        order = re.search(r"#\d+", d.get("comment") or "")
+        paid = d.get("payment_status") == "paid"
+        invoices.append({"id": str(d.get("id")), "number": d.get("invoice_number"), "order": order.group(0) if order else None,
+                         "date": d.get("invoice_date"), "due_date": d.get("due_date"), "paid_date": d.get("paid_date") or None,
+                         "total": d.get("gross_total"), "currency": d.get("currency"), "payment_status": d.get("payment_status"),
+                         "payment_method": d.get("payment_method"),
+                         "overdue": bool(not paid and d.get("due_date") and d["due_date"] < today)})
+    return {"bank_accounts": accounts, "invoices": invoices, "since": since, "complete": complete}
+
+OPS = {"list": list_invoices, "status": status, "get_pdf": get_pdf, "create_draft": create_draft, "payments": payments}
 if __name__ == "__main__": sys.exit(run_cli(OPS))
