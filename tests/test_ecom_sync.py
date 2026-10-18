@@ -14,6 +14,8 @@ def load(traffic=True):
     tmp = pathlib.Path(tempfile.mkdtemp())
     m.UPLOADED, m.GLS_STATUS, m.FULFILLED = tmp / "up.json", tmp / "gls_status.json", tmp / "fulfilled.json"  # never the real brain/
     m.FULFILL_START = tmp / "fulfill_start.json"
+    m.order_auto.STATE, m.order_auto.START = tmp / "order_auto.json", tmp / "order_auto_start.json"
+    m.order_auto._gate = lambda action: 1  # the automatic chain has its own tests (test_order_auto.py); off here
     m._gls_fail.update(at=0.0, error=None)
     real = m._load
     m._load = lambda name: fake_gls() if name == "gls" else real(name)  # no test ever reaches MyGLS

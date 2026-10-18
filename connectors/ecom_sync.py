@@ -18,6 +18,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from cbase import ConnectorError, need, run_cli
 import order_checks
+import order_auto
 
 def _load(name):
     spec = importlib.util.spec_from_file_location(f"sync_{name}", HERE / name / "ops.py")
@@ -276,11 +277,14 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False):
     prods, prod_err = _try("Shopify products", lambda: shop._get("products.json", {"limit": PAGE, "fields": PRODUCT_FIELDS}).get("products", []))
     traffic, traffic_err = _try("Shopify visitors", lambda: _traffic(shop, days))
     scopes, scopes_err = _try("Shopify scopes", shop.scopes)
-    uploaded = _uploaded()
+    # New orders: MyGLS label and invoice draft at once, only when the autonomy table allows it and no required field is missing
+    auto = order_auto.run(raw, now, act=act, uploaded=_uploaded())
+    auto_err = "; ".join(dict.fromkeys(auto["errors"])) or None
+    uploaded = _uploaded()  # read again: the automatic upload may have just added an order
     shipping, gls_err = _shipping(uploaded, gls, now)
     fulfilled, fulfill_errs, fulfilled_now = _fulfillments(raw, shipping, shop, now, act)
     fulfill_err = "; ".join(dict.fromkeys(fulfill_errs)) or None
-    errors = [e for e in (shop_err, bill_err, prod_err, traffic_err, gls_err, scopes_err, fulfill_err) if e]
+    errors = [e for e in (shop_err, bill_err, prod_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err) if e]
     if scopes and scopes["missing"]: errors.append(f"[Shopify scopes] missing: {', '.join(scopes['missing'])}")
     if raw is not None and len(raw) >= PAGE: errors.append(f"[Shopify orders] more than {PAGE} orders in {days} days: only the newest {PAGE} are shown")
     if prods is not None and len(prods) >= PAGE: errors.append(f"[Shopify products] more than {PAGE} products: only the first {PAGE} are shown")
@@ -292,6 +296,8 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False):
                             {"key": "gls_tracking", "label": "GLS tracking", "ok": gls_err is None, "error": gls_err},
                             {"key": "shopify_fulfillment", "label": "Shopify fulfillment" if _auto_fulfill() else "Shopify fulfillment (off)",
                              "ok": fulfill_err is None, "error": fulfill_err},
+                            {"key": "order_auto", "label": "Auto label + draft" + ("" if auto["enabled"]["label"] else " (label off)"),
+                             "ok": auto_err is None, "error": auto_err},
                             {"key": "shopify_scopes", "label": "Shopify scopes", "ok": bool(scopes and scopes["ok"]),
                              "error": scopes_err or (f"missing: {', '.join(scopes['missing'])}" if scopes and scopes["missing"] else None)}],
             "traffic": traffic,  # None = could not be read: the site keeps what it has and says so, never shows zero
@@ -299,6 +305,8 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False):
             # None = could not be read (the site keeps the last known state and says when it was checked)
             "shopify_scopes": None if scopes is None else {**scopes, "checked_at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat(timespec="seconds")},
             "fulfilled_now": fulfilled_now,
+            "order_auto": auto,  # order numbers and field names only: what got a label / draft this round and what is held
+
             "orders": None if raw is None else [_order(o, invoices, uploaded, shipping, fulfilled) for o in raw],
             "products": None if prods is None else [v for p in prods for v in _variants(p)]}
 
@@ -311,6 +319,9 @@ def push(send="no", days=DAYS, shop=None, bill=None, gls=None):
     count["visitors_7d"] = None if payload["visitors"] is None else payload["visitors"]["last_7_days"]
     count["scopes_missing"] = None if payload["shopify_scopes"] is None else payload["shopify_scopes"]["missing"]
     count["fulfilled_now" if send == "yes" else "would_fulfill"] = payload["fulfilled_now"]
+    a = payload["order_auto"]
+    count["order_auto"] = {"enabled": a["enabled"], ("labels" if send == "yes" else "would_label"): a["labels"],
+                           ("drafts" if send == "yes" else "would_draft"): a["drafts"], "held": a["held"]}
     count["shopify_fulfilled"] = sum(1 for o in payload["orders"] or [] if o["shopify_fulfillment"]["state"] == "fulfilled")
     private = [o["private"] for o in payload["orders"] or []]  # how many orders came with contact data: numbers only
     count.update(with_name=sum(1 for p in private if p["customer_name"]), with_address=sum(1 for p in private if p["shipping_address"]),
@@ -342,6 +353,9 @@ def loop(seconds=""):
         try:
             out = push("yes"); note = "; ".join(out["errors"]) or "ok"
             if out.get("fulfilled_now"): print(f"ecom sync: fulfilled in Shopify (GLS picked up, no customer e-mail): {', '.join(out['fulfilled_now'])}", flush=True)
+            a = out.get("order_auto") or {}
+            if a.get("labels"): print(f"ecom sync: MyGLS label uploaded: {', '.join(a['labels'])}", flush=True)
+            if a.get("drafts"): print(f"ecom sync: Billingo invoice draft made: {', '.join(a['drafts'])}", flush=True)
         except ConnectorError as e: note = str(e)
         if note != last: print(f"ecom sync: {note}", flush=True); last = note
         time.sleep(wait)

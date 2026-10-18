@@ -202,7 +202,20 @@ class GlsReplace(unittest.TestCase):
         gls.delete_labels.assert_called_once_with([555])
         sent = gls.prepare_labels.call_args.args[0][0]["DeliveryAddress"]
         self.assertEqual((sent["HouseNumber"], sent["HouseNumberInfo"]), ("13", "3. emelet 16. ajtó"))
-        self.assertEqual(json.loads(order_flow.UPLOADED.read_text())["#1042"], 556); self.assertNotIn("Molnár", json.dumps(out))
+        rec = json.loads(order_flow.UPLOADED.read_text())["#1042"]
+        self.assertEqual((rec["parcel_id"], rec["cod_amount"]), (556, 0)); self.assertTrue(rec["at"]); self.assertNotIn("Molnár", json.dumps(out))
+        # a later correction of a parcel recorded in the new format deletes the right id
+        gls.delete_labels.reset_mock(); gls.prepare_labels.return_value = [{"parcel_id": 557}]
+        order_flow.parcel_prepare("1", "yes", "13", "", "yes", shop, gls)
+        gls.delete_labels.assert_called_once_with([556])
+    def test_cod_amount_recorded_for_the_site(self):
+        import order_flow, tempfile
+        g = Gls(); g.setUp()
+        order_flow.UPLOADED = pathlib.Path(tempfile.mkdtemp()) / "up.json"
+        gls = mock.Mock(client_number=lambda: 1, prepare_labels=mock.Mock(return_value=[{"parcel_id": 9}]))
+        shop = mock.Mock(order_private=lambda i: g.order(gateways=["Cash on Delivery (COD)"]))
+        order_flow.parcel_prepare("1", "yes", shop=shop, gls=gls)
+        self.assertEqual(json.loads(order_flow.UPLOADED.read_text())["#1042"]["cod_amount"], 9000 + 1490)
     def test_failed_delete_uploads_nothing(self):
         import order_flow, tempfile
         g = Gls(); g.setUp()
