@@ -121,6 +121,14 @@ def next_workday(today=None):
     while d.weekday() >= 5: d += dt.timedelta(days=1)
     return d
 
+CONTENT_MAX = 200  # MyGLS Content: the note printed on the label; kept short so it is not cut on the label (exact GLS limit not confirmed)
+
+def gls_content(o):
+    """'#1027: 1× Farmer Kalandkönyv, 2× Horgász játék'. The products on the label make packing easier (owner, 2026-10-19). No personal data."""
+    goods = ", ".join(f"{max(int(l['qty']), 1)}× {l['title']}" for l in o["lines"] if l.get("title"))
+    text = f"{o['name']}: {goods}" if goods else f"Monti Világ {o['name']}"
+    return text if len(text) <= CONTENT_MAX else text[:CONTENT_MAX - 1] + "…"
+
 def gls_parcel(o, gls, house="", info=""):
     """The MyGLS Parcel for an order. Pickup data (your address) comes from GLS_PICKUP_* in .env."""
     sh = o["shipping"] or o["billing"]
@@ -135,7 +143,7 @@ def gls_parcel(o, gls, house="", info=""):
     total = round(sum(float(i["unit_price"]) * i["quantity"] for i in items(o)), 0)
     ms = int(time.mktime(next_workday().timetuple()) * 1000)
     return {"ClientNumber": gls.client_number(), "ClientReference": o["name"], "CODAmount": total if cod else 0,
-            "CODReference": o["name"] if cod else "", "Content": f"Monti Világ {o['name']}", "Count": 1,
+            "CODReference": o["name"] if cod else "", "Content": gls_content(o), "Count": 1,
             "PickupDate": f"/Date({ms})/",
             "PickupAddress": {"Name": pick["name"], "Street": pick["street"], "HouseNumber": pick["house"], "City": pick["city"],
                               "ZipCode": pick["zip"], "CountryIsoCode": "HU", "ContactName": pick["name"], "ContactPhone": phone(pick["phone"]),
@@ -156,7 +164,7 @@ def parcel_prepare(order_id, send="no", house="", info="", replace="no", shop=No
     warn = [w for w, bad in (("house number not found in the address: GLS may refuse or deliver badly", not d["HouseNumber"]),
                              ("no phone number: the courier cannot call", not d["ContactPhone"])) if bad]
     if send != "yes":
-        return {"order": o["name"], "dry_run": True, "replaces": done or None, "cod_amount": parcel["CODAmount"], "pickup": parcel["PickupDate"], "warnings": warn,
+        return {"order": o["name"], "dry_run": True, "replaces": done or None, "cod_amount": parcel["CODAmount"], "content": parcel["Content"], "pickup": parcel["PickupDate"], "warnings": warn,
                 "next": "run again with --send yes to upload to MyGLS"}
     old = done.get("parcel_id") if isinstance(done, dict) else done
     if old and old is not True:  # correction: the old prepared parcel goes first; if that fails nothing is uploaded

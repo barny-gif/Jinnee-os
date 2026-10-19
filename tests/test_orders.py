@@ -165,6 +165,16 @@ class Gls(unittest.TestCase):
         sent = gls.prepare_labels.call_args.args[0][0]
         self.assertEqual(sent["DeliveryAddress"]["HouseNumber"], "12/B"); self.assertEqual(sent["ClientReference"], "#1042"); self.assertGreater(sent["CODAmount"], 0)
         self.assertNotIn("Teszt", json.dumps(out))
+    def test_label_note_lists_the_products(self):
+        import order_flow
+        lines = [{"title": "Farmer Kalandkönyv", "qty": 1, "price": "8490", "discount": "0"}, {"title": "Horgász játék", "qty": 2, "price": "3000", "discount": "0"}]
+        o = self.order(lines=lines)
+        self.assertEqual(order_flow.gls_parcel(o, mock.Mock(client_number=lambda: 1))["Content"], "#1042: 1× Farmer Kalandkönyv, 2× Horgász játék")
+        shop = mock.Mock(order_private=lambda i: o)
+        self.assertEqual(order_flow.parcel_prepare("1", "no", shop=shop, gls=mock.Mock(client_number=lambda: 1))["content"], "#1042: 1× Farmer Kalandkönyv, 2× Horgász játék")
+        long = order_flow.gls_content(self.order(lines=[{"title": "X" * 300, "qty": 1}]))
+        self.assertEqual(len(long), order_flow.CONTENT_MAX); self.assertTrue(long.endswith("…"))
+        self.assertEqual(order_flow.gls_content(self.order(lines=[])), "Monti Világ #1042")
     def test_gls_errors_surface(self):
         m = load("gls")
         with mock.patch("requests.post", return_value=Resp({"PrepareLabelsError": [{"ErrorCode": 9, "ErrorDescription": "bad zip"}]})):
