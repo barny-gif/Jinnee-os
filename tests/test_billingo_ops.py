@@ -70,6 +70,16 @@ class Payments(unittest.TestCase):
             out = self.m.payments(pages="2")
         self.assertFalse(out["complete"]); self.assertEqual(len(out["invoices"]), 2)
 
+    def test_old_gyv_series_is_left_out(self):
+        docs = [doc(1), doc(2, invoice_number="GYV-2025-14"), doc(3, invoice_number=None)]
+        out, _ = self.run_with([{"data": docs, "last_page": 1}])
+        self.assertEqual([i["number"] for i in out["invoices"]], ["MV-2026-1"])
+
+    def test_empty_prefix_shows_every_series(self):
+        with mock.patch.dict(os.environ, {"BILLINGO_PAYMENTS_PREFIX": ""}):
+            out, _ = self.run_with([{"data": [doc(1), doc(2, invoice_number="GYV-2025-14")], "last_page": 1}])
+        self.assertEqual([i["number"] for i in out["invoices"]], ["MV-2026-1", "GYV-2025-14"])
+
     def test_no_order_number_in_comment(self):
         out, _ = self.run_with([{"data": [doc(1, comment="")], "last_page": 1}])
         self.assertIsNone(out["invoices"][0]["order"])
