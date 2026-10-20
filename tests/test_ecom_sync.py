@@ -404,4 +404,40 @@ class Push(unittest.TestCase):
         with mock.patch.dict(os.environ, {"ECOM_SITE_URL": "https://site.example", "ECOM_INGEST_SECRET": "s3"}), mock.patch.object(self.m.requests, "post", return_value=Resp(code=401)):
             with self.assertRaisesRegex(ConnectorError, "401"): self.m.push("yes", shop=shop(), bill=bill())
 
+class OpenOrders(unittest.TestCase):
+    """Live 2026-10-20: #1024 (COD, 10-11) fell out of the 7-day window on 10-18, so the site never got its delivery and invoice."""
+    NOW = 1792483200  # 2026-10-20 08:00 UTC
+    OLD = {**COD_ORDER, "id": 7001, "name": "#1024", "created_at": "2026-10-11T13:06:15+02:00"}
+    NEW = {**ORDER, "id": 7002, "name": "#1029", "created_at": "2026-10-20T05:20:36+02:00"}
+    def setUp(self):
+        self.m = load()
+        self.m.UPLOADED.write_text(json.dumps({"#1024": 548860860}))
+        self.gls = fake_gls({"548860860": "3423946814"}, {"3423946814": DELIVERED})
+    def names(self, docs=(), orders=None, cancelled=False):
+        old = {**self.OLD, "cancelled_at": "2026-10-12T10:00:00+02:00"} if cancelled else self.OLD
+        out = self.m.build(shop=shop(orders=orders or (self.NEW, old)), bill=bill(docs), now=self.NOW, gls=self.gls)
+        return [o["name"] for o in out["orders"]]
+    def test_reads_back_30_days(self):
+        s = shop(); self.m.build(shop=s, bill=bill(), now=self.NOW, gls=self.gls)
+        self.assertEqual(s._get.call_args_list[0].args[1]["created_at_min"][:10],
+                         (self.m.dt.datetime.now(self.m.dt.timezone.utc) - self.m.dt.timedelta(days=30)).date().isoformat())
+    def test_old_delivered_without_invoice_still_goes(self):
+        self.assertEqual(self.names(), ["#1029", "#1024"])
+    def test_old_delivered_invoice_not_paid_still_goes(self):
+        self.assertEqual(self.names([{"comment": "Shopify #1024", "type": "invoice", "number": "MV-2026-3", "paid": "outstanding"}]), ["#1029", "#1024"])
+    def test_old_delivered_invoiced_and_paid_is_closed(self):
+        self.assertEqual(self.names([{"comment": "Shopify #1024", "type": "invoice", "number": "MV-2026-3", "paid": "paid"}]), ["#1029"])
+    def test_old_cancelled_is_closed(self):
+        self.assertEqual(self.names(cancelled=True), ["#1029"])
+    def test_billingo_down_keeps_the_old_one(self):
+        out = self.m.build(shop=shop(orders=(self.NEW, self.OLD)), bill=bill(fail=True), now=self.NOW, gls=self.gls)
+        self.assertEqual([o["name"] for o in out["orders"]], ["#1029", "#1024"])
+    def test_recent_closed_order_still_goes(self):
+        recent = {**self.OLD, "created_at": "2026-10-19T10:00:00+02:00"}
+        self.assertEqual(self.names([{"comment": "Shopify #1024", "type": "invoice", "number": "MV-2026-3", "paid": "paid"}], orders=(recent,)), ["#1024"])
+    def test_new_order_chain_sees_the_last_days_only(self):
+        with mock.patch.object(self.m.order_auto, "run", wraps=self.m.order_auto.run) as run:
+            self.m.build(shop=shop(orders=(self.NEW, self.OLD)), bill=bill(), now=self.NOW, gls=self.gls)
+        self.assertEqual([o["name"] for o in run.call_args.args[0]], ["#1029"])
+
 if __name__ == "__main__": unittest.main()

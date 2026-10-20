@@ -1,4 +1,4 @@
-"""Shop -> the admin site (jinnee-os.com). Sends the last days' orders with their payment, invoice and parcel state, and the
+"""Shop -> the admin site (jinnee-os.com). Sends the last days' orders (plus older ones up to OPEN_DAYS while still open) with their payment, invoice and parcel state, and the
 product list, the store's visitors and the Shopify app's scopes. It reads Shopify, Billingo, MyGLS tracking (each parcel at most
 hourly, state in brain/gls_status.json) and brain/gls_uploaded.json. Its one write: when GLS has picked a parcel up, the order is
 marked fulfilled in Shopify with the parcel number, without e-mailing the customer (owner, 2026-10-15), once per order
@@ -30,6 +30,7 @@ PRODUCT_FIELDS = "id,title,status,variants"
 ADDRESS_KEYS = ("name", "company", "address1", "address2", "zip", "city", "province", "country_code", "phone")
 COD = ("cash on delivery", "cod", "utánvét", "utanvet")  # the same words as order_flow.COD
 DAYS = "7"   # the owner asked for the last 7 days only; Shopify gives 60 without read_all_orders
+OPEN_DAYS = "30"  # an older order still goes while it is open (not delivered, no invoice, or not paid): a COD parcel often takes longer than 7 days (#1024, 2026-10-20)
 PAGE = 250   # Shopify's largest page; more than this in the window is reported, not silently cut
 BILL_TTL = 300  # Billingo is asked every 5 minutes, not every round
 UPLOADED = HERE.parent / "brain" / "gls_uploaded.json"  # order name -> parcel id, or {"parcel_id", "cod_amount", "at"}
@@ -248,6 +249,16 @@ def _order(o, invoices, uploaded, shipping=None, fulfilled=None):
                        "qty": l.get("quantity", 1), "price": float(l.get("price") or 0)} for l in o.get("line_items") or []],
             "private": _private(o)}
 
+def _closed(row):
+    """Nothing left to happen: cancelled, or the parcel's journey is over (delivered / returned) and its invoice is issued and paid.
+    Unknown (Billingo or GLS did not answer) counts as open, so the order keeps going to the site."""
+    if row["cancelled"]: return True
+    inv = row["invoice"]
+    return (row.get("shipping") or {}).get("state") in GLS_FINAL and inv["state"] == "issued" and inv["paid"] == "paid"
+
+def _in_window(o, since):
+    return (_ts(o.get("created_at")) or 0) >= since
+
 def _variants(p):
     return [{"variant_id": str(v["id"]), "product_id": str(p["id"]), "title": p.get("title"),
              "variant_title": None if (v.get("title") or "") == "Default Title" else v.get("title"), "sku": v.get("sku") or None,
@@ -282,10 +293,13 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False):
     NOT a CLI op: the result holds customer data and must only go to the site."""
     shop = shop or _load("shopify"); bill = bill or _load("billingo"); gls = gls or _load("gls")
     now = now or time.time()
-    since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=int(days))).isoformat(timespec="seconds")
-    raw, shop_err = _try("Shopify orders", lambda: shop._get("orders.json", {"status": "any", "limit": PAGE, "created_at_min": since,
-                                                                               "order": "created_at desc", "fields": ORDER_FIELDS}).get("orders", []))
-    invoices, bill_err = _invoices(bill, days, now)
+    reach = str(max(int(days), int(OPEN_DAYS)))  # read back far enough to keep sending the orders that are still open
+    since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=int(reach))).isoformat(timespec="seconds")
+    every, shop_err = _try("Shopify orders", lambda: shop._get("orders.json", {"status": "any", "limit": PAGE, "created_at_min": since,
+                                                                                 "order": "created_at desc", "fields": ORDER_FIELDS}).get("orders", []))
+    recent_since = now - int(days) * 86400
+    raw = None if every is None else [o for o in every if _in_window(o, recent_since)]  # the new-order chain (label + draft) sees the last days only
+    invoices, bill_err = _invoices(bill, reach, now)
     billing, pay_err = _billing(bill, now)
     prods, prod_err = _try("Shopify products", lambda: shop._get("products.json", {"limit": PAGE, "fields": PRODUCT_FIELDS}).get("products", []))
     traffic, traffic_err = _try("Shopify visitors", lambda: _traffic(shop, days))
@@ -295,12 +309,12 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False):
     auto_err = "; ".join(dict.fromkeys(auto["errors"])) or None
     uploaded = _uploaded()  # read again: the automatic upload may have just added an order
     shipping, gls_err = _shipping(uploaded, gls, now)
-    fulfilled, fulfill_errs, fulfilled_now = _fulfillments(raw, shipping, shop, now, act)
+    fulfilled, fulfill_errs, fulfilled_now = _fulfillments(every, shipping, shop, now, act)  # an older open order may still be picked up; the switch-on moment still limits it
     fulfill_err = "; ".join(dict.fromkeys(fulfill_errs)) or None
     errors = [e for e in (shop_err, bill_err, pay_err, prod_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err) if e]
     if billing is not None and not billing["complete"]: errors.append("[Billingo payments] more than 1000 invoices in the window: only the newest are shown")
     if scopes and scopes["missing"]: errors.append(f"[Shopify scopes] missing: {', '.join(scopes['missing'])}")
-    if raw is not None and len(raw) >= PAGE: errors.append(f"[Shopify orders] more than {PAGE} orders in {days} days: only the newest {PAGE} are shown")
+    if every is not None and len(every) >= PAGE: errors.append(f"[Shopify orders] more than {PAGE} orders in {reach} days: only the newest {PAGE} are shown")
     if prods is not None and len(prods) >= PAGE: errors.append(f"[Shopify products] more than {PAGE} products: only the first {PAGE} are shown")
     return {"source": "jinnee-ecom", "sent_at": int(now), "window_days": int(days), "actions_enabled": ACTIONS, "errors": errors,
             "automations": [{"key": "shopify_orders", "label": "Shopify orders", "ok": shop_err is None, "error": shop_err},
@@ -322,7 +336,9 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False):
             "fulfilled_now": fulfilled_now,
             "order_auto": auto,  # order numbers and field names only: what got a label / draft this round and what is held
             "billing": billing,  # the Payments tab; None = Billingo did not answer, the site keeps what it has
-            "orders": None if raw is None else [_order(o, invoices, uploaded, shipping, fulfilled) for o in raw],
+            # the last days' orders, plus any older one (up to OPEN_DAYS) that is still open; a closed older order keeps its last state on the site
+            "orders": None if every is None else [r for o in every for r in [_order(o, invoices, uploaded, shipping, fulfilled)]
+                                                  if _in_window(o, recent_since) or not _closed(r)],
             "products": None if prods is None else [v for p in prods for v in _variants(p)]}
 
 def push(send="no", days=DAYS, shop=None, bill=None, gls=None):
