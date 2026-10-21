@@ -123,10 +123,11 @@ def next_workday(today=None):
 
 CONTENT_MAX = 200  # MyGLS Content: the note printed on the label; kept short so it is not cut on the label (exact GLS limit not confirmed)
 
-def gls_content(o):
-    """'#1027: 1× Farmer Kalandkönyv, 2× Horgász játék'. The products on the label make packing easier (owner, 2026-10-19). No personal data."""
+def gls_content(o, cod_amount=0):
+    """'montivilag.hu #1027, 1× Farmer Kalandkönyv, COD 10380 Ft' or '..., PAID' (owner, 2026-10-21; products since 2026-10-19). No personal data."""
     goods = ", ".join(f"{max(int(l['qty']), 1)}× {l['title']}" for l in o["lines"] if l.get("title"))
-    text = f"{o['name']}: {goods}" if goods else f"Monti Világ {o['name']}"
+    pay = f"COD {int(cod_amount)} Ft" if cod_amount else "PAID"
+    text = ", ".join(x for x in (f"montivilag.hu {o['name']}", goods, pay) if x)
     return text if len(text) <= CONTENT_MAX else text[:CONTENT_MAX - 1] + "…"
 
 def gls_parcel(o, gls, house="", info=""):
@@ -143,7 +144,7 @@ def gls_parcel(o, gls, house="", info=""):
     total = round(sum(float(i["unit_price"]) * i["quantity"] for i in items(o)), 0)
     ms = int(time.mktime(next_workday().timetuple()) * 1000)
     return {"ClientNumber": gls.client_number(), "ClientReference": o["name"], "CODAmount": total if cod else 0,
-            "CODReference": o["name"] if cod else "", "Content": gls_content(o), "Count": 1,
+            "CODReference": o["name"] if cod else "", "Content": gls_content(o, total if cod else 0), "Count": 1,
             "PickupDate": f"/Date({ms})/",
             "PickupAddress": {"Name": pick["name"], "Street": pick["street"], "HouseNumber": pick["house"], "City": pick["city"],
                               "ZipCode": pick["zip"], "CountryIsoCode": "HU", "ContactName": pick["name"], "ContactPhone": phone(pick["phone"]),

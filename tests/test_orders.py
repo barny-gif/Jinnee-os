@@ -169,12 +169,34 @@ class Gls(unittest.TestCase):
         import order_flow
         lines = [{"title": "Farmer Kalandkönyv", "qty": 1, "price": "8490", "discount": "0"}, {"title": "Horgász játék", "qty": 2, "price": "3000", "discount": "0"}]
         o = self.order(lines=lines)
-        self.assertEqual(order_flow.gls_parcel(o, mock.Mock(client_number=lambda: 1))["Content"], "#1042: 1× Farmer Kalandkönyv, 2× Horgász játék")
+        paid = "montivilag.hu #1042, 1× Farmer Kalandkönyv, 2× Horgász játék, PAID"
+        self.assertEqual(order_flow.gls_parcel(o, mock.Mock(client_number=lambda: 1))["Content"], paid)
         shop = mock.Mock(order_private=lambda i: o)
-        self.assertEqual(order_flow.parcel_prepare("1", "no", shop=shop, gls=mock.Mock(client_number=lambda: 1))["content"], "#1042: 1× Farmer Kalandkönyv, 2× Horgász játék")
+        self.assertEqual(order_flow.parcel_prepare("1", "no", shop=shop, gls=mock.Mock(client_number=lambda: 1))["content"], paid)
+        cod = self.order(lines=lines, gateways=["Cash on Delivery (COD)"])
+        self.assertEqual(order_flow.gls_parcel(cod, mock.Mock(client_number=lambda: 1))["Content"],
+                         "montivilag.hu #1042, 1× Farmer Kalandkönyv, 2× Horgász játék, COD 15980 Ft")  # 8490 + 2 x 3000 + 1490 shipping
         long = order_flow.gls_content(self.order(lines=[{"title": "X" * 300, "qty": 1}]))
         self.assertEqual(len(long), order_flow.CONTENT_MAX); self.assertTrue(long.endswith("…"))
-        self.assertEqual(order_flow.gls_content(self.order(lines=[])), "Monti Világ #1042")
+        self.assertEqual(order_flow.gls_content(self.order(lines=[])), "montivilag.hu #1042, PAID")
+    def test_manual_parcel_for_other_channels(self):
+        import tempfile, parcel_manual
+        gls = mock.Mock(client_number=lambda: 1, prepare_labels=mock.Mock(return_value=[{"parcel_id": 7}]))
+        data = dict(channel="eMAG", ref="113", goods="1× Zsiráf Kalandkönyv", cod="9890", name="Secret Name", zip="5700", city="Gyula",
+                    street="Béke sgt.", house="38", phone="06701234567", email="s@x.hu")
+        with tempfile.TemporaryDirectory() as d, mock.patch("os.environ", {**os.environ, "GLS_PICKUP_NAME": "Shop", "GLS_PICKUP_STREET": "Fő u.",
+                                                                           "GLS_PICKUP_CITY": "Bp", "GLS_PICKUP_ZIP": "1011"}):
+            flow = parcel_manual._flow(); flow.UPLOADED = pathlib.Path(d) / "up.json"; flow._load = lambda n: gls
+            with mock.patch.object(parcel_manual, "_flow", lambda: flow):
+                dry = parcel_manual.prepare(**data)
+                self.assertTrue(dry["dry_run"]); gls.prepare_labels.assert_not_called()
+                self.assertEqual(dry["content"], "montivilag.hu 113, 1× Zsiráf Kalandkönyv, COD 9890 Ft"); self.assertNotIn("Secret", json.dumps(dry))
+                out = parcel_manual.prepare(**data, send="yes")
+                sent = gls.prepare_labels.call_args.args[0][0]
+                self.assertEqual(sent["CODAmount"], 9890); self.assertEqual(sent["DeliveryAddress"]["HouseNumber"], "38"); self.assertNotIn("Secret", json.dumps(out))
+                self.assertIn("skipped", parcel_manual.prepare(**data, send="yes"))  # one reference, one parcel
+                with self.assertRaises(ConnectorError): parcel_manual.prepare(**{**data, "house": ""})
+                self.assertEqual(parcel_manual.prepare(**{**data, "ref": "114", "cod": "0"})["content"], "montivilag.hu 114, 1× Zsiráf Kalandkönyv, PAID")
     def test_gls_errors_surface(self):
         m = load("gls")
         with mock.patch("requests.post", return_value=Resp({"PrepareLabelsError": [{"ErrorCode": 9, "ErrorDescription": "bad zip"}]})):
