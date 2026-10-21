@@ -165,6 +165,26 @@ class Gls(unittest.TestCase):
         sent = gls.prepare_labels.call_args.args[0][0]
         self.assertEqual(sent["DeliveryAddress"]["HouseNumber"], "12/B"); self.assertEqual(sent["ClientReference"], "#1042"); self.assertGreater(sent["CODAmount"], 0)
         self.assertNotIn("Teszt", json.dumps(out))
+    def test_cod_must_match_the_order_total(self):
+        import order_flow
+        g = mock.Mock(client_number=lambda: 1)
+        ok = self.order(gateways=["Cash on Delivery (COD)"], total="10490.00")
+        self.assertEqual(order_flow.gls_parcel(ok, g)["CODAmount"], 10490)
+        with self.assertRaises(ConnectorError):  # #1031: the label said 16370, the customer owed 14880
+            order_flow.gls_parcel(self.order(gateways=["Cash on Delivery (COD)"], total="9000.00"), g)
+        self.assertEqual(order_flow.gls_parcel(self.order(total="1.00"), g)["CODAmount"], 0)  # PAID: nothing to collect, no check
+    def test_automatic_discount_is_taken_off(self):
+        # Shopify puts an automatic discount only in discount_allocations; total_discount stays 0 (#1031, 2026-10-21)
+        raw = {"order": {"name": "#1031", "id": 5, "total_price": "14880.00", "payment_gateway_names": ["Vásárlás Utánvétellel"],
+                         "line_items": [{"title": "Geometrikus Tojás", "quantity": 1, "price": "5990.00", "total_discount": "0.00", "discount_allocations": [{"amount": "616.38"}]},
+                                        {"title": "Farmer Kalandkönyv", "quantity": 1, "price": "8490.00", "total_discount": "0.00", "discount_allocations": [{"amount": "873.62"}]}],
+                         "shipping_lines": [{"title": "GLS", "price": "1890.00", "discount_allocations": []}]}}
+        os.environ.update(SHOPIFY_STORE="demo", SHOPIFY_ADMIN_TOKEN="tok")
+        m = load("shopify")
+        with mock.patch.object(m, "_get", return_value=raw): o = m.order_private("5")
+        o["shipping"] = self.order()["shipping"]
+        import order_flow
+        self.assertEqual(order_flow.gls_parcel(o, mock.Mock(client_number=lambda: 1))["CODAmount"], 14880)
     def test_label_note_lists_the_products(self):
         import order_flow
         lines = [{"title": "Farmer Kalandkönyv", "qty": 1, "price": "8490", "discount": "0"}, {"title": "Horgász játék", "qty": 2, "price": "3000", "discount": "0"}]

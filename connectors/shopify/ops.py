@@ -86,12 +86,15 @@ def order_private(order_id):
     o = _get(f"orders/{order_id}.json")["order"]
     b = o.get("billing_address") or o.get("shipping_address") or {}
     sh = o.get("shipping_address") or b
+    # An automatic or order-level discount is only in discount_allocations; total_discount stays 0 for it (#1031, 2026-10-21)
+    def off(x): return sum(float(a.get("amount") or 0) for a in x.get("discount_allocations") or []) or float(x.get("total_discount") or 0)
     return {"name": o.get("name"), "id": o["id"], "currency": o.get("currency"), "taxes_included": o.get("taxes_included", True),
+            "total": o.get("total_price"),
             "gateways": o.get("payment_gateway_names") or [], "email": o.get("email") or (o.get("customer") or {}).get("email") or "",
             "phone": sh.get("phone") or o.get("phone") or "", "billing": b, "shipping": sh,
             "lines": [{"title": i.get("title"), "sku": i.get("sku"), "qty": i.get("quantity", 1), "price": i.get("price"),
-                       "discount": i.get("total_discount") or "0"} for i in o.get("line_items") or []],
-            "shipping_lines": [{"title": l.get("title"), "price": l.get("price")} for l in o.get("shipping_lines") or []]}
+                       "discount": str(off(i))} for i in o.get("line_items") or []],
+            "shipping_lines": [{"title": l.get("title"), "price": str(max(float(l.get("price") or 0) - off(l), 0))} for l in o.get("shipping_lines") or []]}
 
 def list_orders(days="7", limit="100"):
     since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=int(days))).isoformat(timespec="seconds")

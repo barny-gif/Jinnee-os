@@ -142,6 +142,8 @@ def gls_parcel(o, gls, house="", info=""):
     if gone: raise ConnectorError("Missing in .env: " + ", ".join("GLS_PICKUP_" + k.upper() for k in gone))
     cod = payment_method(o["gateways"]) == "cash_on_delivery"
     total = round(sum(float(i["unit_price"]) * i["quantity"] for i in items(o)), 0)
+    if cod and o.get("total") is not None and abs(total - float(o["total"])) >= 1:  # the courier must collect exactly what the customer owes
+        raise ConnectorError(f"{o['name']}: COD amount {int(total)} Ft does not match the order total {int(float(o['total']))} Ft")
     ms = int(time.mktime(next_workday().timetuple()) * 1000)
     return {"ClientNumber": gls.client_number(), "ClientReference": o["name"], "CODAmount": total if cod else 0,
             "CODReference": o["name"] if cod else "", "Content": gls_content(o, total if cod else 0), "Count": 1,
