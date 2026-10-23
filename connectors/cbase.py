@@ -2,9 +2,16 @@
 import json, os, sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "core"))
 import env; env.load()
+import business
 
 class ConnectorError(Exception):
     """Anything the agent or dashboard should report as 'the connector did not answer', never guess around."""
+
+def setting(fn, *args):
+    """A value from config/business.yaml (core/business.py). Missing or broken -> ConnectorError naming the key, so the
+    label or invoice step stops instead of going out with a guessed value."""
+    try: return fn(*args)
+    except business.BusinessConfigError as e: raise ConnectorError(str(e)) from None
 
 def need(*names):
     missing = [n for n in names if not os.getenv(n, "").strip()]

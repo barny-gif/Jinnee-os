@@ -12,8 +12,8 @@ Product costs tab (owner, 2026-10-23): products carry `unit_cost` (Shopify "Cost
 orders carry `shipping_paid`, `discounts` (automatic discounts too, from discount_allocations) and `payment_type`; and two daily
 aggregates go with them, with no personal data at all: `sales_daily` and `product_sales_daily`. Each round sends the last DAYS
 days (from the orders already read); the full history (ECOM_HISTORY_DAYS, default 180) goes once a day (brain/ecom_sales_history.json).
-Not revenue, so left out of the aggregates: cancelled, test, refunded / voided, 0 Ft, and orders tagged Barter / Influencer /
-Teszt / Ajándék. A partially refunded order counts with the refunded money and units taken off.
+Not revenue, so left out of the aggregates: cancelled, test, refunded / voided, 0 Ft, and orders carrying one of the owner's
+not-revenue tags (config/business.yaml shop.not_revenue_tags, e.g. test / gift / barter). A partially refunded order counts with the refunded money and units taken off.
 Dry run by default.
 CLI: python3 connectors/ecom_sync.py push              (says what WOULD be sent: counts only)
      python3 connectors/ecom_sync.py push --history yes (dry run with the full sales history: totals per month only)
@@ -23,7 +23,8 @@ import sys, os, re, json, math, time, pathlib, datetime as dt, importlib.util
 import requests
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from cbase import ConnectorError, need, run_cli
+from cbase import ConnectorError, need, run_cli, setting
+import business
 import order_checks
 import order_auto
 
@@ -42,7 +43,6 @@ HISTORY = HERE.parent / "brain" / "ecom_sales_history.json"  # when the full his
 HISTORY_EVERY = 86400  # the full history goes once a day; every round sends the last DAYS days
 HISTORY_RETRY = 600    # after a failed full-history round, the next try waits 10 minutes
 HISTORY_PAGES = 200    # at most 200 x 250 orders
-NOT_REVENUE = ("barter", "influencer", "teszt", "ajándék", "ajandek")  # order tags that are not revenue (lessons 2026-10-12)
 BANK = ("bank deposit", "átutal", "atutal", "wire", "bank transfer")  # the same words as order_flow.payment_method
 COST_TTL = 3600  # Shopify "Cost per item" is asked once an hour
 _cost_cache = {"at": 0.0, "costs": None}
@@ -51,7 +51,7 @@ PRODUCT_FIELDS = "id,title,status,variants"
 ADDRESS_KEYS = ("name", "company", "address1", "address2", "zip", "city", "province", "country_code", "phone")
 COD = ("cash on delivery", "cod", "utánvét", "utanvet")  # the same words as order_flow.COD
 DAYS = "7"   # the owner asked for the last 7 days only; Shopify gives 60 without read_all_orders
-OPEN_DAYS = "30"  # an older order still goes while it is open (not delivered, no invoice, or not paid): a COD parcel often takes longer than 7 days (#1024, 2026-10-20)
+OPEN_DAYS = "30"  # an older order still goes while it is open (not delivered, no invoice, or not paid): a COD parcel often takes longer than 7 days (2026-10-20)
 PAGE = 250   # Shopify's largest page; more than this in the window is reported, not silently cut
 BILL_TTL = 300  # Billingo is asked every 5 minutes, not every round
 UPLOADED = HERE.parent / "brain" / "gls_uploaded.json"  # order name -> parcel id, or {"parcel_id", "cod_amount", "at"}
@@ -98,7 +98,7 @@ def _billing(bill, now):
     return c["data"], None
 
 def _invoice(name, invoices):
-    """unknown = Billingo did not answer (never shown as 'no invoice'). '#1024' must not match a comment about '#10245'."""
+    """unknown = Billingo did not answer (never shown as 'no invoice'). '#1001' must not match a comment about '#10015'."""
     if invoices is None: return {"state": "unknown", "number": None, "paid": None}
     inv = next((i for i in invoices if name and re.search(re.escape(name) + r"(?!\d)", i.get("comment") or "")), None)
     if not inv: return {"state": "none", "number": None, "paid": None}
@@ -195,7 +195,7 @@ def _fulfillments(raw, shipping, shop, now, act=False):
     """Shopify fulfillment once GLS has picked the parcel up, with its parcel number, never e-mailing the customer.
     Never twice: an order already fulfilled in Shopify, or recorded in brain/shopify_fulfilled.json, is not sent again, and
     shop.fulfill only uses fulfillment orders that are still open. A failure is recorded and retried after FULFILL_RETRY.
-    The site's Barter / Influencer / Teszt / Ajándék mark is not visible from here: such orders are not skipped, only noted
+    The site's not-revenue mark (e.g. barter / gift) is not visible from here: such orders are not skipped, only noted
     (they normally have no GLS label, so they never reach this point). act=False (dry run): nothing is sent or written, the
     names are only listed. → (record, errors, names fulfilled (or, in a dry run, to be fulfilled) in this round)"""
     done, errors, new, changed = _fulfilled(), [], [], False
@@ -356,7 +356,8 @@ def not_revenue(o):
     if (o.get("financial_status") or "") in ("refunded", "voided"): return "refunded"
     if _money(o.get("total_price")) <= 0: return "zero"
     tags = [t.strip().lower() for t in str(o.get("tags") or "").split(",") if t.strip()]
-    if any(k in t for t in tags for k in NOT_REVENUE): return "tagged"
+    marks = setting(business.not_revenue_tags) if tags else []
+    if any(k in t for t in tags for k in marks): return "tagged"
     return None
 
 def _unit_net(l):

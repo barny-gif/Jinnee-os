@@ -1,25 +1,26 @@
 """A parcel for an order that is NOT in Shopify (e.g. eMAG), uploaded to our own MyGLS. Temporary: until it is in the repo (PR).
 Dry run by default; --send yes uploads (prepared, not printed). The recipient data only passes through: output shows the reference,
 the COD amount, the label note and warnings. One reference, one parcel (brain/gls_uploaded.json, key "<channel>-<ref>").
-Label note (owner, 2026-10-21): "montivilag.hu <order no.>, <toy name>, COD <amount> Ft" or "..., PAID".
-CLI: python3 connectors/parcel_manual.py prepare --channel eMAG --ref 1136816029 --goods "1× Farmer Kalandkönyv" --cod 9890
+Label note: the same template as Shopify orders (config/business.yaml labels.*), with the channel's reference as the order:
+"<shop> <ref>, <goods>, COD <amount> Ft" or "..., PAID".
+CLI: python3 connectors/parcel_manual.py prepare --channel eMAG --ref 1000000001 --goods "1× Wooden puzzle" --cod 9890
      --name … --zip … --city … --street … --house … --phone … --email … [--send yes]"""
 import sys, json, pathlib, importlib.util, datetime as dt
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from cbase import ConnectorError, run_cli
+from cbase import ConnectorError, run_cli, setting
+import business
 
 def _flow():
     spec = importlib.util.spec_from_file_location("pm_flow", HERE / "order_flow.py")
     m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); return m
 
 def note(ref, goods, cod):
-    text = f"montivilag.hu {ref}, {goods}, " + (f"COD {int(cod)} Ft" if cod else "PAID")
-    return text if len(text) <= 200 else text[:199] + "…"
+    return setting(business.label_note, str(ref), goods, cod)
 
 def prepare(channel, ref, goods, cod, name, zip, city, street, house, phone, email="", info="", send="no"):
     flow = _flow(); gls = flow._load("gls")
-    if not goods.strip(): raise ConnectorError("the toy name (--goods) is missing: it goes on the label note")
+    if not goods.strip(): raise ConnectorError("what is in the parcel (--goods) is missing: it goes on the label note")
     cod = float(cod or 0)
     missing = [k for k, v in (("name", name), ("zip", zip), ("city", city), ("street", street), ("house", house), ("phone", phone)) if not str(v).strip()]
     if missing: raise ConnectorError(f"{channel} {ref}: missing {', '.join(missing)}")

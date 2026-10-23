@@ -5,6 +5,7 @@ from unittest import mock
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = next(p for p in HERE.parents if (p / "connectors" / "cbase.py").exists())
 sys.path.insert(0, str(ROOT / "connectors"))
+sys.path.insert(0, str(ROOT / "tests")); import fake_business; fake_business.use()  # a made-up business (config/business.yaml)
 from cbase import ConnectorError
 
 def load():
@@ -16,7 +17,7 @@ def load():
 
 ADDR = {"name": "Titkos Vevo", "address1": "Fő utca 12/B", "zip": "1111", "city": "Budapest", "country_code": "HU", "phone": "06 30 111 2222"}
 NOW = 1792400000.0  # 2026-10-19
-def order(name="#1028", created="2026-10-19T10:00:00+02:00", **kw):
+def order(name="#5028", created="2026-10-19T10:00:00+02:00", **kw):
     o = {"id": 7001, "name": name, "created_at": created, "total_price": "10380.00", "financial_status": "paid",
          "payment_gateway_names": ["SimplePay"], "cancelled_at": None, "test": False, "email": "x@y.hu", "phone": None,
          "shipping_address": ADDR, "billing_address": ADDR, "shipping_lines": [{"title": "GLS házhoz"}]}
@@ -41,33 +42,33 @@ class OrderAuto(unittest.TestCase):
 
     def test_complete_new_order_gets_label_and_draft(self):
         f = flow(); out = self.m.run([order()], NOW, act=True, flow=f, gate=ON)
-        self.assertEqual((out["labels"], out["drafts"], out["held"]), (["#1028"], ["#1028"], {}))
+        self.assertEqual((out["labels"], out["drafts"], out["held"]), (["#5028"], ["#5028"], {}))
         f.parcel_prepare.assert_called_once_with("7001", send="yes"); f.invoice_draft.assert_called_once_with("7001")
-        st = json.loads(self.m.STATE.read_text())["#1028"]
+        st = json.loads(self.m.STATE.read_text())["#5028"]
         self.assertEqual((st["label"]["parcel_id"], st["draft"]["draft_id"]), (555, 99))
         self.assertNotIn("Titkos", json.dumps(out) + self.m.STATE.read_text())
 
     def test_never_twice(self):
         f = flow(); self.m.run([order()], NOW, act=True, flow=f, gate=ON); self.m.run([order()], NOW + 60, act=True, flow=f, gate=ON)
         self.assertEqual((f.parcel_prepare.call_count, f.invoice_draft.call_count), (1, 1))
-        f2 = flow(); self.m.run([order(name="#1029")], NOW, act=True, uploaded={"#1029": {"parcel_id": 1}}, flow=f2, gate=ON)
+        f2 = flow(); self.m.run([order(name="#5029")], NOW, act=True, uploaded={"#5029": {"parcel_id": 1}}, flow=f2, gate=ON)
         f2.parcel_prepare.assert_not_called()  # already in gls_uploaded.json (uploaded by hand)
 
     def test_missing_house_number_holds_the_label_but_not_the_draft(self):
         f = flow(); o = order(shipping_address={**ADDR, "address1": "Fő utca"})
         out = self.m.run([o], NOW, act=True, flow=f, gate=ON)
         f.parcel_prepare.assert_not_called(); f.invoice_draft.assert_called_once()
-        self.assertEqual(out["held"], {"#1028": ["label: házszám"]})
+        self.assertEqual(out["held"], {"#5028": ["label: házszám"]})
 
     def test_missing_phone_holds_the_label(self):
         none = {**ADDR, "phone": None}
         out = self.m.run([order(shipping_address=none, billing_address=none)], NOW, act=True, flow=flow(), gate=ON)
-        self.assertEqual(out["labels"], []); self.assertIn("label: telefonszám", out["held"]["#1028"])
+        self.assertEqual(out["labels"], []); self.assertIn("label: telefonszám", out["held"]["#5028"])
 
     def test_billing_incomplete_holds_the_draft(self):
         f = flow(); out = self.m.run([order(billing_address={**ADDR, "address1": ""})], NOW, act=True, flow=f, gate=ON)
-        f.invoice_draft.assert_not_called(); self.assertEqual(out["labels"], ["#1028"])
-        self.assertEqual(out["held"], {"#1028": ["invoice: számlázási cím"]})
+        f.invoice_draft.assert_not_called(); self.assertEqual(out["labels"], ["#5028"])
+        self.assertEqual(out["held"], {"#5028": ["invoice: számlázási cím"]})
 
     def test_cancelled_test_zero_and_pickup_point_are_not_touched(self):
         f = flow()
@@ -79,8 +80,8 @@ class OrderAuto(unittest.TestCase):
 
     def test_label_off_by_default_level(self):
         f = flow(); out = self.m.run([order()], NOW, act=True, flow=f, gate=OFF_LABEL)
-        f.parcel_prepare.assert_not_called(); self.assertEqual(out["drafts"], ["#1028"]); self.assertFalse(out["enabled"]["label"])
-        out = self.m.run([order(name="#1029")], NOW, act=True, flow=flow(), gate=lambda a: 1)
+        f.parcel_prepare.assert_not_called(); self.assertEqual(out["drafts"], ["#5028"]); self.assertFalse(out["enabled"]["label"])
+        out = self.m.run([order(name="#5029")], NOW, act=True, flow=flow(), gate=lambda a: 1)
         self.assertEqual(out["enabled"], {"label": False, "draft": False}); self.assertEqual(out["drafts"], [])
 
     def test_no_back_fill_when_first_switched_on(self):
@@ -89,7 +90,7 @@ class OrderAuto(unittest.TestCase):
         f.parcel_prepare.assert_not_called(); f.invoice_draft.assert_not_called(); self.assertEqual(out["labels"], [])
         self.assertTrue(self.m.START.exists())
         with mock.patch.dict("os.environ", {"ORDER_AUTO_SINCE": "2026-10-18"}):  # back-fill only when asked
-            self.assertEqual(self.m.run([order(created="2026-10-18T23:08:32+02:00")], NOW, act=True, flow=flow(), gate=ON)["labels"], ["#1028"])
+            self.assertEqual(self.m.run([order(created="2026-10-18T23:08:32+02:00")], NOW, act=True, flow=flow(), gate=ON)["labels"], ["#5028"])
 
     def test_dry_run_does_nothing(self):
         self.m.START.unlink()
@@ -99,7 +100,7 @@ class OrderAuto(unittest.TestCase):
 
     def test_failure_is_recorded_and_retried_later_not_every_round(self):
         out = self.m.run([order()], NOW, act=True, flow=flow(fail="label"), gate=ON)
-        self.assertTrue(any("MyGLS did not answer" in e for e in out["errors"])); self.assertEqual(out["drafts"], ["#1028"])
+        self.assertTrue(any("MyGLS did not answer" in e for e in out["errors"])); self.assertEqual(out["drafts"], ["#5028"])
         f = flow(); self.m.run([order()], NOW + 60, act=True, flow=f, gate=ON); f.parcel_prepare.assert_not_called()
         self.m.run([order()], NOW + self.m.RETRY + 1, act=True, flow=f, gate=ON); f.parcel_prepare.assert_called_once()
 

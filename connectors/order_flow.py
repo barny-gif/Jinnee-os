@@ -4,7 +4,8 @@ CLI: python3 connectors/order_flow.py invoice_draft --order_id 123456789"""
 import sys, os, re, json, time, pathlib, datetime as dt, importlib.util
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from cbase import ConnectorError, run_cli
+from cbase import ConnectorError, run_cli, setting
+import business
 
 def _load(name):
     spec = importlib.util.spec_from_file_location(f"flow_{name}", HERE / name / "ops.py")
@@ -121,14 +122,13 @@ def next_workday(today=None):
     while d.weekday() >= 5: d += dt.timedelta(days=1)
     return d
 
-CONTENT_MAX = 200  # MyGLS Content: the note printed on the label; kept short so it is not cut on the label (exact GLS limit not confirmed)
+CONTENT_MAX = business.LABEL_MAX  # MyGLS Content: the note printed on the label; kept short so it is not cut (exact GLS limit not confirmed)
 
 def gls_content(o, cod_amount=0):
-    """'montivilag.hu #1027, 1× Farmer Kalandkönyv, COD 10380 Ft' or '..., PAID' (owner, 2026-10-21; products since 2026-10-19). No personal data."""
+    """The label note from config/business.yaml (shop.label_name + labels.*), e.g. 'example-shop.hu #1001, 1× Wooden puzzle,
+    COD 9890 Ft' or '..., PAID'. No personal data. A missing setting stops the label (ConnectorError)."""
     goods = ", ".join(f"{max(int(l['qty']), 1)}× {l['title']}" for l in o["lines"] if l.get("title"))
-    pay = f"COD {int(cod_amount)} Ft" if cod_amount else "PAID"
-    text = ", ".join(x for x in (f"montivilag.hu {o['name']}", goods, pay) if x)
-    return text if len(text) <= CONTENT_MAX else text[:CONTENT_MAX - 1] + "…"
+    return setting(business.label_note, o["name"], goods, cod_amount)
 
 def gls_parcel(o, gls, house="", info=""):
     """The MyGLS Parcel for an order. Pickup data (your address) comes from GLS_PICKUP_* in .env."""

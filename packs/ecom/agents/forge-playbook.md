@@ -10,7 +10,7 @@ Facts below were confirmed against the real systems on 2026-10-11. New lessons g
 5. State that must survive a rebuild lives in `brain/` (mounted), never in the image.
 6. Ship as a pull request. The owner merges, then on the VPS: `cd /opt/jinnee-os && git pull --ff-only && docker compose build && docker compose up -d` (`up --build` is not accepted on this VPS).
 
-## Shopify (store ykdtdb-gu.myshopify.com)
+## Shopify (the store in SHOPIFY_STORE, .env)
 - Login is a Dev Dashboard app (Jinnee-ecom): SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET are exchanged for a 24 h token. `app_not_installed` = the app is released but not installed on the store. The Installs counter in the dashboard lags behind the real state.
 - Required scopes (2026-10-15): read_orders, read_products, read_inventory, read_all_orders, read_reports, read_merchant_managed_fulfillment_orders, write_merchant_managed_fulfillment_orders. write_products was dropped on purpose and is not needed. Check with `python3 connectors/shopify/ops.py scopes` (never trust a scope by word of mouth); a new scope only shows after a Released app version that the store accepted. Name/address fields can come back empty without protected customer data access.
 - Sessions / visitors: `python3 connectors/shopify/ops.py sessions --days 7` (shopifyqlQuery, read_reports). Fulfillment: `fulfill` (REST fulfillment_orders + fulfillments.json, notify_customer false); the site sender can do it automatically once GLS picked the parcel up, once per order (`brain/shopify_fulfilled.json`). OFF by default: only SHOPIFY_AUTO_FULFILL=yes turns it on, and then only parcels picked up after the switch-on moment (`brain/shopify_fulfill_start.json`) are fulfilled; SHOPIFY_FULFILL_SINCE=<date> back-fills older ones on purpose.

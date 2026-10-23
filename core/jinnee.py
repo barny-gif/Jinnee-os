@@ -13,13 +13,13 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, Cal
 from pack_loader import agent_files, resolve
 from heartbeat import beat, trouble
 from registry_client import check as registry_check
-import alerts, approvals, logs, store
+import alerts, approvals, business, logs, store
 
 log = logging.getLogger("jinnee")
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BRAIN = ROOT / "brain"
 NAME = os.getenv("JINNEE_NAME", "Jinnee")
-LANG = os.getenv("JINNEE_LANG", "en")
+LANG = business.language()  # JINNEE_LANG in .env wins; otherwise business.language in config/business.yaml
 PACKS = [p.strip() for p in os.getenv("PACKS", "general").split(",")]
 
 def owner_id() -> int:
@@ -62,7 +62,9 @@ APPROVALS. The autonomy table below says what the team may do alone. Anything at
 - When an agent starts or finishes a job: `{PY} core/heartbeat.py beat AGENT "what was done"` (--working at the start, --failed if it went wrong).""".replace("{PY}", store.PY)
 
 def system_prompt() -> str:
-    parts = [f"Your name is {NAME}. You speak with the owner in language '{LANG}'. Working directory: {ROOT}.\n" + RULES]
+    parts = [f"Your name is {NAME}. You speak with the owner in language '{business.language()}'. Working directory: {ROOT}.\n" + RULES]
+    # who the business is (config/business.yaml, the owner's own settings; never in git)
+    parts.append("\n\n===== the business (config/business.yaml) =====\n" + business.prompt_block())
     for f in agent_files(PACKS):
         parts.append(f"\n\n===== {f.name} =====\n{f.read_text(encoding='utf-8')}")
     for b in ("company.md", "lessons.md", "forge_notes.md"):

@@ -4,6 +4,7 @@ from unittest import mock
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = next(p for p in HERE.parents if (p / "connectors" / "cbase.py").exists())
 sys.path.insert(0, str(ROOT / "connectors"))
+sys.path.insert(0, str(ROOT / "tests")); import fake_business; fake_business.use()  # a made-up business (config/business.yaml)
 from cbase import ConnectorError
 
 TRAFFIC = [{"day": "2026-10-11", "sessions": 10, "visitors": 10}, {"day": "2026-10-12", "sessions": 8, "visitors": 7}]
@@ -70,14 +71,14 @@ class Resp:
 
 ADDR = {"name": "Titkos Vevo", "address1": "Fo utca 1", "zip": "1111", "city": "Budapest", "country_code": "HU", "phone": "+36301112222",
         "latitude": 47.5, "first_name": "Titkos"}
-ORDER = {"id": 6001, "name": "#1024", "created_at": "2026-10-11T10:00:00+02:00", "total_price": "12990.00", "currency": "HUF",
+ORDER = {"id": 6001, "name": "#5024", "created_at": "2026-10-11T10:00:00+02:00", "total_price": "12990.00", "currency": "HUF",
          "financial_status": "paid", "fulfillment_status": None, "cancelled_at": None, "test": False,
          "fulfillments": [{"tracking_numbers": ["T1"], "created_at": "2026-10-12T09:00:00+02:00"}],
          "payment_gateway_names": ["SimplePay"], "shipping_lines": [{"title": "GLS házhoz", "price": "1890.00"}],
-         "line_items": [{"title": "Farmer Kalandkönyv", "variant_id": 77, "sku": "FK1", "quantity": 2, "price": "5550.00"}],
+         "line_items": [{"title": "Fa kirakó", "variant_id": 77, "sku": "FK1", "quantity": 2, "price": "5550.00"}],
          "email": "x@y.hu", "note": "csengo: Kovacs", "shipping_address": ADDR, "billing_address": ADDR}
-COD_ORDER = {**ORDER, "id": 6002, "name": "#1025", "financial_status": "pending", "fulfillments": [], "payment_gateway_names": ["Cash on Delivery (COD)"]}
-PRODUCT = {"id": 9, "title": "Farmer Kalandkönyv", "status": "active", "variants": [{"id": 77, "title": "Default Title", "sku": "FK1", "price": "5550.00", "inventory_quantity": 4}]}
+COD_ORDER = {**ORDER, "id": 6002, "name": "#5025", "financial_status": "pending", "fulfillments": [], "payment_gateway_names": ["Cash on Delivery (COD)"]}
+PRODUCT = {"id": 9, "title": "Fa kirakó", "status": "active", "variants": [{"id": 77, "title": "Default Title", "sku": "FK1", "price": "5550.00", "inventory_quantity": 4}]}
 
 ALL_SCOPES = {"ok": True, "missing": [], "required": [], "scopes": ["read_orders"]}
 
@@ -94,8 +95,8 @@ def shop(orders=(ORDER,), products=(PRODUCT,), fail=None, scopes=ALL_SCOPES, ful
     return mock.Mock(_get=mock.Mock(side_effect=_get), scopes=mock.Mock(side_effect=_scopes), fulfill=mock.Mock(side_effect=_fulfill),
                      sessions=mock.Mock(return_value=list(TRAFFIC)))
 
-PAYMENTS = {"bank_accounts": [{"id": "1", "name": "Revolut", "currency": "HUF", "last4": "1234"}],
-            "invoices": [{"id": "5", "number": "MV-2026-1", "order": "#1025", "date": "2026-10-13", "due_date": "2026-10-13",
+PAYMENTS = {"bank_accounts": [{"id": "1", "name": "Bank", "currency": "HUF", "last4": "1234"}],
+            "invoices": [{"id": "5", "number": "EX-2026-1", "order": "#5025", "date": "2026-10-13", "due_date": "2026-10-13",
                           "paid_date": "2026-10-13", "total": 15282, "currency": "HUF", "payment_status": "paid",
                           "payment_method": "bankcard", "overdue": False}], "since": "2025-09-13", "complete": True}
 
@@ -112,7 +113,7 @@ class Billing(unittest.TestCase):
     def setUp(self): self.m = load()
     def test_payments_tab_is_sent_with_check_time(self):
         out = self.m.build(shop=shop(), bill=bill(), now=1792303200)
-        self.assertEqual(out["billing"]["invoices"][0]["number"], "MV-2026-1")
+        self.assertEqual(out["billing"]["invoices"][0]["number"], "EX-2026-1")
         self.assertEqual(out["billing"]["checked_at"], "2026-10-18T06:00:00+00:00")
         self.assertTrue(next(a for a in out["automations"] if a["key"] == "billingo_payments")["ok"])
     def test_asked_once_an_hour(self):
@@ -153,20 +154,20 @@ class Payload(unittest.TestCase):
         self.assertEqual(paid["shipped_at"], "2026-10-12T09:00:00+02:00")
         self.assertIsNone(cod["shipped_at"])
     def test_label_old_entry_has_no_cod_amount(self):
-        self.m.UPLOADED.write_text(json.dumps({"#1024": 555, "#1025": True}))
+        self.m.UPLOADED.write_text(json.dumps({"#5024": 555, "#5025": True}))
         a, b = self.m.build(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill())["orders"]
         self.assertEqual(a["label"], {"state": "uploaded", "parcel_id": "555"})
         self.assertEqual(b["label"], {"state": "uploaded", "parcel_id": None})
     def test_label_new_entry_carries_cod_amount(self):
-        self.m.UPLOADED.write_text(json.dumps({"#1024": {"parcel_id": 555, "cod_amount": 0, "at": "2026-10-12T08:00:00+02:00"},
-                                               "#1025": {"parcel_id": 556, "cod_amount": 12990, "at": "2026-10-12T08:01:00+02:00"}}))
+        self.m.UPLOADED.write_text(json.dumps({"#5024": {"parcel_id": 555, "cod_amount": 0, "at": "2026-10-12T08:00:00+02:00"},
+                                               "#5025": {"parcel_id": 556, "cod_amount": 12990, "at": "2026-10-12T08:01:00+02:00"}}))
         a, b = self.m.build(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill())["orders"]
         self.assertEqual(a["label"], {"state": "uploaded", "parcel_id": "555", "cod_amount": 0.0, "sent_at": "2026-10-12T08:00:00+02:00"})
         self.assertEqual(b["label"]["cod_amount"], 12990.0)
     def test_not_uploaded(self):
         self.assertEqual(self.m.build(shop=shop(), bill=bill())["orders"][0]["label"], {"state": "none", "parcel_id": None})
     def test_invoice_number_does_not_match_longer_order(self):
-        docs = [{"comment": "Rendelés #10245", "type": "invoice", "number": "2026-9", "paid": True}]
+        docs = [{"comment": "Rendelés #50245", "type": "invoice", "number": "2026-9", "paid": True}]
         self.assertEqual(self.m.build(shop=shop(), bill=bill(docs))["orders"][0]["invoice"]["state"], "none")
     def test_billingo_down_is_unknown_and_reported(self):
         out = self.m.build(shop=shop(), bill=bill(fail=True))
@@ -180,7 +181,7 @@ class Payload(unittest.TestCase):
         self.assertEqual(b.list_invoices.call_count, 2)
     def test_billingo_failure_is_not_cached(self):
         self.m.build(shop=shop(), bill=bill(fail=True), now=1000)
-        ok = bill([{"comment": "#1024", "type": "invoice", "number": "2026-1", "paid": True}])
+        ok = bill([{"comment": "#5024", "type": "invoice", "number": "2026-1", "paid": True}])
         self.assertEqual(self.m.build(shop=shop(), bill=ok, now=1010)["orders"][0]["invoice"]["state"], "issued")
     def test_shopify_down_sends_none_not_empty(self):
         out = self.m.build(shop=shop(fail="orders"), bill=bill())
@@ -202,11 +203,11 @@ class GlsClassify(unittest.TestCase):
     def test_net_date(self):
         self.assertEqual(self.g._date("/Date(1791963038000+0200)/"), "2026-10-14T07:30:38+00:00"); self.assertIsNone(self.g._date(None))
     def test_parcel_list_keeps_only_ids_and_numbers(self):
-        body = {"GetParcelListErrors": [], "PrintDataInfoList": [{"ParcelId": 549107707, "ParcelNumber": 3424008826, "ClientReference": "#1025",
+        body = {"GetParcelListErrors": [], "PrintDataInfoList": [{"ParcelId": 900000002, "ParcelNumber": 9000000003, "ClientReference": "#5025",
                                                                   "Parcel": {"DeliveryAddress": {"Name": "Titkos Vevo"}}}, {"ParcelId": 1, "ParcelNumber": None}]}
         with mock.patch.dict(os.environ, {"GLS_CLIENT_NUMBER": "1", "GLS_USERNAME": "u", "GLS_PASSWORD": "p"}), \
              mock.patch.object(self.g.requests, "post", return_value=Resp(body)) as post:
-            self.assertEqual(self.g.parcel_numbers("30", now=1_000_000), {"549107707": "3424008826"})
+            self.assertEqual(self.g.parcel_numbers("30", now=1_000_000), {"900000002": "9000000003"})
         sent = post.call_args.kwargs["json"]
         self.assertTrue(post.call_args.args[0].endswith("/GetParcelList"))
         self.assertEqual((sent["PrintDateFrom"], sent["PrintDateTo"]), ("/Date(-1592000000)/", "/Date(1000000000)/"))
@@ -218,29 +219,29 @@ class GlsClassify(unittest.TestCase):
 class GlsTracking(unittest.TestCase):
     def setUp(self):
         self.m = load()
-        self.m.UPLOADED.write_text(json.dumps({"#1024": {"parcel_id": 548860860, "cod_amount": 12990}, "#1025": 549107707}))
-        self.gls = fake_gls({"548860860": "3423946814", "549107707": "3424008826"}, {"3423946814": HELD, "3424008826": DELIVERED})
+        self.m.UPLOADED.write_text(json.dumps({"#5024": {"parcel_id": 900000001, "cod_amount": 12990}, "#5025": 900000002}))
+        self.gls = fake_gls({"900000001": "3423946814", "900000002": "9000000003"}, {"3423946814": HELD, "9000000003": DELIVERED})
     def run_build(self, now=10_000, gls=None, docs=()):
         return self.m.build(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill(docs), now=now, gls=gls or self.gls)
     def test_state_goes_to_site_and_brain(self):
-        paid, cod = self.run_build()["orders"]  # ORDER is #1024 (here held at the depot), COD_ORDER is #1025 (delivered)
+        paid, cod = self.run_build()["orders"]  # ORDER is #5024 (here held at the depot), COD_ORDER is #5025 (delivered)
         self.assertEqual(paid["shipping"]["state"], "problem"); self.assertEqual(paid["delivered"], {"state": "no", "at": None})
         self.assertEqual(cod["delivered"], {"state": "yes", "at": "2026-10-14T07:30:38+00:00"})
-        self.assertEqual(cod["shipping"]["parcel_number"], "3424008826")
+        self.assertEqual(cod["shipping"]["parcel_number"], "9000000003")
         stored = json.loads(self.m.GLS_STATUS.read_text())
-        self.assertEqual(stored["#1025"]["state"], "delivered"); self.assertEqual(stored["#1024"]["parcel_id"], "548860860")
+        self.assertEqual(stored["#5025"]["state"], "delivered"); self.assertEqual(stored["#5024"]["parcel_id"], "900000001")
     def test_cod_delivered_without_invoice_is_flagged_only(self):
         paid, cod = self.run_build()["orders"]
         self.assertTrue(cod["cod_invoice_due"]); self.assertFalse(paid["cod_invoice_due"])
-        _, cod = self.m.build(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill([{"comment": "#1025", "type": "invoice", "number": "MV-2026-9"}]),
+        _, cod = self.m.build(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill([{"comment": "#5025", "type": "invoice", "number": "EX-2026-9"}]),
                               now=10_000 + 3600, gls=self.gls)["orders"]
         self.assertFalse(cod["cod_invoice_due"])
     def test_cod_held_at_depot_code_07_is_picked_up_but_no_invoice(self):
-        """Live 2026-10-15: #1024 COD, newest status 07 'Depó tárolás' after 86 'Lehívás - felvett csomag'."""
+        """Live 2026-10-15: #5024 COD, newest status 07 'Depó tárolás' after 86 'Lehívás - felvett csomag'."""
         held = [{**S("Depó tárolás", "2026-10-15T04:07:03+00:00"), "code": "07"}, {**S("Meghat. időpontra történő kisz", "2026-10-14T05:34:03+00:00"), "code": "09"},
                 {**S("Lehívás - felvett csomag", "2026-10-13T08:24:28+00:00"), "code": "86"}, {**S("Utánvét adat rögzítve", "2026-10-12T10:56:03+00:00"), "code": "52"}]
-        self.m.UPLOADED.write_text(json.dumps({"#1025": 549107707}))
-        g = fake_gls({"549107707": "3423946814"}, {"3423946814": held})
+        self.m.UPLOADED.write_text(json.dumps({"#5025": 900000002}))
+        g = fake_gls({"900000002": "3423946814"}, {"3423946814": held})
         cod = self.m.build(shop=shop(orders=(COD_ORDER,)), bill=bill(), now=10_000, gls=g)["orders"][0]
         self.assertEqual((cod["shipping"]["state"], cod["shipping"]["code"]), ("problem", "07"))
         self.assertEqual(cod["shipping"]["handed_at"], "2026-10-13T08:24:28+00:00")  # GLS picked it up from us
@@ -252,7 +253,7 @@ class GlsTracking(unittest.TestCase):
         self.assertEqual(self.gls.parcel_numbers.call_count, 1)  # the parcel number is resolved once
     def test_replaced_label_starts_over(self):
         self.run_build(now=10_000)
-        self.m.UPLOADED.write_text(json.dumps({"#1025": 777}))
+        self.m.UPLOADED.write_text(json.dumps({"#5025": 777}))
         g = fake_gls({"777": "999"}, {"999": DELIVERED[2:]})
         _, cod = self.run_build(now=10_100, gls=g)["orders"]
         self.assertEqual((cod["shipping"]["parcel_number"], cod["shipping"]["state"]), ("999", "handed_to_gls"))
@@ -275,14 +276,14 @@ class GlsTracking(unittest.TestCase):
         self.assertNotIn("delivered", o); self.assertNotIn("shipping", o)
     def test_dry_run_counts(self):
         out = self.m.push(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill(), gls=self.gls)
-        self.assertEqual((out["gls_tracked"], out["delivered"], out["cod_invoice_due"]), (2, 1, ["#1025"]))
+        self.assertEqual((out["gls_tracked"], out["delivered"], out["cod_invoice_due"]), (2, 1, ["#5025"]))
 
 class Fulfillment(unittest.TestCase):
-    """#1024 (ORDER) is held at the depot after pickup, #1025 (COD_ORDER) delivered: both were picked up by GLS."""
+    """#5024 (ORDER) is held at the depot after pickup, #5025 (COD_ORDER) delivered: both were picked up by GLS."""
     def setUp(self):
         self.m = load()
-        self.m.UPLOADED.write_text(json.dumps({"#1024": {"parcel_id": 548860860}, "#1025": 549107707}))
-        self.gls = fake_gls({"548860860": "3423946814", "549107707": "3424008826"}, {"3423946814": HELD, "3424008826": DELIVERED})
+        self.m.UPLOADED.write_text(json.dumps({"#5024": {"parcel_id": 900000001}, "#5025": 900000002}))
+        self.gls = fake_gls({"900000001": "3423946814", "900000002": "9000000003"}, {"3423946814": HELD, "9000000003": DELIVERED})
         # switched on long before these pickups (now=10_000 is 1970), unless a test says otherwise
         env = {k: v for k, v in os.environ.items() if k not in ("SHOPIFY_AUTO_FULFILL", "SHOPIFY_FULFILL_SINCE")}
         self.env = mock.patch.dict(os.environ, {**env, "SHOPIFY_AUTO_FULFILL": "yes"}, clear=True); self.env.start()
@@ -292,40 +293,40 @@ class Fulfillment(unittest.TestCase):
     def test_picked_up_orders_are_fulfilled_once_with_the_parcel_number(self):
         s = shop(orders=(ORDER, COD_ORDER))
         out = self.build(s)
-        self.assertEqual(sorted(c.args[:2] for c in s.fulfill.call_args_list), [("6001", "3423946814"), ("6002", "3424008826")])
+        self.assertEqual(sorted(c.args[:2] for c in s.fulfill.call_args_list), [("6001", "3423946814"), ("6002", "9000000003")])
         for c in s.fulfill.call_args_list: self.assertEqual(c.kwargs, {"confirm": "yes"})
-        self.assertEqual(sorted(out["fulfilled_now"]), ["#1024", "#1025"])
+        self.assertEqual(sorted(out["fulfilled_now"]), ["#5024", "#5025"])
         self.assertEqual(out["orders"][1]["shopify_fulfillment"]["state"], "fulfilled")
-        self.assertEqual(out["orders"][1]["shopify_fulfillment"]["tracking"], "3424008826")
+        self.assertEqual(out["orders"][1]["shopify_fulfillment"]["tracking"], "9000000003")
         self.build(s, now=10_060); self.assertEqual(s.fulfill.call_count, 2)  # never twice
-        stored = json.loads(self.m.FULFILLED.read_text()); self.assertEqual(stored["#1025"]["tracking"], "3424008826")
+        stored = json.loads(self.m.FULFILLED.read_text()); self.assertEqual(stored["#5025"]["tracking"], "9000000003")
         self.assertNotIn("Titkos", self.m.FULFILLED.read_text())
     def test_dry_run_never_fulfills(self):
         s = shop(orders=(ORDER, COD_ORDER))
         out = self.build(s, act=False)
         s.fulfill.assert_not_called(); self.assertFalse(self.m.FULFILLED.exists())
-        self.assertEqual(sorted(out["fulfilled_now"]), ["#1024", "#1025"])
+        self.assertEqual(sorted(out["fulfilled_now"]), ["#5024", "#5025"])
         self.assertEqual(out["orders"][0]["shopify_fulfillment"]["state"], "pending")
         p = self.m.push(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill(), gls=self.gls)  # real clock: switched on now, older pickups wait
         self.assertEqual(p["would_fulfill"], []); self.assertNotIn("fulfilled_now", p)
         self.m.FULFILL_START.write_text(json.dumps({"since": "2026-10-01"}))
         p = self.m.push(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill(), gls=self.gls)
-        self.assertEqual(sorted(p["would_fulfill"]), ["#1024", "#1025"])
+        self.assertEqual(sorted(p["would_fulfill"]), ["#5024", "#5025"])
     def test_not_picked_up_not_fulfilled(self):
-        g = fake_gls({"548860860": "3423946814", "549107707": "3424008826"}, {"3423946814": DELIVERED[3:], "3424008826": []})
+        g = fake_gls({"900000001": "3423946814", "900000002": "9000000003"}, {"3423946814": DELIVERED[3:], "9000000003": []})
         s = shop(orders=(ORDER, COD_ORDER)); out = self.build(s, gls=g)
         s.fulfill.assert_not_called(); self.assertEqual(out["orders"][0]["shopify_fulfillment"]["state"], "pending")
     def test_no_label_cancelled_or_already_fulfilled_skipped(self):
         self.m.UPLOADED.write_text("{}")
         s = shop(orders=(ORDER,)); self.build(s); s.fulfill.assert_not_called()
-        self.m.UPLOADED.write_text(json.dumps({"#1024": {"parcel_id": 548860860}, "#1025": 549107707}))
+        self.m.UPLOADED.write_text(json.dumps({"#5024": {"parcel_id": 900000001}, "#5025": 900000002}))
         s = shop(orders=({**ORDER, "cancelled_at": "2026-10-12T00:00:00Z"}, {**COD_ORDER, "fulfillment_status": "fulfilled",
-                                                                               "fulfillments": [{"tracking_numbers": ["3424008826"]}]}))
+                                                                               "fulfillments": [{"tracking_numbers": ["9000000003"]}]}))
         out = self.build(s, now=20_000); s.fulfill.assert_not_called()
-        self.assertEqual(out["orders"][1]["shopify_fulfillment"], {"state": "fulfilled", "tracking": "3424008826", "at": None, "by": "shopify", "error": None})
+        self.assertEqual(out["orders"][1]["shopify_fulfillment"], {"state": "fulfilled", "tracking": "9000000003", "at": None, "by": "shopify", "error": None})
     def test_already_fulfilled_in_shopify_is_recorded_not_reported_new(self):
         s = shop(orders=(COD_ORDER,), fulfill="already"); out = self.build(s)
-        self.assertEqual(out["fulfilled_now"], []); self.assertTrue(json.loads(self.m.FULFILLED.read_text())["#1025"]["already"])
+        self.assertEqual(out["fulfilled_now"], []); self.assertTrue(json.loads(self.m.FULFILLED.read_text())["#5025"]["already"])
     def test_failure_is_reported_and_retried_later(self):
         s = shop(orders=(COD_ORDER,), fulfill="fail"); out = self.build(s)
         self.assertEqual(out["orders"][0]["shopify_fulfillment"]["state"], "failed")
@@ -351,21 +352,21 @@ class Fulfillment(unittest.TestCase):
     def test_pickup_after_switch_on_is_fulfilled(self):
         self.m.FULFILL_START.write_text(json.dumps({"since": "2026-10-13T08:24:27+00:00"}))  # between the two pickups
         s = shop(orders=(ORDER, COD_ORDER)); out = self.build(s, now=1792044000)
-        self.assertEqual(out["fulfilled_now"], ["#1024"])  # picked up 08:24:28; #1025 at 08:24:26 is older
+        self.assertEqual(out["fulfilled_now"], ["#5024"])  # picked up 08:24:28; #5025 at 08:24:26 is older
     def test_explicit_back_fill(self):
         self.m.FULFILL_START.write_text(json.dumps({"since": "2026-10-15T06:00:00+00:00"}))
         os.environ["SHOPIFY_FULFILL_SINCE"] = "2026-10-13"
         s = shop(orders=(ORDER, COD_ORDER)); out = self.build(s, now=1792044000)
-        self.assertEqual(sorted(out["fulfilled_now"]), ["#1024", "#1025"])
+        self.assertEqual(sorted(out["fulfilled_now"]), ["#5024", "#5025"])
         os.environ["SHOPIFY_FULFILL_SINCE"] = "soon"
         self.m.FULFILLED.unlink(); s = shop(orders=(ORDER, COD_ORDER)); out = self.build(s, now=1792044000)
         s.fulfill.assert_not_called(); self.assertIn("SHOPIFY_FULFILL_SINCE", " ".join(out["errors"]))
     def test_dry_run_writes_no_start(self):
         self.build(shop(orders=(ORDER, COD_ORDER)), act=False); self.assertFalse(self.m.FULFILL_START.exists())
     def test_unknown_pickup_time_is_not_fulfilled(self):
-        self.m.GLS_STATUS.write_text(json.dumps({"#1025": {"parcel_id": "549107707", "parcel_number": "3424008826", "state": "delivered",
+        self.m.GLS_STATUS.write_text(json.dumps({"#5025": {"parcel_id": "900000002", "parcel_number": "9000000003", "state": "delivered",
                                                            "handed_at": None, "checked": 10_000, "checked_at": "x"}}))
-        self.m.UPLOADED.write_text(json.dumps({"#1025": 549107707}))
+        self.m.UPLOADED.write_text(json.dumps({"#5025": 900000002}))
         s = shop(orders=(COD_ORDER,)); self.build(s); s.fulfill.assert_not_called()
 
 class Scopes(unittest.TestCase):
@@ -406,14 +407,14 @@ class Push(unittest.TestCase):
             with self.assertRaisesRegex(ConnectorError, "401"): self.m.push("yes", shop=shop(), bill=bill())
 
 class OpenOrders(unittest.TestCase):
-    """Live 2026-10-20: #1024 (COD, 10-11) fell out of the 7-day window on 10-18, so the site never got its delivery and invoice."""
+    """Live 2026-10-20: #5024 (COD, 10-11) fell out of the 7-day window on 10-18, so the site never got its delivery and invoice."""
     NOW = 1792483200  # 2026-10-20 08:00 UTC
-    OLD = {**COD_ORDER, "id": 7001, "name": "#1024", "created_at": "2026-10-11T13:06:15+02:00"}
-    NEW = {**ORDER, "id": 7002, "name": "#1029", "created_at": "2026-10-20T05:20:36+02:00"}
+    OLD = {**COD_ORDER, "id": 7001, "name": "#5024", "created_at": "2026-10-11T13:06:15+02:00"}
+    NEW = {**ORDER, "id": 7002, "name": "#5029", "created_at": "2026-10-20T05:20:36+02:00"}
     def setUp(self):
         self.m = load()
-        self.m.UPLOADED.write_text(json.dumps({"#1024": 548860860}))
-        self.gls = fake_gls({"548860860": "3423946814"}, {"3423946814": DELIVERED})
+        self.m.UPLOADED.write_text(json.dumps({"#5024": 900000001}))
+        self.gls = fake_gls({"900000001": "3423946814"}, {"3423946814": DELIVERED})
     def names(self, docs=(), orders=None, cancelled=False):
         old = {**self.OLD, "cancelled_at": "2026-10-12T10:00:00+02:00"} if cancelled else self.OLD
         out = self.m.build(shop=shop(orders=orders or (self.NEW, old)), bill=bill(docs), now=self.NOW, gls=self.gls)
@@ -423,22 +424,22 @@ class OpenOrders(unittest.TestCase):
         self.assertEqual(s._get.call_args_list[0].args[1]["created_at_min"][:10],
                          (self.m.dt.datetime.now(self.m.dt.timezone.utc) - self.m.dt.timedelta(days=30)).date().isoformat())
     def test_old_delivered_without_invoice_still_goes(self):
-        self.assertEqual(self.names(), ["#1029", "#1024"])
+        self.assertEqual(self.names(), ["#5029", "#5024"])
     def test_old_delivered_invoice_not_paid_still_goes(self):
-        self.assertEqual(self.names([{"comment": "Shopify #1024", "type": "invoice", "number": "MV-2026-3", "paid": "outstanding"}]), ["#1029", "#1024"])
+        self.assertEqual(self.names([{"comment": "Shopify #5024", "type": "invoice", "number": "EX-2026-3", "paid": "outstanding"}]), ["#5029", "#5024"])
     def test_old_delivered_invoiced_and_paid_is_closed(self):
-        self.assertEqual(self.names([{"comment": "Shopify #1024", "type": "invoice", "number": "MV-2026-3", "paid": "paid"}]), ["#1029"])
+        self.assertEqual(self.names([{"comment": "Shopify #5024", "type": "invoice", "number": "EX-2026-3", "paid": "paid"}]), ["#5029"])
     def test_old_cancelled_is_closed(self):
-        self.assertEqual(self.names(cancelled=True), ["#1029"])
+        self.assertEqual(self.names(cancelled=True), ["#5029"])
     def test_billingo_down_keeps_the_old_one(self):
         out = self.m.build(shop=shop(orders=(self.NEW, self.OLD)), bill=bill(fail=True), now=self.NOW, gls=self.gls)
-        self.assertEqual([o["name"] for o in out["orders"]], ["#1029", "#1024"])
+        self.assertEqual([o["name"] for o in out["orders"]], ["#5029", "#5024"])
     def test_recent_closed_order_still_goes(self):
         recent = {**self.OLD, "created_at": "2026-10-19T10:00:00+02:00"}
-        self.assertEqual(self.names([{"comment": "Shopify #1024", "type": "invoice", "number": "MV-2026-3", "paid": "paid"}], orders=(recent,)), ["#1024"])
+        self.assertEqual(self.names([{"comment": "Shopify #5024", "type": "invoice", "number": "EX-2026-3", "paid": "paid"}], orders=(recent,)), ["#5024"])
     def test_new_order_chain_sees_the_last_days_only(self):
         with mock.patch.object(self.m.order_auto, "run", wraps=self.m.order_auto.run) as run:
             self.m.build(shop=shop(orders=(self.NEW, self.OLD)), bill=bill(), now=self.NOW, gls=self.gls)
-        self.assertEqual([o["name"] for o in run.call_args.args[0]], ["#1029"])
+        self.assertEqual([o["name"] for o in run.call_args.args[0]], ["#5029"])
 
 if __name__ == "__main__": unittest.main()

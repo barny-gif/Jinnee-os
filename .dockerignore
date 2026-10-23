@@ -1,3 +1,5 @@
 .env
 logs/
 forge-work/
+config/business.yaml
+config/private_patterns.txt
