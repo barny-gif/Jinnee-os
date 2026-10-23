@@ -226,7 +226,7 @@ class CatchUpAndQuiet(Base):
 
 
 class OneAtATime(Base):
-    def test_the_owner_never_waits_behind_a_scheduled_run(self):
+    def test_a_job_does_not_start_while_the_owners_run_is_going(self):
         self.s.due(at(2026, 10, 22, 10))
         busy = Fake(busy=True)
         self.assertEqual([o.result for o in self.run_due(at(2026, 10, 23, 8), busy)], ["busy"])

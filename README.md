@@ -49,8 +49,9 @@ it runs next, when it last ran, and how it went.
 - **A job whose connector is not set up does not run.** It shows as off, with the setting it is missing.
 - **Nothing goes out from a scheduled run**, whatever the autonomy level: no e-mail, post, invoice, label or shop change. What should go
   out is put in front of you for approval, as always. A run that has nothing to do (no new mail, no open orders) costs no Claude run at all.
-- Never in the quiet hours, never twice for the same time (also after a restart and on the nights the clocks change), never in front of
-  you: when you are talking to Jinnee, the scheduled job waits for the next minute. A failed run is reported to you once.
+- Never in the quiet hours, and never twice for the same time (also after a restart and on the nights the clocks change). A scheduled
+  job does not start while Jinnee is working on your message; if one is already running when you write, Jinnee says so and your
+  message is next. A failed run is reported to you once.
 - Your time zone, quiet hours, another time or off per job: `schedule` in `config/business.yaml` (examples in
   `config/business.example.yaml`). `python3 core/scheduler.py plan` prints what would run when and starts nothing;
   `python3 core/scheduler.py check` checks your settings.

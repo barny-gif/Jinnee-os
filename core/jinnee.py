@@ -2,7 +2,7 @@
 Entry point: the Telegram bridge. The owner's messages go to Claude Code with the lead persona; the owner's decisions
 (/ok, /change, /drop, /undo) are recorded here in plain code, never by the agent; a check once a minute sends alerts and
 hands decided items to the lead; another once a minute starts what core/scheduler.py says is due (the morning brief, the
-agents' own rhythm), one job at a time and never in front of the owner. /schedule shows it. A text file the owner sends
+agents' own rhythm), one job at a time and never while the owner's own run is going. /schedule shows it. A text file the owner sends
 (.txt, .md, .csv, .html) is saved under handoffs/inbox/ and the lead is told where it is.
 run_agent() is the hook for the full orchestration logic (sessions, intake, delegation).
 """
@@ -216,6 +216,9 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await answer(update, text)
 
 async def answer(update, text):
+    if SCHEDULING["busy"] and RUNNING.locked():  # a scheduled job started just before: say so instead of a silent wait
+        await update.message.reply_text(f"One moment: a scheduled run is finishing ({SCHEDULING['job']}). Your message is next, "
+                                        f"within {MINUTES} minutes at most.")
     reply = await asyncio.to_thread(run_agent, text)
     ids = [i["id"] for i in BOOK.open_items()[0] if i["id"] in reply][:5]  # the agent named a waiting item: put the tap buttons under it
     await say(update.message.reply_text, reply, buttons(ids))
@@ -313,7 +316,7 @@ async def hand_over(bot, items):
 
 # --- the schedule (core/scheduler.py decides; this runs it)
 SCHED = scheduler.Scheduler(BRAIN, PACKS)
-SCHEDULING = {"busy": False}  # one scheduled job at a time from this program
+SCHEDULING = {"busy": False, "job": ""}  # one scheduled job at a time from this program
 
 def brief_extra() -> str:
     """What the morning brief is told on top of its task: agents in trouble (with the schedule's rhythm) and updates."""
@@ -327,7 +330,7 @@ def brief_extra() -> str:
 SCHED.extra["jinnee.brief"] = brief_extra
 
 class Runner:
-    """The scheduler's way into Claude: the same prompt, the narrower tools, and never in front of the owner."""
+    """The scheduler's way into Claude: the same prompt, the narrower tools, and no start while the owner's run is going."""
     def busy(self):
         return RUNNING.locked()  # the owner's conversation (or a hand-over) is running: the job waits for the next minute
     def run(self, job, prompt):
@@ -347,7 +350,7 @@ async def schedule_tick(ctx: ContextTypes.DEFAULT_TYPE):
         log.exception("schedule check failed; it runs again in a minute")
         return
     if not due: return
-    SCHEDULING["busy"] = True
+    SCHEDULING.update(busy=True, job=due[0][0].name)
     ctx.application.create_task(run_job(ctx.bot, *due[0]))
 
 async def run_job(bot, job, t, key):

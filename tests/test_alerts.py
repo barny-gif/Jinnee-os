@@ -336,6 +336,13 @@ async def step(kind, user_id, text):
         await jinnee.schedule_tick(ctx)
         for t in tasks: await t
         tasks.clear(); return []
+    if kind == "while-job":  # the owner writes while a scheduled job holds the line
+        jinnee.SCHEDULING.update(busy=True, job="Milo: the owner's inbox"); jinnee.RUNNING.acquire()
+        try:
+            update = types.SimpleNamespace(effective_user=user, message=Message(text))
+            await jinnee.on_message(update, ctx); return update.message.replies
+        finally:
+            jinnee.RUNNING.release(); jinnee.SCHEDULING.update(busy=False, job="")
     if kind == "edited":  # Telegram delivers an edit as an update whose .message is None
         update = types.SimpleNamespace(effective_user=user, message=None, edited_message=Message(text))
         for handler in (jinnee.on_message, jinnee.on_command, jinnee.cmd_new): await handler(update, ctx)
@@ -663,6 +670,13 @@ class ScheduledRuns(Bridge):
     def test_silent_sends_nothing(self):
         got = self.drive([["job", 0, "jinnee.evening"]], agent="real", extra=self.spy(reply="SILENT"))
         self.assertEqual(got[0]["sent"], [])
+
+    def test_the_owner_is_told_when_a_scheduled_job_holds_the_line(self):
+        got = self.drive([["while-job", OWNER, "hello"], ["msg", OWNER, "hello again"]])
+        self.assertEqual(got[0]["replies"][0], "One moment: a scheduled run is finishing (Milo: the owner's inbox). "
+                                                "Your message is next, within 10 minutes at most.")
+        self.assertEqual(got[0]["replies"][1:], ["agent reply"]); self.assertEqual(got[0]["ran"], ["hello"])
+        self.assertEqual(got[1]["replies"], ["agent reply"])  # no note when nothing scheduled is running
 
     def test_schedule_command(self):
         got = self.drive([["msg", OWNER, "/schedule"], ["msg", STRANGER, "/schedule"]])

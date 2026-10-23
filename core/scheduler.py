@@ -26,7 +26,8 @@ Rules
     A job seen for the first time does not catch up on what was due before it existed (an update does not set off a flood).
   - Once per slot: the slot is taken in brain/schedule_state.json before the run starts, so a restart never runs it twice.
     A run cut off by a restart or a crash is recorded as failed when the bridge starts again.
-  - One at a time: brain/.schedule.lock across programs; the bridge never makes the owner wait behind a scheduled run.
+  - One at a time: brain/.schedule.lock across programs. A job does not start while the owner's own run is going; if the
+    owner writes while a job runs, the bridge says so and the owner's message is next.
   - The run itself is unattended (JINNEE_UNATTENDED=1): nothing goes out from it (connectors refuse --confirm yes and
     --send yes), decisions are not carried out (approvals.py consume refuses), only brain/ and handoffs/ can be written.
     What should go out is queued for the owner. If a program file changes during the run anyway, the run counts as failed.
