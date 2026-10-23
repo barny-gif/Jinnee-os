@@ -1,7 +1,8 @@
 """
 Entry point: the Telegram bridge. The owner's messages go to Claude Code with the lead persona; the owner's decisions
 (/ok, /change, /drop, /undo) are recorded here in plain code, never by the agent; a check once a minute sends alerts and
-hands decided items to the lead; the morning brief runs daily.
+hands decided items to the lead; the morning brief runs daily. A text file the owner sends (.txt, .md, .csv) is saved
+under handoffs/inbox/ and the lead is told where it is.
 run_agent() is the hook for the full orchestration logic (sessions, intake, delegation).
 """
 import os, re, sys, time, subprocess, pathlib, asyncio, logging, threading, datetime as dt
@@ -188,9 +189,62 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if len(pending) > 1:
             ids = [i["id"] for i in pending][:5]
             return await say(update.message.reply_text, "Which one?\n" + "\n".join(f"• {alerts.line(BOOK, i)}" for i in pending), buttons(ids))
+    await answer(update, text)
+
+async def answer(update, text):
     reply = await asyncio.to_thread(run_agent, text)
     ids = [i["id"] for i in BOOK.open_items()[0] if i["id"] in reply][:5]  # the agent named a waiting item: put the tap buttons under it
     await say(update.message.reply_text, reply, buttons(ids))
+
+# --- text files from the owner (a brief, an invoice export): saved under handoffs/inbox/, then the lead is told where it is.
+# Plain text only: the agent reads it like any handoff. Nothing in it is run, and other file types are refused with a reason.
+INBOX = ROOT / "handoffs" / "inbox"  # handoffs/ is a mounted volume, so the file survives a rebuild
+TEXT_FILES = (".txt", ".md", ".csv")  # .csv: exports (GLS, Billingo) are the likely next files
+MAX_FILE = 1_000_000  # bytes; a brief or an export is far smaller, and the whole file goes into one agent run
+
+def safe_name(name: str) -> str:
+    """The owner's file name without folders or odd characters, so it can only land inside handoffs/inbox/."""
+    stem = re.sub(r"[^\w.-]+", "_", pathlib.PurePath(name or "file").name, flags=re.UNICODE).strip("._") or "file"
+    return stem[-80:]
+
+def decode(data: bytes) -> str:
+    """UTF-8 first (with or without BOM); a Hungarian Windows file is often cp1250. Anything else is not a text file."""
+    for enc in ("utf-8-sig", "cp1250"):
+        try: text = data.decode(enc)
+        except UnicodeDecodeError: continue
+        if "\x00" not in text: return text
+    raise ValueError("not a text file")
+
+def file_refusal(name: str, size) -> str:
+    """'' when the file may be taken; otherwise the reason, in words the owner can act on."""
+    if pathlib.PurePath(name or "").suffix.lower() not in TEXT_FILES:
+        return f"I can only take text files ({', '.join(TEXT_FILES)}). Nothing was saved. Send it as one of these, or paste the text."
+    if size and size > MAX_FILE:
+        return f"This file is {size // 1000} kB; the limit is {MAX_FILE // 1000} kB. Nothing was saved. Split it, or send the part that matters."
+    return ""
+
+async def on_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not from_owner(update) or update.message is None: return
+    AWAITING.clear()
+    doc = update.message.document
+    name = getattr(doc, "file_name", "") or ""
+    no = file_refusal(name, getattr(doc, "file_size", 0))
+    if no: return await update.message.reply_text(no)
+    try:
+        data = bytes(await (await doc.get_file()).download_as_bytearray())
+        if len(data) > MAX_FILE: return await update.message.reply_text(file_refusal(name, len(data)))
+        text = decode(data)
+    except ValueError:
+        return await update.message.reply_text("This does not read as a text file, so nothing was saved. Paste the text instead.")
+    except Exception as e:
+        log.warning("file download failed: %s", type(e).__name__)
+        return await update.message.reply_text("I could not download the file from Telegram, so nothing was saved. Send it again.")
+    INBOX.mkdir(parents=True, exist_ok=True)
+    path = INBOX / f"{dt.datetime.now(alerts.zone()):%Y-%m-%d_%H%M%S}-{safe_name(name)}"
+    path.write_text(text, encoding="utf-8")
+    caption = (update.message.caption or "").strip()
+    await answer(update, f"The owner sent a file on Telegram, saved as {path.relative_to(ROOT)} ({len(text)} characters). "
+                         "Read it from there. " + (f"The owner's message with it: {caption}" if caption else "No message came with it."))
 
 def buttons(ids):
     """Tap instead of typing: one row per waiting item. The tap goes through the same owner_command as /ok, /change, /drop."""
@@ -264,6 +318,7 @@ def main():
     app.add_handler(CallbackQueryHandler(on_tap))
     app.add_handler(MessageHandler(filters.COMMAND, on_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+    app.add_handler(MessageHandler(filters.Document.ALL, on_document))
     if app.job_queue:  # both go to OWNER, which is always set here
         app.job_queue.run_daily(morning_brief, time=dt.time(hour=8, minute=0, tzinfo=alerts.zone()))
         app.job_queue.run_repeating(alert_tick, interval=60, first=20)
