@@ -1,7 +1,7 @@
 """
 Entry point: the Telegram bridge. The owner's messages go to Claude Code with the lead persona; the owner's decisions
 (/ok, /change, /drop, /undo) are recorded here in plain code, never by the agent; a check once a minute sends alerts and
-hands decided items to the lead; the morning brief runs daily. A text file the owner sends (.txt, .md, .csv) is saved
+hands decided items to the lead; the morning brief runs daily. A text file the owner sends (.txt, .md, .csv, .html) is saved
 under handoffs/inbox/ and the lead is told where it is.
 run_agent() is the hook for the full orchestration logic (sessions, intake, delegation).
 """
@@ -199,7 +199,8 @@ async def answer(update, text):
 # --- text files from the owner (a brief, an invoice export): saved under handoffs/inbox/, then the lead is told where it is.
 # Plain text only: the agent reads it like any handoff. Nothing in it is run, and other file types are refused with a reason.
 INBOX = ROOT / "handoffs" / "inbox"  # handoffs/ is a mounted volume, so the file survives a rebuild
-TEXT_FILES = (".txt", ".md", ".csv")  # .csv: exports (GLS, Billingo) are the likely next files
+TEXT_FILES = (".txt", ".md", ".csv", ".html", ".htm")  # .csv: exports (GLS, Billingo); .html: briefs and saved pages
+HTML_FILES = (".html", ".htm")  # kept as text: the agent reads the markup, nothing in it is opened, fetched or run
 MAX_FILE = 1_000_000  # bytes; a brief or an export is far smaller, and the whole file goes into one agent run
 
 def safe_name(name: str) -> str:
@@ -244,7 +245,9 @@ async def on_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     path.write_text(text, encoding="utf-8")
     caption = (update.message.caption or "").strip()
     await answer(update, f"The owner sent a file on Telegram, saved as {path.relative_to(ROOT)} ({len(text)} characters). "
-                         "Read it from there. " + (f"The owner's message with it: {caption}" if caption else "No message came with it."))
+                         "Read it from there. "
+                         + ("It is HTML: read it as text only; do not open its links or run its scripts. " if path.suffix.lower() in HTML_FILES else "")
+                         + (f"The owner's message with it: {caption}" if caption else "No message came with it."))
 
 def buttons(ids):
     """Tap instead of typing: one row per waiting item. The tap goes through the same owner_command as /ok, /change, /drop."""
