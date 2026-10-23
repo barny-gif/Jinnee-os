@@ -29,3 +29,18 @@ labels:
 
 billing:
   invoice_prefix: "EX-"                    # Payments shows only invoice numbers starting with this. "" = every series.
+
+# When the team works without being asked (core/scheduler.py). Everything here is optional: without it the packs' own
+# rhythm applies (morning brief 08:00, inbox hourly, invoice watch daily, Friday report...), in your time zone, never in
+# the quiet hours. See what would run when, without starting anything:  python3 core/scheduler.py plan
+# A job whose connector is not set up does not run, whatever is written here; `plan` says what is missing.
+schedule:
+  enabled: true                          # false = no scheduled run at all (you can still ask the team any time)
+  timezone: "Europe/Budapest"            # your time zone; JINNEE_TZ in .env wins if it is set there
+  quiet_hours: "21:00-07:00"             # nothing starts, and you get no alert, in this window ("off" = never quiet)
+  jobs:                                  # only the ones you want different. Times: hourly :MM · daily HH:MM ·
+                                         # workdays HH:MM · weekly DAY HH:MM (mon..sun) · off
+    jinnee.brief: "daily 07:30"          # the morning brief half an hour earlier
+    jinnee.evening: off                  # no evening close
+    office.inbox: "hourly :10 workdays"  # Milo looks at your own inbox on workdays only
+    ledger.weekly_finance: "weekly fri 12:00"

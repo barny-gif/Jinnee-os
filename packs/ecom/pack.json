@@ -26,5 +26,12 @@
     "upload_parcel_label": { "level": 1, "max_level": 2, "locked": true, "label": "Upload a parcel label to the carrier (prepared, not printed)" },
     "draft_anything": { "level": 3, "label": "Write drafts" },
     "read_anything": { "level": 3, "label": "Read connected systems" }
+  },
+  "schedule": {
+    "ops.order_watch": {"agent": "ops", "name": "Milo: order watch", "when": "hourly :35", "needs": ["shop"], "precheck": "open_orders", "task": "Order watch, as in your agent file: for the open orders, is the invoice (or its draft) there and does the parcel label exist? Read and dry runs only (connectors/order_checks.py open, parcel_prepare without --send). Anything missing for more than 2 hours: one line per order number with what is missing. Never upload a label or issue an invoice from here."},
+    "ops.stock_alert": {"agent": "ops", "name": "Milo: stock alert", "when": "daily 07:45", "needs": ["shop"], "task": "Stock alert, as in your agent file: the products that run out within 7 days at the last 28 days' sales speed. A list, not an order. Write it to handoffs/milo/<date>-stock.md; reply SILENT when nothing runs out."},
+    "marketing.weekly_plan": {"agent": "marketing-manager", "name": "Muse: weekly plan", "when": "weekly mon 09:30", "needs": ["shop"], "task": "The weekly plan, as in your agent file: 1 focus product group, 1 message, 3 channels, 1 metric, with the numbers it rests on. Write it to handoffs/marketing/<week>-plan.md. A budget is a suggestion in words, never an approval item."},
+    "social.weekly_calendar": {"agent": "social-media-manager", "name": "Spark: weekly content calendar", "when": "weekly mon 11:00", "precheck": "marketing_plan", "after_any": ["marketing.weekly_plan"], "task": "The weekly content calendar from this week's marketing plan (handoffs/marketing/), as in your agent file: per post channel, time, copy, image brief, hashtags, goal. Write it to handoffs/social/<week>-calendar.md. It is a plan for the owner to look at: do not queue posts from this run."},
+    "marketing.weekly_measurement": {"agent": "marketing-manager", "name": "Muse: weekly measurement", "when": "weekly fri 14:30", "needs": ["shop"], "task": "The weekly measurement, as in your agent file: visitors, carts, conversion, best and worst product from the connectors, and 3 sentences on what follows. Write it to handoffs/marketing/<week>-measurement.md for the Friday report."}
   }
 }

@@ -2,10 +2,11 @@
 
   python core/heartbeat.py beat AGENT "what was done" [--working | --failed]
 
-Who is in trouble? Only an agent that said something and then went wrong: it started and never finished, or its last
-run failed. An agent that has never checked in, or that finished its last job and has had nothing to do since, is not
-flagged. Nothing here schedules the agents yet, so "quiet for an hour" says nothing about them, and flagging it was a
-false alarm every morning. When a pack gives an agent a fixed rhythm, its expected interval belongs here too."""
+Who is in trouble? An agent that said something and then went wrong: it started and never finished, or its last run
+failed. And, since the schedule exists (core/scheduler.py), an agent that should have run and did not: the scheduler gives
+each scheduled agent its expected rhythm and the last time it was due (`expected`); no beat since then means it did not
+run. An agent without a schedule that has never checked in, or that finished its last job and has had nothing to do
+since, is not flagged: "quiet for an hour" says nothing about an agent nobody asked."""
 import pathlib, sys, time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import store
@@ -29,15 +30,23 @@ def beat(agent: str, note: str = "", state: str = "ok", brain=None):
         store.write_json(brain / "heartbeat.json", data)
 
 
-def trouble(brain=None, now=None):
-    """→ ["ops: started 3 h ago and never finished", "jinnee: last run failed (timed out)"]"""
-    now, out = now or time.time(), []
-    for agent, v in sorted(load(brain).items()):
+def trouble(brain=None, now=None, expected=None):
+    """→ ["ops: started 3 h ago and never finished", "jinnee: last run failed (timed out)",
+          "office: should have run at 10:05 (hourly :05) and did not"]
+    expected: {agent: {"since": epoch, "at": "Fri 10:05", "when": "hourly :05", "every": seconds}} from core/scheduler.py."""
+    now, out, beats = now or time.time(), [], load(brain)
+    for agent, v in sorted(beats.items()):
         age = now - v.get("ts", 0)
         if v.get("state") == "failed":
             out.append(f"{agent}: last run failed" + (f" ({v['note']})" if v.get("note") else ""))
         elif v.get("state") == "working" and age > STALE:
             out.append(f"{agent}: started {int(age // 3600)} h ago and never finished")
+    for agent, e in sorted((expected or {}).items()):
+        v = beats.get(agent) or {}
+        if v.get("state") == "failed" or (v.get("state") == "working" and now - v.get("ts", 0) > STALE): continue  # said above
+        if v.get("ts", 0) < e.get("since", 0):
+            at = e.get("at") or time.strftime("%a %H:%M", time.localtime(e["since"]))  # the scheduler names it in the owner's time
+            out.append(f"{agent}: should have run at {at} ({e.get('when', 'on its schedule')}) and did not")
     return out
 
 
@@ -50,4 +59,9 @@ if __name__ == "__main__":
     sub.add_parser("trouble")
     a = p.parse_args()
     if a.cmd == "beat": beat(a.agent, a.note, "failed" if a.failed else "working" if a.working else "ok")
-    else: print("\n".join(trouble()) or "Nobody is stuck.")
+    else:
+        import env; env.load()
+        try:
+            import scheduler; expected = scheduler.Scheduler().expected()
+        except Exception: expected = None  # the old answer is still right, just without the rhythm
+        print("\n".join(trouble(expected=expected)) or "Nobody is stuck.")
