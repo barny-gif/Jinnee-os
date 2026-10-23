@@ -3,6 +3,7 @@ fulfilled with the GLS tracking number, never e-mailing the customer), a dry run
 CLI: python3 connectors/shopify/ops.py list_orders --days 7
      python3 connectors/shopify/ops.py scopes                 (which scopes the token has, and which REQUIRED ones are missing)
      python3 connectors/shopify/ops.py sessions --days 7      (sessions and online store visitors per day; totals only)
+     python3 connectors/shopify/ops.py open_count [--since 1792044000]   (counts only: open unfulfilled, new since)
      python3 connectors/shopify/ops.py fulfill --order-id 123 --tracking 1234567890 [--confirm yes]"""
 import os, sys, json, time, pathlib, datetime as dt
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -151,6 +152,19 @@ def sessions(days="7"):
 
 FULFILLABLE = ("open", "in_progress")
 
+def open_count(since=""):
+    """Counts only, no order data: open orders that are not (fully) fulfilled yet and, when `since` is given (epoch seconds
+    or an ISO time), orders created after it. The scheduler asks this before the hourly order watch."""
+    out = {"open_unfulfilled": int(_get("orders/count.json", {"status": "open", "fulfillment_status": "unfulfilled"}).get("count") or 0)}
+    if str(since).strip():
+        try: when = dt.datetime.fromtimestamp(float(since), dt.timezone.utc)
+        except (TypeError, ValueError):
+            try: when = dt.datetime.fromisoformat(str(since).strip().replace("Z", "+00:00"))
+            except ValueError: raise ConnectorError("--since must be epoch seconds or an ISO date/time")
+            if not when.tzinfo: when = when.replace(tzinfo=dt.timezone.utc)
+        out["new_since"] = int(_get("orders/count.json", {"status": "any", "created_at_min": when.isoformat(timespec="seconds")}).get("count") or 0)
+    return out
+
 def fulfill(order_id, tracking, company="GLS", confirm="no"):
     """Mark an order fulfilled in Shopify with the parcel's tracking number. notify_customer is always false: the customer gets no
     e-mail from this (that would need its own approval). Idempotent: only fulfillment orders that are still open (and allow
@@ -172,5 +186,5 @@ def fulfill(order_id, tracking, company="GLS", confirm="no"):
             "tracking": tracking, "notify_customer": False}
 
 OPS = {"list_orders": list_orders, "get_order": get_order, "list_products": list_products, "get_product": get_product,
-       "scopes": scopes, "sessions": sessions, "fulfill": fulfill}
+       "scopes": scopes, "sessions": sessions, "open_count": open_count, "fulfill": fulfill}
 if __name__ == "__main__": sys.exit(run_cli(OPS))

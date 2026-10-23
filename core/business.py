@@ -15,8 +15,8 @@ CLI:
                                                      prints the parcel label note exactly as it would go to GLS (offline)
   python3 core/business.py setup                     asks the questions in the terminal and writes config/business.yaml
   python3 core/business.py init [--force yes]        writes config/business.yaml from variables (no questions):
-      BUSINESS_NAME, BUSINESS_LANGUAGE (default hu), BUSINESS_VOICE, BUSINESS_INTRO,
-      SHOP_LABEL_NAME, SHOP_NOT_REVENUE_TAGS (comma separated), BILLING_INVOICE_PREFIX
+      BUSINESS_NAME, BUSINESS_LANGUAGE (default hu), BUSINESS_VOICE, BUSINESS_INTRO, BUSINESS_TIMEZONE (default
+      Europe/Budapest), SHOP_LABEL_NAME, SHOP_NOT_REVENUE_TAGS (comma separated), BILLING_INVOICE_PREFIX
   JINNEE_BUSINESS_FILE=<path> points every command (and the programs) at another file."""
 import json, os, pathlib, string, sys
 
@@ -28,6 +28,9 @@ LABEL_FIELDS = {"shop", "order", "goods", "payment"}
 PAYMENT_FIELDS = {"amount"}
 # Generic label wording; every business can change it in its own file. No business name in here.
 DEFAULT_LABELS = {"note": "{shop} {order}, {goods}, {payment}", "cod": "COD {amount} Ft", "paid": "PAID"}
+# What the installer offers as the time zone. Only a suggestion written into the owner's file: the programs read the file
+# (or JINNEE_TZ), never this.
+SUGGESTED_TIMEZONE = "Europe/Budapest"
 
 
 class BusinessConfigError(Exception):
@@ -200,7 +203,7 @@ def _q(v) -> str:
     return json.dumps(str(v), ensure_ascii=False)
 
 
-def render(name, language, voice, intro="", label_name="", tags=(), invoice_prefix=""):
+def render(name, language, voice, intro="", label_name="", tags=(), invoice_prefix="", timezone=SUGGESTED_TIMEZONE):
     tags_yaml = "[" + ", ".join(_q(t) for t in tags) + "]"
     return f"""# Your business settings for Jinnee OS. This file stays on your machine: it is in .gitignore and never goes to GitHub.
 # Edit it any time; the programs read it on every use. Check it with: python3 core/business.py check
@@ -223,6 +226,11 @@ labels:                          # the parcel label note; placeholders: {{shop}}
 
 billing:
   invoice_prefix: {_q(invoice_prefix)}   # Payments shows only invoice numbers starting with this ("" = every series)
+
+schedule:                        # when the team works without being asked. What would run when: python3 core/scheduler.py plan
+  timezone: {_q(timezone or SUGGESTED_TIMEZONE)}   # your time zone (JINNEE_TZ in .env wins when it is set there)
+  # quiet_hours: "21:00-07:00"   # nothing starts and nothing is sent in these hours ("off" = never); QUIET_HOURS in .env wins
+  jobs: {{}}                       # another time or off per job, e.g.  office.inbox: "hourly :10 workdays"  (see {EXAMPLE})
 """
 
 
@@ -250,7 +258,8 @@ def init(force="no"):
     missing = [k for k in need if not env(k)]
     if missing: raise BusinessConfigError("Not set: " + ", ".join(missing) + ". config/business.yaml was not written.")
     p = write(render(env("BUSINESS_NAME"), env("BUSINESS_LANGUAGE") or "hu", env("BUSINESS_VOICE"), env("BUSINESS_INTRO"),
-                     env("SHOP_LABEL_NAME"), _tags(env("SHOP_NOT_REVENUE_TAGS")), env("BILLING_INVOICE_PREFIX")), force == "yes")
+                     env("SHOP_LABEL_NAME"), _tags(env("SHOP_NOT_REVENUE_TAGS")), env("BILLING_INVOICE_PREFIX"),
+                     env("BUSINESS_TIMEZONE") or SUGGESTED_TIMEZONE), force == "yes")
     return {"written": str(p)}
 
 
@@ -266,12 +275,13 @@ def setup(ask=input, force="no"):
     lang = q("Language for you and your customers (hu, en, de...):", "hu")
     voice = q("How should the team sound to customers? (e.g. warm, informal, short sentences):")
     intro = q("One or two sentences about the business (Enter to skip):", required=False)
+    tz = q("Your time zone, for the schedule (e.g. Europe/Budapest):", SUGGESTED_TIMEZONE)
     label, tags, prefix = "", [], ""
     if "ecom" in packs:
         label = q("Shop name for the parcel label note (e.g. your-shop.com):")
         tags = _tags(q("Order tags that are not revenue, comma separated (Enter = none):", required=False))
         prefix = q("Show only invoice numbers starting with (Enter = every series):", required=False)
-    p = write(render(name, lang, voice, intro, label, tags, prefix), force == "yes")
+    p = write(render(name, lang, voice, intro, label, tags, prefix, tz), force == "yes")
     return {"written": str(p)}
 
 

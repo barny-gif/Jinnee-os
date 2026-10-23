@@ -108,7 +108,8 @@ class Bridge(base.RepoCopy):
         r = self.start(TOKEN + f"TELEGRAM_OWNER_ID={OWNER}\nJINNEE_NAME=Testbot\n")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('STUB_TOKEN "123456:TEST-not-a-real-token"', r.stdout)
-        self.assertIn("STUB_DAILY morning_brief 08:00:00", r.stdout)
+        self.assertIn("STUB_REPEAT schedule_tick 60", r.stdout)  # the brief comes from core/scheduler.py now
+        self.assertIn("Scheduled: jinnee.brief", r.stdout)
         self.assertIn("Testbot is running", r.stdout)
 
     def test_only_the_owner_reaches_the_agent(self):

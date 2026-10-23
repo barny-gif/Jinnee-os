@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
-import approvals, autonomy, heartbeat, logs
+import approvals, autonomy, heartbeat, logs, scheduler
 import orders
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -131,9 +131,12 @@ def state(req: Request):
     table, levels_problem = cfg.read()
     levels = [{"action": a, "label": e["label"], "level": autonomy.effective(e, a), "name": autonomy.NAMES[autonomy.effective(e, a)],
                "locked": e["locked"], "max_level": e["max_level"]} for a, e in sorted(table.items())]
+    try: schedule = [{k: r[k] for k in ("id", "name", "when", "on", "off", "next_text", "last_text", "result", "note")}
+                     for r in scheduler.Scheduler(BRAIN).rows(now)]
+    except Exception: schedule = None  # the box says it could not be read; the rest of the page still works
     return {"name": NAME, "auth": bool(PASSWORD), "brief": rd("brief_today.md", ""), "approvals": shown,
             "problems": [p for p in (problem, levels_problem) if p], "autonomy": levels,
-            "team": team, "connectors": connectors, "log": log[::-1]}
+            "team": team, "connectors": connectors, "schedule": schedule, "log": log[::-1]}
 
 @app.get("/api/orders")
 def api_orders(req: Request):

@@ -3,3 +3,4 @@ fastapi>=0.110
 uvicorn>=0.29
 requests>=2.31
 PyYAML>=6
+tzdata>=2024.1   # time zones for the schedule where the system has none (Windows, slim Docker images); zoneinfo falls back to it

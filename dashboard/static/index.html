@@ -49,6 +49,7 @@ button.ok{border-color:var(--ok);color:var(--ok)}button.drop{border-color:var(--
     <section><h2>Team</h2><div id="team"></div></section>
     <section><h2>Connections</h2><div id="connectors"></div></section>
   </div>
+  <section><h2>Schedule</h2><div id="schedule"></div></section>
   <section><h2>What the team may do</h2><div id="autonomy"></div></section>
   <section><h2>Decision log</h2><div class="log" id="log"></div></section>
 </main>
@@ -82,6 +83,8 @@ async function load(){
   el('team').innerHTML=s.team.length?s.team.map(t=>`<div class="row"><span><span class="dot ${t.state==='failed'?'r':t.state==='working'?(t.ago_min<60?'y':'r'):'g'}"></span>${esc(t.agent)}</span><span>${t.ago_min<60?t.ago_min+' min ago':Math.round(t.ago_min/60)+' h ago'} · ${esc(t.note)}</span></div>`).join('')
     :'<p class="empty">No one has checked in yet. After the first task you\'ll see who is doing what.</p>';
   el('connectors').innerHTML=s.connectors.map(c=>`<div class="row"><span><span class="dot ${c.ok===null?'n':c.ok?'g':'r'}"></span>${esc(c.name)}</span><span>${c.ok===null?'no key':c.ok?'connected':'missing key'}</span></div>`).join('');
+  el('schedule').innerHTML=s.schedule===null?'<p class="empty">The schedule could not be read. Run python3 core/scheduler.py plan on the machine.</p>'
+    :s.schedule.map(j=>`<div class="row"><span><span class="dot ${!j.on?'n':/fail|missed/.test(j.result)?'r':'g'}"></span>${esc(j.name)}</span><span>${j.on?esc(j.when)+' · next '+esc(j.next_text)+(j.last_text?' · last '+esc(j.last_text)+': '+esc(j.result):''):'off: '+esc(j.off)}</span></div>`).join('');
   el('log').innerHTML=s.log.length?s.log.map(esc).join('<br>'):'<span class="empty">No decisions yet.</span>';
 }
 async function loadOrders(){

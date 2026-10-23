@@ -11,10 +11,12 @@ What has been said is kept in brain/alerts_state.json, so a restart does not rep
 
 .env:  QUIET_HOURS=21:00-07:00 (off = never quiet) · REMIND_AFTER_DAYS=2 · STUCK_AFTER_HOURS=6 · UNDO_SECONDS=120
        JINNEE_TZ=Europe/Budapest (empty = this machine's clock; set it in Docker, where the clock is UTC)
+config/business.yaml, when .env does not say:  schedule.timezone and schedule.quiet_hours. The same time zone and the same
+quiet hours hold for these messages and for the scheduled runs (core/scheduler.py), so there is one place to set them.
 """
 import datetime as dt, logging, os, pathlib, re, sys, time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import store, approvals, autonomy
+import store, approvals, autonomy, business
 
 log = logging.getLogger("jinnee.alerts")
 DEFAULT_QUIET = "21:00-07:00"
@@ -27,8 +29,36 @@ def number(name, default):
     return v if v >= 0 else default
 
 
-def zone():
+def setting(key):
+    """A schedule value from config/business.yaml, or None when the file or the key is not there. Never raises."""
+    try: node = business.load()
+    except business.BusinessConfigError: return None
+    for part in key.split("."):
+        if not isinstance(node, dict) or part not in node: return None
+        node = node[part]
+    return node
+
+
+def zone_name():
+    """JINNEE_TZ in .env wins (older installs, as for the language); then schedule.timezone in config/business.yaml;
+    '' = this machine's clock (which follows TZ when it is set)."""
     name = os.getenv("JINNEE_TZ", "").strip()
+    if name: return name
+    v = setting("schedule.timezone")
+    return v.strip() if isinstance(v, str) else ""
+
+
+def quiet_spec():
+    """QUIET_HOURS in .env wins; then schedule.quiet_hours in config/business.yaml; then 21:00-07:00.
+    YAML reads a bare `off` as false: that means never quiet, like QUIET_HOURS=off."""
+    if "QUIET_HOURS" in os.environ: return os.environ["QUIET_HOURS"]
+    v = setting("schedule.quiet_hours")
+    if v is False: return "off"
+    return v if isinstance(v, str) else DEFAULT_QUIET
+
+
+def zone():
+    name = zone_name()
     if not name: return None
     try:
         import zoneinfo
@@ -45,7 +75,7 @@ def clock(now):
 
 def quiet(now, spec=None):
     """Is `now` inside the quiet hours? 'off', 'none', '' or equal ends mean never. Nonsense means the default."""
-    spec = os.getenv("QUIET_HOURS", DEFAULT_QUIET) if spec is None else spec
+    spec = quiet_spec() if spec is None else spec
     if spec.strip().lower() in ("", "off", "none", "no", "0"): return False
     m = SPAN.fullmatch(spec) or SPAN.fullmatch(DEFAULT_QUIET)
     h1, m1, h2, m2 = map(int, m.groups())
@@ -79,6 +109,11 @@ class Watch:
 
     def problems(self):
         out = [p for p in (self.book.read()[1], self.cfg.read()[1]) if p]
+        try:  # a scheduled agent run that failed, or a schedule setting that cannot be read: told once, like the rest
+            import scheduler
+            out += scheduler.Scheduler(self.brain).problems()
+        except Exception as e:
+            log.warning("the schedule could not be checked: %s", type(e).__name__)
         for kept in sorted(self.brain.glob("approvals.json.broken-*")):
             out.append(f"brain/approvals.json could not be read and was set aside as {kept.name}. Anything that was waiting "
                        f"in it has to be asked again. Delete that file once you have looked at it.")

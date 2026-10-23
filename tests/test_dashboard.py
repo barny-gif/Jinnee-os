@@ -290,3 +290,15 @@ class Approvals(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScheduleBox(Base):
+    def test_state_lists_the_schedule_read_only(self):
+        (self.dash.BRAIN / "schedule_state.json").write_text(json.dumps({"jinnee.brief": {"first_seen": 1, "started": int(time.time()) - 3600,
+                                                                                            "slot_t": int(time.time()) - 3600, "result": "ok", "note": "replied"}}))
+        before = (self.dash.BRAIN / "schedule_state.json").read_text()
+        rows = {r["id"]: r for r in self.client().get("/api/state").json()["schedule"]}
+        self.assertEqual((rows["jinnee.brief"]["on"], rows["jinnee.brief"]["when"], rows["jinnee.brief"]["result"]), (True, "daily 08:00", "ok"))
+        self.assertIn("next_text", rows["jinnee.brief"])
+        self.assertEqual((self.dash.BRAIN / "schedule_state.json").read_text(), before)  # the dashboard only reads it
+        self.assertIn('id="schedule"', self.client().get("/").text)

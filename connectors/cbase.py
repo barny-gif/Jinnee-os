@@ -18,6 +18,25 @@ def need(*names):
     if missing: raise ConnectorError("Missing in .env: " + ", ".join(missing))
     return [os.environ[n].strip() for n in names]
 
+# A scheduled run (core/scheduler.py) has nobody watching it. The scheduler sets JINNEE_UNATTENDED=1 for the agent's
+# process, and then no connector step that reaches the outside world runs here, whatever the autonomy level says: what would
+# go out is queued for the owner instead. "--confirm yes" and "--send yes" are how every outgoing step is switched on.
+UNATTENDED = "JINNEE_UNATTENDED"
+OUTGOING = ("confirm", "send")
+NEVER_UNATTENDED = ("loop",)  # a program that runs until stopped is the machine's job, not an agent's
+
+def unattended() -> bool:
+    return os.getenv(UNATTENDED, "").strip() == "1"
+
+def refused_unattended(op, kwargs):
+    """Why this call may not run in a scheduled run, or ''."""
+    if not unattended(): return ""
+    if op in NEVER_UNATTENDED: return f"'{op}' does not run from a scheduled run"
+    on = [f"--{k} yes" for k in OUTGOING if str(kwargs.get(k, "")).strip().lower() == "yes"]
+    if on: return (f"{' and '.join(on)} is not allowed in a scheduled run: nothing goes out without the owner. "
+                   "Run it as a dry run, and queue the real step with core/approvals.py add")
+    return ""
+
 def run_cli(ops: dict, argv=None):
     """python3 connectors/<id>/ops.py <op> [--key value ...] → JSON on stdout. Errors → {"error": ...}, exit 1."""
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -26,6 +45,9 @@ def run_cli(ops: dict, argv=None):
     kwargs, it = {}, iter(argv[1:])
     for a in it:
         if a.startswith("--"): kwargs[a[2:].replace("-", "_")] = next(it, "")
+    no = refused_unattended(argv[0], kwargs)
+    if no:
+        print(json.dumps({"error": "REFUSED " + no}, ensure_ascii=False)); return 1
     try:
         print(json.dumps(ops[argv[0]](**kwargs), ensure_ascii=False, indent=2)); return 0
     except (ConnectorError, TypeError) as e:
