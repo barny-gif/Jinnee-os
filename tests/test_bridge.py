@@ -162,8 +162,20 @@ class Bridge(base.RepoCopy):
             self.assertEqual(step["ran"], [])
             self.assertEqual(len(step["replies"]), 1)
             self.assertIn("Nothing was saved", step["replies"][0].replace("nothing was saved", "Nothing was saved"))
-        self.assertIn(".txt, .md, .csv", pdf["replies"][0])
+        self.assertIn(".txt, .md, .csv, .html", pdf["replies"][0])
         self.assertEqual(got["files"], {})
+
+    def test_owner_html_file_is_saved_as_text_with_a_warning(self):
+        page = "<html><body><h1>Brief</h1><script>alert(1)</script></body></html>\n"
+        got = self.send_files([[OWNER, "brief.html", page.encode("utf-8").hex(), 70, "the brief as a page"],
+                               [OWNER, "notes.md", b"plain".hex(), 5, None]])
+        (html, md) = got["steps"]
+        self.assertEqual(html["replies"], ["reply"])
+        self.assertIn("-brief.html", html["ran"][0])
+        self.assertIn("read it as text only", html["ran"][0])
+        self.assertIn("the brief as a page", html["ran"][0])
+        self.assertNotIn("read it as text only", md["ran"][0])  # the HTML warning is only for HTML
+        self.assertIn(page, got["files"].values())
 
     def test_file_name_cannot_leave_the_inbox(self):
         got = self.send_files([[OWNER, "../../brain/approvals.md", b"x".hex(), 1, ""]])
