@@ -23,6 +23,7 @@ ok_name(){ case "$1" in ''|*\'*) return 1;; esac; }
 ok_packs(){ case "$1" in ''|*[!a-z0-9_,-]*|,*|*,|*,,*) return 1;; esac; }
 ok_text(){ [ -n "$1" ]; }
 ok_lang(){ case "$1" in [a-z][a-z]|[a-z][a-z][a-z]|[a-z][a-z]-[A-Za-z][A-Za-z]) return 0;; esac; return 1; }
+ok_tz(){ case "$1" in *[!A-Za-z0-9_/+-]*|/*|*/) return 1;; UTC|*/*) return 0;; esac; return 1; }  # Area/City, checked again by core/scheduler.py check
 
 ask(){ # ask "question" → REPLY, read from the terminal (fd 3), surrounding spaces removed
   printf '%s ' "$1" >&2
@@ -69,6 +70,7 @@ Set the answers as variables and run again. Nothing was installed.
   BUSINESS_VOICE      how the team sounds to your customers          required
   BUSINESS_LANGUAGE   language for you and your customers            default: hu
   BUSINESS_INTRO      a sentence or two about the business           optional
+  BUSINESS_TIMEZONE   your time zone, for the schedule               default: Europe/Budapest
   SHOP_LABEL_NAME     shop name on the parcel label note             required with the ecom pack
   SHOP_NOT_REVENUE_TAGS, BILLING_INVOICE_PREFIX                      optional (ecom), see config/business.example.yaml
   BUSINESS_FILE       a ready config/business.yaml to use instead of the BUSINESS_* answers
@@ -126,7 +128,7 @@ main(){
   PACK_LIST="$ANSWER"
 
   # Your business: name, language, tone of voice (and for a shop, the parcel label). It goes to config/business.yaml, never to git.
-  BIZ=ask; B_NAME=""; B_LANG=""; B_VOICE=""; B_INTRO=""; B_SHOP=""; B_TAGS=""; B_PREFIX=""
+  BIZ=ask; B_NAME=""; B_LANG=""; B_VOICE=""; B_INTRO=""; B_TZ=""; B_SHOP=""; B_TAGS=""; B_PREFIX=""
   if [ -f "$DIR/config/business.yaml" ]; then BIZ=keep
   elif [ -n "${BUSINESS_FILE:-}" ]; then
     [ -f "$BUSINESS_FILE" ] || die "BUSINESS_FILE=$BUSINESS_FILE: no such file. Nothing was installed."
@@ -141,6 +143,8 @@ main(){
       "A few words are required, for example: friendly, informal, no exclamation marks."
     B_VOICE="$ANSWER"
     optional BUSINESS_INTRO "One or two sentences about the business (Enter to skip):"; B_INTRO="$ANSWER"
+    answer BUSINESS_TIMEZONE ok_tz "Your time zone, for the schedule [Europe/Budapest]:" "A name like Europe/Budapest or Europe/Vienna." Europe/Budapest
+    B_TZ="$ANSWER"
     case ",$PACK_LIST," in *,ecom,*)
       answer SHOP_LABEL_NAME ok_text "Shop name for the parcel label note (e.g. your-shop.com):" \
         "Required with the ecom pack: it is the first thing on every GLS label note."
@@ -152,7 +156,7 @@ main(){
   [ -z "$MISSING" ] || no_terminal
   # From here on .env is the only source: a rejected value must not reach the programs through the environment.
   unset JINNEE_MODE TELEGRAM_BOT_TOKEN TELEGRAM_OWNER_ID JINNEE_NAME PACKS
-  unset BUSINESS_NAME BUSINESS_LANGUAGE BUSINESS_VOICE BUSINESS_INTRO SHOP_LABEL_NAME SHOP_NOT_REVENUE_TAGS BILLING_INVOICE_PREFIX BUSINESS_FILE
+  unset BUSINESS_NAME BUSINESS_LANGUAGE BUSINESS_VOICE BUSINESS_INTRO BUSINESS_TIMEZONE SHOP_LABEL_NAME SHOP_NOT_REVENUE_TAGS BILLING_INVOICE_PREFIX BUSINESS_FILE
 
   need git || die "git is required. Install it and run again."
   if [ "$MODE" = docker ]; then
@@ -179,7 +183,7 @@ main(){
   case "$BIZ" in
     keep) echo "  config/business.yaml is already here: kept as it is.";;
     file) mkdir -p config; cp "$B_FILE" config/business.yaml; echo "  config/business.yaml: copied from BUSINESS_FILE";;
-    ask) PACKS="$PACK_LIST" BUSINESS_NAME="$B_NAME" BUSINESS_LANGUAGE="$B_LANG" BUSINESS_VOICE="$B_VOICE" BUSINESS_INTRO="$B_INTRO" \
+    ask) PACKS="$PACK_LIST" BUSINESS_NAME="$B_NAME" BUSINESS_LANGUAGE="$B_LANG" BUSINESS_VOICE="$B_VOICE" BUSINESS_INTRO="$B_INTRO" BUSINESS_TIMEZONE="$B_TZ" \
            SHOP_LABEL_NAME="$B_SHOP" SHOP_NOT_REVENUE_TAGS="$B_TAGS" BILLING_INVOICE_PREFIX="$B_PREFIX" \
            python3 core/business.py init >/dev/null || die "config/business.yaml could not be written."
          echo "  config/business.yaml written (your business settings; edit any time, check with: python3 core/business.py check)";;

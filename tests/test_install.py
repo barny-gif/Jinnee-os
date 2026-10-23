@@ -23,12 +23,12 @@ esac
 """
 FAKED = ("git", "docker", "node", "npm", "claude", "pip3", "nohup", "curl", "sudo", "brew")
 OURS = ("JINNEE_MODE", "JINNEE_NAME", "JINNEE_LANG", "JINNEE_DIR", "PACKS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_ID", "JINNEE_BUSINESS_FILE",
-        "BUSINESS_NAME", "BUSINESS_LANGUAGE", "BUSINESS_VOICE", "BUSINESS_INTRO", "SHOP_LABEL_NAME", "SHOP_NOT_REVENUE_TAGS",
+        "BUSINESS_NAME", "BUSINESS_LANGUAGE", "BUSINESS_VOICE", "BUSINESS_INTRO", "BUSINESS_TIMEZONE", "SHOP_LABEL_NAME", "SHOP_NOT_REVENUE_TAGS",
         "BILLING_INVOICE_PREFIX", "BUSINESS_FILE")
 BIZ = {"BUSINESS_NAME": "Minta Kft.", "BUSINESS_VOICE": "calm and friendly"}  # the required business answers, made up
 # the business questions for the general pack: name (asked again when empty), language (Enter = hu), voice, intro (skipped)
 GENERAL_BIZ = [("business name", ""), ("A name is required", None), ("business name", "Minta Kft."), ("Language for you", ""),
-               ("sound to your customers", "warm, informal"), ("about the business", "")]
+               ("sound to your customers", "warm, informal"), ("about the business", ""), ("time zone", "")]
 PIPED = "cat install.sh | bash"  # same shape as `curl … | bash`: the script is on stdin
 TOKEN = "123456:TEST-not_a-real-token"
 
@@ -125,6 +125,7 @@ class Installer(unittest.TestCase):
             ("be called?", name), ("Pack:", "x"), ("Answer 1 or 2", None), ("Pack:", "2"),
             ("business name", 'Kis "Bolt" & Co'), ("Language for you", "xx-yy-zz"), ("A language code", None), ("Language for you", "en"),
             ("sound to your customers", "tegező, rövid"), ("about the business", "Fa játékok."),
+            ("time zone", "Mars"), ("A name like Europe/Budapest", None), ("time zone", "Europe/Vienna"),
             ("parcel label note", ""), ("Required with the ecom pack", None), ("parcel label note", "kis-bolt.hu"),
             ("not revenue", "teszt, gift"), ("invoice numbers starting", "KB-"),
             ("Paste code:", "the-login-code"),
@@ -151,6 +152,7 @@ class Installer(unittest.TestCase):
         self.assertEqual((biz["business"]["name"], biz["business"]["language"], biz["business"]["voice"], biz["business"]["intro"]),
                          ('Kis "Bolt" & Co', "en", "tegező, rövid", "Fa játékok."))
         self.assertEqual((biz["shop"]["label_name"], biz["shop"]["not_revenue_tags"], biz["billing"]["invoice_prefix"]), ("kis-bolt.hu", ["teszt", "gift"], "KB-"))
+        self.assertEqual((biz["schedule"]["timezone"], biz["schedule"]["jobs"]), ("Europe/Vienna", {}))
 
     def test_run_as_a_file_in_docker_mode_with_defaults(self):
         code, shown = self.in_terminal("bash install.sh", [
@@ -167,12 +169,13 @@ class Installer(unittest.TestCase):
         self.assertFalse([c for c in calls if c.startswith(("nohup", "pip3", "claude"))], calls)
         biz = self.business()
         self.assertEqual((biz["business"]["name"], biz["business"]["language"], biz["business"]["intro"]), ("Minta Kft.", "hu", ""))
+        self.assertEqual(biz["schedule"]["timezone"], "Europe/Budapest")  # Enter takes the suggested zone
         self.assertNotIn("parcel label", shown)  # no shop questions without the ecom pack
 
     def test_variables_replace_questions_and_a_bad_one_is_asked_again(self):
         name = """J "$HOME" \\1 `id`"""
         code, shown = self.in_terminal(PIPED, [("Your Telegram user ID", "777"), ("be called?", name), ("Pack:", "1"), ("Language for you", ""), ("about the business", ""),
-                                               ("Paste code:", "c")],
+                                               ("time zone", ""), ("Paste code:", "c")],
                                        {"JINNEE_MODE": "native", "TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_OWNER_ID": "not-a-number", **BIZ})
         self.assertEqual(code, 0, shown)
         self.assertNotIn("Where should it run?", shown)

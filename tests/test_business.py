@@ -138,6 +138,19 @@ class Writing(unittest.TestCase):
             self.assertEqual(business.invoice_prefix(), "KB-")
             self.assertEqual(business.label_note("#1001", "1× Fa vonat", 4990), "kis-bolt.hu #1001, 1× Fa vonat, COD 4990 Ft")
 
+    def test_init_writes_the_schedule_block(self):
+        sys.path.insert(0, str(ROOT / "core"))
+        import alerts, scheduler
+        for given, zone in (("", "Europe/Budapest"), ("Europe/Vienna", "Europe/Vienna")):
+            with self.subTest(given=given), mock.patch.dict(os.environ, {**self.ANSWERS, "BUSINESS_TIMEZONE": given, "JINNEE_TZ": ""}):
+                os.environ.pop("QUIET_HOURS", None)
+                business.init(force="yes")
+                data = business.load()
+                self.assertEqual((data["schedule"]["timezone"], data["schedule"]["jobs"]), (zone, {}))
+                self.assertNotIn("quiet_hours", data["schedule"])  # only as a comment: QUIET_HOURS in .env is the older place
+                self.assertEqual(alerts.zone_name(), zone)
+                self.assertEqual(scheduler.Scheduler(pathlib.Path(self.target).parent / "brain-x", ["general", "ecom"]).check(), [])
+
     def test_init_refuses_missing_answers_and_overwriting(self):
         with mock.patch.dict(os.environ, {**self.ANSWERS, "SHOP_LABEL_NAME": ""}):
             with self.assertRaisesRegex(business.BusinessConfigError, "SHOP_LABEL_NAME"): business.init()
@@ -148,7 +161,7 @@ class Writing(unittest.TestCase):
             business.init(force="yes")
 
     def test_setup_asks_and_writes(self):
-        answers = iter(["", "Minta Kft.", "", "barátságos", "", "minta.hu", "teszt", ""])  # first empty name is asked again
+        answers = iter(["", "Minta Kft.", "", "barátságos", "", "", "minta.hu", "teszt", ""])  # first empty name is asked again; Enter = suggested zone
         with mock.patch.dict(os.environ, {"PACKS": "general,ecom"}), mock.patch("builtins.print"):
             business.setup(ask=lambda q: next(answers))
             self.assertEqual(business.check(["general", "ecom"]), [])

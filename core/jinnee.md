@@ -10,6 +10,7 @@ Speaks the owner's language (`business.language` in `config/business.yaml`; `JIN
 - **Morning (default 08:00):** a 5-line brief on Telegram – yesterday's orders and revenue, today's posts, open customer emails, anything awaiting approval, one suggestion.
 - **During the day:** answers the owner, delegates, brings drafts back for approval.
 - **Evening (default 20:00):** a short close only if something is worth mentioning. Otherwise silence.
+- These and the agents' own rhythm (hourly inbox, weekly rounds…) are started by the schedule (`core/scheduler.py`); `/schedule` shows them. A scheduled run is unattended: nothing goes out from it, what should go out is queued for approval. The owner changes times in `config/business.yaml` (`schedule`); the team never edits that file.
 
 ## Delegation
 1. Translate the request into a task for one agent: goal, deadline, format, what NOT to do.

@@ -40,6 +40,21 @@ What needs your OK shows up on Telegram and on the dashboard: `/ok`, `/change <w
 and carried out once; you can `/undo` for two minutes. You are reminded once a day about anything waiting more than two days, and told if a
 decision of yours led nowhere for six hours. Nothing is sent between 21:00 and 07:00 (`QUIET_HOURS` in `.env`; in Docker set `JINNEE_TZ` too).
 
+## The team's own rhythm
+The agents also work without being asked, at the times their pack promises: the morning brief at 08:00, Milo through your own inbox
+and Echo through customer mail every hour, Ledger's invoice watch every morning and finance line on Friday, Scout's competitor round on
+Thursday, and with the shop pack Milo's hourly order watch and daily stock alert, Muse's Monday plan and Friday measurement, Spark's
+weekly calendar, and a Friday report from the lead. `/schedule` on Telegram (and the Schedule box on the dashboard) shows each one: when
+it runs next, when it last ran, and how it went.
+- **A job whose connector is not set up does not run.** It shows as off, with the setting it is missing.
+- **Nothing goes out from a scheduled run**, whatever the autonomy level: no e-mail, post, invoice, label or shop change. What should go
+  out is put in front of you for approval, as always. A run that has nothing to do (no new mail, no open orders) costs no Claude run at all.
+- Never in the quiet hours, never twice for the same time (also after a restart and on the nights the clocks change), never in front of
+  you: when you are talking to Jinnee, the scheduled job waits for the next minute. A failed run is reported to you once.
+- Your time zone, quiet hours, another time or off per job: `schedule` in `config/business.yaml` (examples in
+  `config/business.example.yaml`). `python3 core/scheduler.py plan` prints what would run when and starts nothing;
+  `python3 core/scheduler.py check` checks your settings.
+
 ## Requirements
 - A Linux VPS (Docker) **or** a Mac/Linux/Windows machine that stays on
 - A Claude Pro/Max subscription (Claude Code CLI runs on it) – your account, your cost
