@@ -473,6 +473,19 @@ class WhatARunMaySee(Base):
         self.assertEqual(s.fingerprint(), before)
 
 
+class QuietOutbox(Base):
+    def test_a_message_that_finished_in_the_quiet_hours_waits_for_the_morning(self):
+        self.s.later("Milo: order watch (scheduled):\n#1001 has no label yet.")
+        self.assertEqual(self.s.outbox(at(2026, 10, 23, 23, 0)), [])      # still quiet: kept
+        self.assertEqual(self.s.outbox(at(2026, 10, 24, 7, 1)), ["Milo: order watch (scheduled):\n#1001 has no label yet."])
+        self.assertEqual(self.s.outbox(at(2026, 10, 24, 7, 2)), [])       # delivered once
+
+    def test_a_broken_outbox_file_is_not_fatal(self):
+        (self.brain / scheduler.OUTBOX).write_text("{half")
+        self.assertEqual(self.s.outbox(at(2026, 10, 24, 9)), [])
+        self.s.later("x"); self.assertEqual(self.s.outbox(at(2026, 10, 24, 9)), ["x"])
+
+
 class Heartbeat(Base):
     def test_an_agent_that_should_have_run_and_did_not(self):
         os.environ.update(GMAIL_CLIENT_ID="cid", GMAIL_CLIENT_SECRET="sec", GMAIL_ACCOUNTS="info")
@@ -496,6 +509,7 @@ class Heartbeat(Base):
 
 class CommandLine(Base):
     def test_plan_status_and_check_start_nothing(self):
+        self.repo_state_before = (REPO / "brain" / "schedule_state.json").exists()
         env = {**os.environ, "PACKS": "general,ecom", "PYTHONDONTWRITEBYTECODE": "1"}
         for cmd in (["plan"], ["plan", "--days", "2"], ["status"], ["check"]):
             with self.subTest(cmd=cmd):
@@ -503,6 +517,7 @@ class CommandLine(Base):
                 self.assertEqual(r.returncode, 0, r.stderr)
         r = subprocess.run([sys.executable, str(REPO / "core" / "scheduler.py"), "plan"], capture_output=True, text=True, env=env, timeout=60)
         self.assertIn("ON   jinnee.brief", r.stdout); self.assertIn("OFF  ops.order_watch", r.stdout)
+        self.assertFalse((REPO / "brain" / "schedule_state.json").exists() and not self.repo_state_before)  # nothing written
         self.owner('schedule:\n  jobs:\n    jinnee.brief: "at dawn"\n')
         r = subprocess.run([sys.executable, str(REPO / "core" / "scheduler.py"), "check"], capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(r.returncode, 1); self.assertIn("not understood", r.stdout)

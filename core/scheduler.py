@@ -46,6 +46,7 @@ from pack_loader import resolve
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONNECTORS = ROOT / "connectors"
 STATE = "schedule_state.json"
+OUTBOX = "schedule_outbox.json"
 LOCK = ".schedule.lock"
 SILENT = "SILENT"
 GRACE = {"hourly": 45 * 60, "daily": 6 * 3600, "weekly": 6 * 3600}
@@ -293,6 +294,7 @@ class Scheduler:
         self.brain = pathlib.Path(brain or self.root / "brain")
         self.packs = packs
         self.path = self.brain / STATE
+        self.extra = {}  # job id → callable returning text added to that job's task (the brief: agents in trouble, updates)
 
     # --- settings
     def _packs(self):
@@ -509,12 +511,13 @@ class Scheduler:
     def prompt(self, job, t, since, tz=None):
         at = _local(t, tz).strftime("%a %Y-%m-%d %H:%M")
         zone = alerts.zone_name() or "this machine's clock"
+        task = job.task + (self.extra[job.id]() if job.id in self.extra else "")
         if job.lead:
-            return f"{job.task}\n\n(Scheduled: {job.name}, {at}, {zone}.) {UNATTENDED_RULES}"
+            return f"{task}\n\n(Scheduled: {job.name}, {at}, {zone}.) {UNATTENDED_RULES}"
         where = f"packs/{job.pack}/agents/{job.agent}.md" if job.pack not in ("", "core") else f"{job.agent}.md"
         look = _local(since, tz).strftime("%a %Y-%m-%d %H:%M")
         return (f"Scheduled run '{job.id}' for {at} ({zone}). Work as {job.name}, by the agent file {where}.\n"
-                f"Task: {job.task}\nLook at what is new since {look}.\n\n{UNATTENDED_RULES}\n{REPLY}")
+                f"Task: {task}\nLook at what is new since {look}.\n\n{UNATTENDED_RULES}\n{REPLY}")
 
     def run(self, job, t, key, runner, now=None):
         """One due slot, start to finish. runner.busy() → bool; runner.run(job, prompt) → (worked, text, note).
@@ -548,6 +551,22 @@ class Scheduler:
         self.finish(job, result, note, time.time(), started)
         heartbeat.beat(job.agent, f"scheduled {job.id}: {note}", "failed" if result == "failed" else "ok", brain=self.brain)
         return Outcome(result, message, note)
+
+    # --- what finished in the quiet hours waits here (brain/schedule_outbox.json) for the first minute after them
+    def later(self, text):
+        with store.locked(self.brain):
+            try: box = store.read_json(self.brain / OUTBOX, list)
+            except store.Unreadable: box = []
+            store.write_json(self.brain / OUTBOX, (box + [str(text)])[-20:])
+
+    def outbox(self, now=None):
+        """→ the held messages, once, when it is no longer quiet; [] otherwise."""
+        if alerts.quiet(now or time.time()) or not (self.brain / OUTBOX).exists(): return []
+        with store.locked(self.brain):
+            try: box = store.read_json(self.brain / OUTBOX, list)
+            except store.Unreadable: box = []
+            if box: store.write_json(self.brain / OUTBOX, [])
+        return [str(x) for x in box]
 
     # --- telling
     def rows(self, now=None):

@@ -306,7 +306,7 @@ class Heartbeat(Watching):
 
 TOKEN = "TELEGRAM_BOT_TOKEN=123456:TEST-not-a-real-token\nTELEGRAM_OWNER_ID=4242\nPACKS=general,ecom\nQUIET_HOURS=off\nUNDO_SECONDS=0\n"
 DRIVER = """\
-import asyncio, json, sys, types
+import asyncio, json, sys, time, types
 sys.path.insert(0, "core")
 import jinnee
 
@@ -329,8 +329,13 @@ async def step(kind, user_id, text):
         await jinnee.alert_tick(ctx)
         for t in tasks: await t
         tasks.clear(); return []
-    if kind == "brief":
-        await jinnee.morning_brief(ctx); return []
+    if kind in ("brief", "job"):  # the schedule says this job is due now: the same path the minute check takes at its time
+        job = next(j for j in jinnee.SCHED.jobs() if j.id == (text or "jinnee.brief"))
+        slot = time.time()
+        jinnee.SCHED.due = lambda now=None: [(job, slot, "test slot")]
+        await jinnee.schedule_tick(ctx)
+        for t in tasks: await t
+        tasks.clear(); return []
     if kind == "edited":  # Telegram delivers an edit as an update whose .message is None
         update = types.SimpleNamespace(effective_user=user, message=None, edited_message=Message(text))
         for handler in (jinnee.on_message, jinnee.on_command, jinnee.cmd_new): await handler(update, ctx)
@@ -485,7 +490,9 @@ class Ticking(Bridge):
         r = self.run_py("core/jinnee.py")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("STUB_REPEAT alert_tick 60", r.stdout)
-        self.assertIn("STUB_DAILY morning_brief 08:00:00", r.stdout)
+        self.assertIn("STUB_REPEAT schedule_tick 60", r.stdout)  # the morning brief is the schedule's now (core/scheduler.py)
+        self.assertNotIn("STUB_DAILY", r.stdout)
+        self.assertIn("Scheduled: jinnee.brief, jinnee.evening", r.stdout)
         levels = json.loads((self.brain / "autonomy_config.json").read_text())
         self.assertEqual((levels["_format"], levels["send_customer_email"]["level"], levels["spend_money"]["locked"]), (2, 2, True))
         self.assertEqual(self.book.get("a1")["state"], "consumed")
@@ -599,3 +606,75 @@ class PlainOk(Bridge):
         a = self.add()
         got = self.drive([["msg", OWNER, "ok, but change the greeting"]])
         self.assertEqual(got[0]["ran"], ["ok, but change the greeting"]); self.assertEqual(self.state(a)[0], "pending")
+
+
+SPY = """printf "%s\\n" "$@" > args.txt
+echo "UNATTENDED=$JINNEE_UNATTENDED" > env.txt
+python3 connectors/gmail/ops.py send --account info --draft_id d1 --confirm yes > send.txt 2>&1
+python3 connectors/order_flow.py parcel_prepare --order_id 1 --send yes > parcel.txt 2>&1
+python3 core/approvals.py consume ITEM > consume.txt 2>&1
+echo "$REPLY"
+"""
+
+
+class ScheduledRuns(Bridge):
+    """The bridge runs a due job with a fake claude that tries to send, upload and take a decision: all refused."""
+    def spy(self, item="none", reply="Stock is fine for the week."):
+        env = self.fake_claude(SPY.replace("ITEM", item))
+        env["REPLY"] = reply
+        return env
+
+    def read(self, name):
+        return (self.root / name).read_text(encoding="utf-8")
+
+    def test_an_agent_job_runs_unattended_and_nothing_goes_out(self):
+        a = self.add(); self.book.decide(a, "ok")
+        got = self.drive([["job", 0, "ops.stock_alert"]], agent="real", extra=self.spy(a))
+        self.assertEqual(got[0]["sent"], [[OWNER, "Milo: stock alert (scheduled):\nStock is fine for the week."]])
+        args = self.read("args.txt")
+        self.assertIn("--permission-mode\ndontAsk\n", args); self.assertIn("--no-session-persistence", args)
+        self.assertNotIn("--continue", args); self.assertNotIn("acceptEdits", args)
+        allowed = args.split("--allowedTools\n", 1)[1].split("--disallowedTools\n", 1)[0].splitlines()
+        denied = args.split("--disallowedTools\n", 1)[1].split("--append-system-prompt\n", 1)[0].splitlines()
+        for tool in ("Edit(brain/**)", "Edit(handoffs/**)", "Bash(python3 core/approvals.py *)", "Bash(python3 connectors/*)"):
+            self.assertIn(tool, allowed)
+        self.assertFalse([t for t in allowed if any(x in t for x in ("forge_git", "Lovable__send_message", "-m unittest"))])
+        for tool in ("Bash(python3 core/approvals.py consume *)", "Bash(python3 core/autonomy.py apply *)", "Edit(brain/approvals.json)",
+                     "Edit(brain/schedule_state.json)"):
+            self.assertIn(tool, denied)
+        self.assertIn("Scheduled run 'ops.stock_alert'", args); self.assertIn("Nothing goes out", args)
+        self.assertEqual(self.read("env.txt").strip(), "UNATTENDED=1")
+        self.assertIn("REFUSED", self.read("send.txt")); self.assertIn("REFUSED", self.read("parcel.txt"))
+        self.assertIn("REFUSED", self.read("consume.txt")); self.assertIn("scheduled run", self.read("consume.txt"))
+        self.assertEqual(self.state(a)[0], "decided")  # still waiting for the bridge's own hand-over
+        self.assertEqual(json.loads((self.brain / "heartbeat.json").read_text())["ops"]["state"], "ok")
+        self.assertEqual(json.loads((self.brain / "schedule_state.json").read_text())["ops.stock_alert"]["result"], "ok")
+
+    def test_the_brief_stays_in_the_owners_conversation_and_the_owner_is_not_unattended(self):
+        got = self.drive([["msg", OWNER, "hello"], ["job", 0, "jinnee.brief"]], agent="real", extra=self.spy(reply="1. All quiet."))
+        self.assertEqual(got[1]["sent"], [[OWNER, "1. All quiet."]])
+        args = self.read("args.txt")
+        self.assertIn("--continue", args); self.assertNotIn("--no-session-persistence", args)  # the owner can answer the brief
+        self.assertIn("--permission-mode\ndontAsk\n", args); self.assertIn(scheduler_brief(), args)
+        got = self.drive([["msg", OWNER, "thanks"]], agent="real", extra=self.spy(reply="ok"))
+        self.assertIn("--permission-mode\nacceptEdits\n", self.read("args.txt"))
+        self.assertEqual(self.read("env.txt").strip(), "UNATTENDED=")
+
+    def test_silent_sends_nothing(self):
+        got = self.drive([["job", 0, "jinnee.evening"]], agent="real", extra=self.spy(reply="SILENT"))
+        self.assertEqual(got[0]["sent"], [])
+
+    def test_schedule_command(self):
+        got = self.drive([["msg", OWNER, "/schedule"], ["msg", STRANGER, "/schedule"]])
+        reply = got[0]["replies"][0]
+        self.assertEqual(got[0]["ran"], [])  # plain code, no agent run
+        for needed in ("Schedule (", "Jinnee: morning brief: daily 08:00. Next", "Milo: order watch: off, needs shop",
+                       "Echo: customer mail: off, needs email", "config/business.yaml"):
+            self.assertIn(needed, reply)
+        self.assertEqual(got[1]["replies"], [])  # a stranger gets nothing
+
+
+def scheduler_brief():
+    sys.path.insert(0, str(base.REPO / "core"))
+    import scheduler
+    return scheduler.BRIEF
