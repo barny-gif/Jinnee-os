@@ -22,7 +22,13 @@ case "$name $1" in
 esac
 """
 FAKED = ("git", "docker", "node", "npm", "claude", "pip3", "nohup", "curl", "sudo", "brew")
-OURS = ("JINNEE_MODE", "JINNEE_NAME", "JINNEE_LANG", "JINNEE_DIR", "PACKS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_ID")
+OURS = ("JINNEE_MODE", "JINNEE_NAME", "JINNEE_LANG", "JINNEE_DIR", "PACKS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_ID", "JINNEE_BUSINESS_FILE",
+        "BUSINESS_NAME", "BUSINESS_LANGUAGE", "BUSINESS_VOICE", "BUSINESS_INTRO", "SHOP_LABEL_NAME", "SHOP_NOT_REVENUE_TAGS",
+        "BILLING_INVOICE_PREFIX", "BUSINESS_FILE")
+BIZ = {"BUSINESS_NAME": "Minta Kft.", "BUSINESS_VOICE": "calm and friendly"}  # the required business answers, made up
+# the business questions for the general pack: name (asked again when empty), language (Enter = hu), voice, intro (skipped)
+GENERAL_BIZ = [("business name", ""), ("A name is required", None), ("business name", "Minta Kft."), ("Language for you", ""),
+               ("sound to your customers", "warm, informal"), ("about the business", "")]
 PIPED = "cat install.sh | bash"  # same shape as `curl … | bash`: the script is on stdin
 TOKEN = "123456:TEST-not_a-real-token"
 
@@ -39,6 +45,7 @@ class Installer(unittest.TestCase):
         for d in ("core", "packs"):
             shutil.copytree(REPO / d, src / d, ignore=shutil.ignore_patterns("__pycache__"))
         for f in (".env.example", "requirements.txt", "run.sh"): shutil.copy(REPO / f, src / f)
+        shutil.copytree(REPO / "config", src / "config", ignore=shutil.ignore_patterns("business.yaml", "private_patterns.txt"))
         for name in FAKED:
             (fakebin / name).write_text(FAKE); (fakebin / name).chmod(0o755)
         self.log, self.dir = tmp / "calls.log", self.home / "jinnee-os"
@@ -57,6 +64,10 @@ class Installer(unittest.TestCase):
 
     def dotenv(self):
         return env.parse((self.dir / ".env").read_text(encoding="utf-8"))
+
+    def business(self):
+        import yaml
+        return yaml.safe_load((self.dir / "config" / "business.yaml").read_text(encoding="utf-8"))
 
     def in_terminal(self, command, dialogue, extra=None):
         """Runs `command` with a pseudo-terminal as its controlling terminal. dialogue: (text to wait for, line to type
@@ -112,6 +123,10 @@ class Installer(unittest.TestCase):
             ("A number is required", None), ("Your Telegram user ID", "0"), ("A number is required", None),
             ("Your Telegram user ID", " 4242 "),
             ("be called?", name), ("Pack:", "x"), ("Answer 1 or 2", None), ("Pack:", "2"),
+            ("business name", 'Kis "Bolt" & Co'), ("Language for you", "xx-yy-zz"), ("A language code", None), ("Language for you", "en"),
+            ("sound to your customers", "tegező, rövid"), ("about the business", "Fa játékok."),
+            ("parcel label note", ""), ("Required with the ecom pack", None), ("parcel label note", "kis-bolt.hu"),
+            ("not revenue", "teszt, gift"), ("invoice numbers starting", "KB-"),
             ("Paste code:", "the-login-code"),
         ])
         self.assertEqual(code, 0, shown)
@@ -132,11 +147,15 @@ class Installer(unittest.TestCase):
                          ["nohup python3 core/jinnee.py", "nohup python3 dashboard/app.py"])
         self.assertFalse([c for c in calls if c.split()[0] in ("curl", "sudo", "docker", "brew", "npm")], calls)
         self.assertTrue((self.dir / "brain" / "approvals.json").exists())  # pack_loader --init ran for real
+        biz = self.business()
+        self.assertEqual((biz["business"]["name"], biz["business"]["language"], biz["business"]["voice"], biz["business"]["intro"]),
+                         ('Kis "Bolt" & Co', "en", "tegező, rövid", "Fa játékok."))
+        self.assertEqual((biz["shop"]["label_name"], biz["shop"]["not_revenue_tags"], biz["billing"]["invoice_prefix"]), ("kis-bolt.hu", ["teszt", "gift"], "KB-"))
 
     def test_run_as_a_file_in_docker_mode_with_defaults(self):
         code, shown = self.in_terminal("bash install.sh", [
             ("Where should it run?", "1"), ("Telegram bot token", TOKEN), ("Your Telegram user ID", "4242"),
-            ("be called?", ""), ("Pack:", ""), ("Paste code:", "abc"),
+            ("be called?", ""), ("Pack:", ""), *GENERAL_BIZ, ("Paste code:", "abc"),
         ])
         self.assertEqual(code, 0, shown)
         got = self.dotenv()
@@ -146,11 +165,15 @@ class Installer(unittest.TestCase):
         self.assertIn("docker compose exec jinnee claude login", calls)
         self.assertIn("login got: abc", calls)
         self.assertFalse([c for c in calls if c.startswith(("nohup", "pip3", "claude"))], calls)
+        biz = self.business()
+        self.assertEqual((biz["business"]["name"], biz["business"]["language"], biz["business"]["intro"]), ("Minta Kft.", "hu", ""))
+        self.assertNotIn("parcel label", shown)  # no shop questions without the ecom pack
 
     def test_variables_replace_questions_and_a_bad_one_is_asked_again(self):
         name = """J "$HOME" \\1 `id`"""
-        code, shown = self.in_terminal(PIPED, [("Your Telegram user ID", "777"), ("be called?", name), ("Pack:", "1"), ("Paste code:", "c")],
-                                       {"JINNEE_MODE": "native", "TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_OWNER_ID": "not-a-number"})
+        code, shown = self.in_terminal(PIPED, [("Your Telegram user ID", "777"), ("be called?", name), ("Pack:", "1"), ("Language for you", ""), ("about the business", ""),
+                                               ("Paste code:", "c")],
+                                       {"JINNEE_MODE": "native", "TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_OWNER_ID": "not-a-number", **BIZ})
         self.assertEqual(code, 0, shown)
         self.assertNotIn("Where should it run?", shown)
         self.assertNotIn("Telegram bot token", shown)
@@ -172,14 +195,14 @@ class Installer(unittest.TestCase):
         r = self.no_terminal()
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertIn("no terminal to ask", r.stderr)
-        self.assertIn("not set: JINNEE_MODE TELEGRAM_BOT_TOKEN TELEGRAM_OWNER_ID\n", r.stderr)
-        self.assertIn("TELEGRAM_OWNER_ID=… bash", r.stderr)  # shows how to pass the answers
+        self.assertIn("not set: JINNEE_MODE TELEGRAM_BOT_TOKEN TELEGRAM_OWNER_ID BUSINESS_NAME BUSINESS_VOICE\n", r.stderr)
+        self.assertIn("TELEGRAM_OWNER_ID=… BUSINESS_NAME=… BUSINESS_VOICE=… bash", r.stderr)  # shows how to pass the answers
         self.assertEqual(self.calls(), [])  # not even git
         self.assertFalse(self.dir.exists())
 
     def test_no_terminal_with_variables_installs_without_questions(self):
         r = self.no_terminal({"JINNEE_MODE": "native", "TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_OWNER_ID": "4242",
-                              "JINNEE_NAME": "Ops Bot", "PACKS": "general,ecom"})
+                              "JINNEE_NAME": "Ops Bot", "PACKS": "general,ecom", **BIZ, "SHOP_LABEL_NAME": "minta.hu"})
         self.assertEqual(r.returncode, 0, r.stderr)
         got = self.dotenv()
         self.assertEqual((got["TELEGRAM_BOT_TOKEN"], got["TELEGRAM_OWNER_ID"], got["JINNEE_NAME"], got["PACKS"]),
@@ -188,9 +211,12 @@ class Installer(unittest.TestCase):
         self.assertNotIn("claude login", calls)  # cannot be done without a terminal; the owner is told instead
         self.assertIn("One step is left, and it needs a terminal. Ops Bot cannot answer until it is done: claude login", r.stdout)
         self.assertEqual(len([c for c in calls if c.startswith("nohup python3")]), 2)
+        biz = self.business()
+        self.assertEqual((biz["business"]["name"], biz["shop"]["label_name"], biz["shop"]["not_revenue_tags"], biz["billing"]["invoice_prefix"]),
+                         ("Minta Kft.", "minta.hu", [], ""))
 
     def test_no_terminal_name_and_packs_are_optional(self):
-        r = self.no_terminal({"JINNEE_MODE": "docker", "TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_OWNER_ID": "4242"})
+        r = self.no_terminal({"JINNEE_MODE": "docker", "TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_OWNER_ID": "4242", **BIZ})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual((self.dotenv()["JINNEE_NAME"], self.dotenv()["PACKS"]), ("Jinnee", "general"))
         self.assertIn("docker compose up -d --build", self.calls())
@@ -198,16 +224,38 @@ class Installer(unittest.TestCase):
         self.assertIn("docker compose exec jinnee claude login", r.stdout)
 
     def test_no_terminal_rejects_a_missing_or_bad_owner_and_token(self):
-        good = {"JINNEE_MODE": "native", "TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_OWNER_ID": "4242"}
+        good = {"JINNEE_MODE": "native", "TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_OWNER_ID": "4242", **BIZ}
         for var, bad in (("TELEGRAM_OWNER_ID", ""), ("TELEGRAM_OWNER_ID", "0"), ("TELEGRAM_OWNER_ID", "@me"),
                          ("TELEGRAM_OWNER_ID", "12 34"), ("TELEGRAM_OWNER_ID", "-5"), ("TELEGRAM_BOT_TOKEN", ""),
-                         ("TELEGRAM_BOT_TOKEN", "two words"), ("JINNEE_MODE", "vps"), ("PACKS", "general;rm -rf")):
+                         ("TELEGRAM_BOT_TOKEN", "two words"), ("JINNEE_MODE", "vps"), ("PACKS", "general;rm -rf"),
+                         ("BUSINESS_NAME", ""), ("BUSINESS_VOICE", ""), ("BUSINESS_LANGUAGE", "magyar")):
             with self.subTest(var=var, bad=bad):
                 r = self.no_terminal({**good, var: bad})
                 self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
                 self.assertIn(var, r.stderr)
                 self.assertEqual(self.calls(), [])
                 self.assertFalse(self.dir.exists())
+
+    def test_ecom_without_a_terminal_needs_the_shop_name(self):
+        r = self.no_terminal({"JINNEE_MODE": "native", "TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_OWNER_ID": "4242", "PACKS": "general,ecom", **BIZ})
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("not set: SHOP_LABEL_NAME", r.stderr)
+        self.assertEqual(self.calls(), []); self.assertFalse(self.dir.exists())
+
+    def test_business_file_is_copied_and_an_existing_one_is_kept(self):
+        own = self.work / "mine.yaml"
+        own.write_text('business:\n  name: "Sajat Bt."\n  language: "hu"\n  voice: "röviden"\n', encoding="utf-8")
+        base = {"JINNEE_MODE": "docker", "TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_OWNER_ID": "4242"}  # docker: nothing left running in the background
+        r = self.no_terminal({**base, "BUSINESS_FILE": str(own)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.business()["business"]["name"], "Sajat Bt.")
+        (self.dir / "config" / "business.yaml").write_text('business:\n  name: "Edited"\n', encoding="utf-8")
+        r = self.no_terminal(base)  # running the installer again: no business answers needed, the owner's file stays
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("already here: kept", r.stdout)
+        self.assertEqual(self.business()["business"]["name"], "Edited")
+        r = self.no_terminal({**base, "BUSINESS_FILE": str(self.work / "nope.yaml")})
+        self.assertIn("kept", r.stdout)  # an existing file wins over BUSINESS_FILE too
 
 
 if __name__ == "__main__":
