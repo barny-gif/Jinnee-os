@@ -16,11 +16,13 @@ Windows: `irm https://raw.githubusercontent.com/barny-gif/Jinnee-os/main/install
 
 ## Layout
 ```
-core/        the core: Jinnee, delegation, memory, autonomy levels, heartbeat, registry client
+core/        the core: Jinnee, delegation, memory, autonomy levels, heartbeat, registry client, business settings
+config/      business.example.yaml (template); your own business.yaml stays here and out of git
 packs/       general (base) + vertical packs; a pack = agents/ + pack.json + onboarding.md
 connectors/  external systems; same operation set within a category → swappable
 dashboard/   simple web UI (FastAPI + one HTML file), domain via Caddy
 registry/    index.json – served by jinnee-os.com; updates come from here
+tools/       guard.py – keeps business data out of this public repo (with .githooks/ and .github/workflows/)
 ```
 
 ## Autonomy levels
@@ -45,13 +47,51 @@ decision of yours led nowhere for six hours. Nothing is sent between 21:00 and 0
 - API keys for the connectors you use (`.env`)
 
 ## First run
-1. `install.sh` asks for: VPS or local machine, Telegram token, your Telegram user ID, the agent's name, which pack.
+1. `install.sh` asks for: VPS or local machine, Telegram token, your Telegram user ID, the agent's name, which pack, and then your
+   business: its name, the language you and your customers use, how the team should sound, and (with the ecom pack) the shop name for
+   the parcel label. The business answers go to `config/business.yaml` (see "Your business settings" below).
    No terminal (CI, a provisioning script)? Pass the answers as variables; `claude login` is then left for you to run:
-   `curl -fsSL …/install.sh | JINNEE_MODE=native TELEGRAM_BOT_TOKEN=… TELEGRAM_OWNER_ID=… bash`
-   (`JINNEE_MODE`: `docker` or `native`; optional `JINNEE_NAME`, `PACKS=general,ecom`).
+   `curl -fsSL …/install.sh | JINNEE_MODE=native TELEGRAM_BOT_TOKEN=… TELEGRAM_OWNER_ID=… BUSINESS_NAME=… BUSINESS_VOICE=… bash`
+   (`JINNEE_MODE`: `docker` or `native`; optional `JINNEE_NAME`, `PACKS=general,ecom`, `BUSINESS_LANGUAGE` (default `hu`),
+   `BUSINESS_INTRO`; with ecom also `SHOP_LABEL_NAME=…`, optional `SHOP_NOT_REVENUE_TAGS`, `BILLING_INVOICE_PREFIX`).
+   Already have a filled-in file? `BUSINESS_FILE=/path/to/business.yaml` instead of the `BUSINESS_*` answers.
 2. Message Jinnee on Telegram – it walks you through onboarding.
 3. Dashboard: `http://localhost:8080` on the machine itself; from another device or on your domain, set a password first – see `dashboard/README.md`.
 4. In week one you approve everything. Jinnee proposes raising the level of whatever proves reliable; the proposal is an item you approve like any other.
+
+## Your business settings
+Everything that is about *your* business lives in one file on your machine, `config/business.yaml`, and never in the code:
+the business name, the language, the tone of voice and a short intro (the team reads these on every run), the note printed on
+the parcel label, which invoice series the Payments view shows, and which order tags are not revenue (test, gift, barter...).
+- The repo only has `config/business.example.yaml`, with made-up values. Your own file is in `.gitignore`, so it never goes to GitHub.
+- Change it any time; the programs read it again on the next use. In Docker the `config/` folder is mounted, no rebuild needed.
+- `python3 core/business.py check` says whether everything your packs need is there. `python3 core/business.py setup` asks the
+  questions again (it does not overwrite an existing file without `--force yes`). `python3 core/business.py label --order "#1001"
+  --goods "1× Wooden puzzle" --cod 9890` prints a label note exactly as it would go to GLS, without sending anything.
+- A value a step needs and that is missing **stops that step**: no parcel label and no invoice list goes out with a guessed value,
+  and the error names the key to set. The team tells you when the file is missing, instead of inventing your name or tone.
+- What goes where: `.env` holds *how the system connects* (API keys, tokens, the Shopify store handle, the GLS pickup address,
+  VAT); `config/business.yaml` holds *who you are* and what goes on your documents. `JINNEE_LANG` in `.env` still works and
+  wins over `business.language`; `BILLINGO_PAYMENTS_PREFIX` is no longer read (an old value that differs from
+  `billing.invoice_prefix` stops the Payments view until you delete the `.env` line).
+
+## Keeping your business out of the repo
+This repo is public. Two checks keep a business's own data out of it:
+- **GitHub Actions** (`.github/workflows/guard.yml`) checks every push and pull request with generic patterns (`tools/guard.py`):
+  phone numbers, e-mail addresses, real `*.myshopify.com` store handles and access tokens in the added lines, plus order numbers
+  (`#1xxx`, "order 1234") and money amounts (`… Ft`, `… HUF`) in commit messages. Old commits are not checked or rewritten.
+- **Local git hooks** (`.githooks/pre-commit`, `.githooks/commit-msg`) run the same patterns before a commit is made, plus your
+  own words from `config/private_patterns.txt`: your shop name and domain, product names, invoice series, your own name. That
+  file is in `.gitignore`: your list of words is never published. Turn the hooks on once per clone:
+  `python3 tools/guard.py install-hooks`. One entry per line, `#` for comments, `re:` in front for a regular expression:
+  ```
+  # config/private_patterns.txt
+  my-shop.hu
+  My Shop Kft.
+  re:\bMS-\d
+  ```
+- Tests and examples use made-up values only (`example-shop.hu`, `Example Kft.`, numbers like `06 30 123 4567`).
+  `python3 tools/guard.py scan` lists anything in the files that the patterns would refuse.
 
 ## Keeping it running (installed directly on a machine)
 - `./run.sh status | restart | stop | start` in the install folder. Running the installer again restarts; it never starts a second copy.

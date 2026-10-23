@@ -1,6 +1,6 @@
 # Onboarding – general (every pack starts here)
 
-At most 3 questions at a time, conversational, never a form. Output: `brain/company.md`, containing only the owner's own statements. At the end the lead reads it back in 10 lines and saves only after approval.
+At most 3 questions at a time, conversational, never a form. Output: `brain/company.md`, containing only the owner's own statements. The installer already asked the business name, language and tone of voice (`config/business.yaml`, in the prompt as "the business"): do not ask them again, build on them. If the owner wants one of them changed, tell them to edit `config/business.yaml` (or run `python3 core/business.py setup --force yes`); the team never edits that file. At the end the lead reads it back in 10 lines and saves only after approval.
 
 ## 1. Who you are
 - Business name, what you do in one sentence, for whom.
