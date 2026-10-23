@@ -378,6 +378,10 @@ class Scheduler:
                 env = os.getenv("JINNEE_TZ", "").strip()
                 if env and env != tz.strip():
                     probs.append(f"JINNEE_TZ={env} in .env differs from schedule.timezone ({tz.strip()}); .env wins. Delete one of them")
+        name = alerts.zone_name()
+        if name and alerts.zone() is None:
+            probs.append(f"the time zone '{name}' cannot be loaded on this machine, so the machine's clock is used for the schedule. "
+                         "Check the name, or install the time zone data: pip install tzdata (it is in requirements.txt)")
         q = owner.get("quiet_hours")
         if q is not None and q is not False and not (isinstance(q, str) and (q.strip().lower() in ("off", "none", "no", "0", "")
                                                                                or alerts.SPAN.fullmatch(q))):
@@ -611,7 +615,10 @@ class Scheduler:
         """What would run when; starts nothing."""
         now = now or time.time()
         tz = alerts.zone()
-        lines = [f"Time zone: {alerts.zone_name() or 'this machine clock (set schedule.timezone in config/business.yaml)'}",
+        name = alerts.zone_name()
+        shown = (name if tz is not None else f"{name} (NOT LOADED: this machine's clock is used; see below)") if name else \
+            "this machine's clock (set schedule.timezone in config/business.yaml)"
+        lines = [f"Time zone: {shown}",
                  f"Quiet hours (nothing starts): {alerts.quiet_spec()}", f"Packs: {', '.join(self._packs())}", ""]
         for j in self.jobs():
             if j.off:
@@ -655,7 +662,8 @@ class Scheduler:
             if rec.get("result") == "failed" and not j.lead:
                 out.append(f"The scheduled run '{j.name}' failed: {rec.get('note') or 'no reason given'}. It tries again at its "
                            "next time; /schedule shows the details.")
-        return out + [p for p in self.check() if "is not understood" in p or "there is no job" in p or "not a time" in p]
+        loud = ("is not understood", "there is no job", "not a time", "cannot be loaded")
+        return out + [p for p in self.check() if any(w in p for w in loud)]
 
 
 def main(argv=None):

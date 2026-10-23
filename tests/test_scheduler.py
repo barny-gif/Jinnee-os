@@ -434,6 +434,13 @@ class OwnerSettings(Base):
         self.owner('schedule:\n  timezone: "Mars/Olympus"\n')
         self.assertTrue(any("not a time zone" in p for p in self.sched().check()))
 
+    def test_a_zone_that_cannot_be_loaded_is_said_loudly(self):
+        os.environ["JINNEE_TZ"] = "Europe/Nowhere"
+        s = self.sched()
+        self.assertTrue(any("cannot be loaded" in p and "tzdata" in p for p in s.check()))
+        self.assertIn("NOT LOADED", s.plan(at(2026, 10, 23, 12)))
+        self.assertTrue(any("cannot be loaded" in p for p in s.problems()))  # the owner is told, once
+
     def test_no_file_no_problem(self):
         self.assertEqual(self.s.check(), [])
         self.assertIn("jinnee.brief", self.s.plan(at(2026, 10, 23, 12)))
