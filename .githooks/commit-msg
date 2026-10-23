@@ -1,0 +1,4 @@
+#!/bin/sh
+# Refuses a commit message with an order number, a money amount, contact data or one of your own words
+# (config/private_patterns.txt). The message is kept in .git/COMMIT_EDITMSG: fix it and commit again.
+exec python3 "$(git rev-parse --show-toplevel)/tools/guard.py" msg "$1"

@@ -3,7 +3,7 @@ which goes into .env by hand and nowhere else.
 
   docker compose exec jinnee python3 connectors/gmail/auth.py info
 
-1. It prints a Google link. Open it in your browser and log in with the account (for info: the one that holds info@montivilag.hu).
+1. It prints a Google link. Open it in your browser and log in with the account (for info: the one that holds your shop's info@ address).
 2. Google sends the browser to http://127.0.0.1:8765/?code=... and the page "cannot be reached". That is expected:
    copy the WHOLE address from the browser's address bar and paste it here.
 3. It prints GMAIL_<NAME>_REFRESH_TOKEN=... Put that line into /opt/jinnee-os/.env, then `docker compose up -d`.

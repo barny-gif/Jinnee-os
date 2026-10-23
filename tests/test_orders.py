@@ -3,6 +3,7 @@ import importlib.util, json, os, pathlib, sys, unittest
 from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "connectors")); sys.path.insert(0, str(ROOT / "dashboard"))
+sys.path.insert(0, str(ROOT / "tests")); import fake_business; fake_business.use()  # a made-up business (config/business.yaml)
 import orders
 from cbase import ConnectorError
 
@@ -13,7 +14,7 @@ class Resp:
     def __init__(self, data, code=200): self.data, self.status_code, self.ok, self.text, self.content = data, code, code < 400, "", b"%PDF"
     def json(self): return self.data
 
-ORDER = {"id": 1, "name": "#1042", "created_at": "2026-10-10T10:00:00Z", "total_price": "12990", "currency": "HUF", "financial_status": "paid",
+ORDER = {"id": 1, "name": "#5042", "created_at": "2026-10-10T10:00:00Z", "total_price": "12990", "currency": "HUF", "financial_status": "paid",
          "fulfillment_status": None, "line_items": [{"quantity": 2}], "fulfillments": [], "email": "x@y.hu", "shipping_address": {"country_code": "HU", "name": "Secret"}}
 
 class Shop(unittest.TestCase):
@@ -21,7 +22,7 @@ class Shop(unittest.TestCase):
     def test_order_has_no_personal_data(self):
         with mock.patch("requests.get", return_value=Resp({"orders": [ORDER]})):
             out = self.m.list_orders()
-        self.assertEqual(out[0]["name"], "#1042"); self.assertNotIn("Secret", json.dumps(out)); self.assertNotIn("x@y.hu", json.dumps(out))
+        self.assertEqual(out[0]["name"], "#5042"); self.assertNotIn("Secret", json.dumps(out)); self.assertNotIn("x@y.hu", json.dumps(out))
     def test_bad_token(self):
         with mock.patch("requests.get", return_value=Resp({}, 401)):
             with self.assertRaises(ConnectorError): self.m.list_orders()
@@ -37,24 +38,24 @@ class Bill(unittest.TestCase):
             self.m.create_draft(str(p))
         self.assertEqual(r.call_args.kwargs["json"]["type"], "draft")
     def test_status_shows_what_happened_to_the_email(self):
-        with mock.patch("requests.request", return_value=Resp({"id": 5, "type": "invoice", "invoice_number": "MV-2026-1", "notification_status": "opened"})):
+        with mock.patch("requests.request", return_value=Resp({"id": 5, "type": "invoice", "invoice_number": "EX-2026-1", "notification_status": "opened"})):
             self.assertEqual(self.m.status("5")["email"], "opened")
     DRAFT = {"id": 9, "type": "draft", "block_id": 3, "partner": {"id": 5, "name": "Secret"}, "fulfillment_date": "2026-10-13", "due_date": "2020-01-01",
-             "payment_method": "bankcard", "language": "hu", "currency": "HUF", "conversion_rate": 1, "electronic": False, "comment": "Shopify #1042",
-             "gross_total": 15282, "items": [{"name": "Kalandkönyv", "quantity": 2, "unit": "db", "vat": "AAM", "gross_amount": 13392, "net_amount": 13392},
+             "payment_method": "bankcard", "language": "hu", "currency": "HUF", "conversion_rate": 1, "electronic": False, "comment": "Shopify #5042",
+             "gross_total": 15282, "items": [{"name": "Fa kirakó", "quantity": 2, "unit": "db", "vat": "AAM", "gross_amount": 13392, "net_amount": 13392},
                                              {"name": "Szállítás", "quantity": 1, "unit": "db", "vat": "AAM", "gross_amount": 1890}]}
     def test_issue_from_draft_puts_the_whole_document(self):
-        with mock.patch("requests.request", side_effect=[Resp(self.DRAFT), Resp({"id": 9, "invoice_number": "MV-2026-1"})]) as r:
+        with mock.patch("requests.request", side_effect=[Resp(self.DRAFT), Resp({"id": 9, "invoice_number": "EX-2026-1"})]) as r:
             out = self.m.create_from_draft(9)
-        self.assertEqual(out["invoice_number"], "MV-2026-1"); self.assertEqual(r.call_count, 2)
+        self.assertEqual(out["invoice_number"], "EX-2026-1"); self.assertEqual(r.call_count, 2)
         put = r.call_args_list[1]; body = put.kwargs["json"]
         self.assertEqual(put.args[:2], ("PUT", self.m.BASE + "/documents/9")); self.assertEqual(body["type"], "invoice")
-        self.assertEqual((body["partner_id"], body["block_id"], body["payment_method"], body["comment"]), (5, 3, "bankcard", "Shopify #1042"))
-        self.assertEqual(body["items"][0], {"name": "Kalandkönyv", "unit_price": 6696.0, "unit_price_type": "gross", "quantity": 2.0, "unit": "db", "vat": "AAM"})
+        self.assertEqual((body["partner_id"], body["block_id"], body["payment_method"], body["comment"]), (5, 3, "bankcard", "Shopify #5042"))
+        self.assertEqual(body["items"][0], {"name": "Fa kirakó", "unit_price": 6696.0, "unit_price_type": "gross", "quantity": 2.0, "unit": "db", "vat": "AAM"})
         self.assertGreaterEqual(body["due_date"], __import__("datetime").date.today().isoformat()); self.assertNotIn("Secret", json.dumps(body))
     def test_issue_leaves_out_empty_settings(self):
         draft = {**self.DRAFT, "settings": {"place_id": None, "dont_send_to_nav_reason": "", "round": "one", "without_financial_fulfillment": False}}
-        with mock.patch("requests.request", side_effect=[Resp(draft), Resp({"id": 9, "invoice_number": "MV-2026-1"})]) as r:
+        with mock.patch("requests.request", side_effect=[Resp(draft), Resp({"id": 9, "invoice_number": "EX-2026-1"})]) as r:
             self.m.create_from_draft(9)
         self.assertEqual(r.call_args_list[1].kwargs["json"]["settings"], {"round": "one", "without_financial_fulfillment": False})
         with mock.patch("requests.request", side_effect=[Resp({**self.DRAFT, "settings": {"place_id": None}}), Resp({"id": 9})]) as r:
@@ -77,8 +78,8 @@ class Bill(unittest.TestCase):
 class Panel(unittest.TestCase):
     def test_match_and_gaps(self):
         os.environ.update(SHOPIFY_STORE="demo", SHOPIFY_ADMIN_TOKEN="t", BILLINGO_API_KEY="k")
-        shop = mock.Mock(list_orders=lambda days: [dict(load("shopify")._order(ORDER)), dict(load("shopify")._order({**ORDER, "id": 2, "name": "#1043"}))])
-        inv = mock.Mock(list_invoices=lambda days: [{"number": "A-1", "paid": "paid", "comment": "Shopify #1042", "total": 1, "currency": "HUF", "id": 1, "partner": "", "date": "", "type": "invoice"}])
+        shop = mock.Mock(list_orders=lambda days: [dict(load("shopify")._order(ORDER)), dict(load("shopify")._order({**ORDER, "id": 2, "name": "#5043"}))])
+        inv = mock.Mock(list_invoices=lambda days: [{"number": "A-1", "paid": "paid", "comment": "Shopify #5042", "total": 1, "currency": "HUF", "id": 1, "partner": "", "date": "", "type": "invoice"}])
         out = orders.build(shop, inv)
         self.assertEqual(out["orders"][0]["invoice"]["number"], "A-1"); self.assertIs(out["orders"][1]["invoice"], False)
         self.assertEqual(out["summary"]["no_invoice"], 1)
@@ -93,8 +94,8 @@ if __name__ == "__main__": unittest.main()
 
 class Flow(unittest.TestCase):
     def order(self, **kw):
-        o = {"name": "#1042", "id": 1, "currency": "HUF", "taxes_included": True, "gateways": ["Bank deposit"], "email": "a@b.hu", "phone": "",
-             "billing": {"name": "Teszt Elek", "zip": "9970", "city": "Szentgotthárd", "address1": "Fő u. 1", "country_code": "HU"}, "shipping": {},
+        o = {"name": "#5042", "id": 1, "currency": "HUF", "taxes_included": True, "gateways": ["Bank deposit"], "email": "a@b.hu", "phone": "",
+             "billing": {"name": "Teszt Elek", "zip": "9999", "city": "Mintaváros", "address1": "Fő u. 1", "country_code": "HU"}, "shipping": {},
              "lines": [{"title": "Fa puzzle", "sku": "P1", "qty": 2, "price": "5000", "discount": "1000"}], "shipping_lines": [{"title": "GLS", "price": "1490"}]}
         o.update(kw); return o
 
@@ -107,14 +108,14 @@ class Flow(unittest.TestCase):
     def test_draft_body(self):
         out, bill = self.run_flow(self.order())
         body = bill.post_document.call_args.args[0]
-        self.assertEqual(out["draft_id"], 99); self.assertEqual(body["type"], "draft"); self.assertEqual(body["comment"], "Shopify #1042")
+        self.assertEqual(out["draft_id"], 99); self.assertEqual(body["type"], "draft"); self.assertEqual(body["comment"], "Shopify #5042")
         self.assertEqual(body["items"][0]["unit_price"], 4500.0); self.assertEqual(body["items"][1]["unit_price"], 1490.0)
         self.assertNotIn("Teszt", json.dumps(out)); self.assertEqual(body["payment_method"], "wire_transfer")
     def test_cod(self):
         _, bill = self.run_flow(self.order(gateways=["Cash on Delivery (COD)"]))
         self.assertEqual(bill.post_document.call_args.args[0]["payment_method"], "cash_on_delivery")
     def test_no_second_invoice(self):
-        out, bill = self.run_flow(self.order(), existing=[{"number": "A-1", "id": 1, "comment": "Shopify #1042"}])
+        out, bill = self.run_flow(self.order(), existing=[{"number": "A-1", "id": 1, "comment": "Shopify #5042"}])
         self.assertIn("skipped", out); bill.post_document.assert_not_called()
     def test_incomplete_address(self):
         with self.assertRaises(ConnectorError): self.run_flow(self.order(billing={"name": "X"}))
@@ -143,8 +144,8 @@ class Gls(unittest.TestCase):
     def setUp(self):
         import order_flow, tempfile
         order_flow.UPLOADED = pathlib.Path(tempfile.mkdtemp()) / "up.json"  # never touch the real brain/
-        os.environ.update(GLS_CLIENT_NUMBER="123", GLS_USERNAME="u", GLS_PASSWORD="p", GLS_PICKUP_NAME="Monti", GLS_PICKUP_STREET="Fő u.",
-                          GLS_PICKUP_HOUSE="1", GLS_PICKUP_CITY="Szentgotthárd", GLS_PICKUP_ZIP="9970", GLS_PICKUP_PHONE="06301234567")
+        os.environ.update(GLS_CLIENT_NUMBER="123", GLS_USERNAME="u", GLS_PASSWORD="p", GLS_PICKUP_NAME="Example Shop", GLS_PICKUP_STREET="Fő u.",
+                          GLS_PICKUP_HOUSE="1", GLS_PICKUP_CITY="Mintaváros", GLS_PICKUP_ZIP="9999", GLS_PICKUP_PHONE="06301234567")
     def order(self, **kw):
         o = Flow().order(); o["shipping"] = {"name": "Teszt Elek", "zip": "1011", "city": "Budapest", "address1": "Kossuth Lajos utca 12/B", "country_code": "HU"}
         o["phone"] = "06 20 123 4567"; o.update(kw); return o
@@ -163,21 +164,21 @@ class Gls(unittest.TestCase):
         self.assertNotIn("Teszt", json.dumps(out))
         out = order_flow.parcel_prepare("1", "yes", shop=shop, gls=gls)
         sent = gls.prepare_labels.call_args.args[0][0]
-        self.assertEqual(sent["DeliveryAddress"]["HouseNumber"], "12/B"); self.assertEqual(sent["ClientReference"], "#1042"); self.assertGreater(sent["CODAmount"], 0)
+        self.assertEqual(sent["DeliveryAddress"]["HouseNumber"], "12/B"); self.assertEqual(sent["ClientReference"], "#5042"); self.assertGreater(sent["CODAmount"], 0)
         self.assertNotIn("Teszt", json.dumps(out))
     def test_cod_must_match_the_order_total(self):
         import order_flow
         g = mock.Mock(client_number=lambda: 1)
         ok = self.order(gateways=["Cash on Delivery (COD)"], total="10490.00")
         self.assertEqual(order_flow.gls_parcel(ok, g)["CODAmount"], 10490)
-        with self.assertRaises(ConnectorError):  # #1031: the label said 16370, the customer owed 14880
+        with self.assertRaises(ConnectorError):  # a live case: the label said more than the customer owed
             order_flow.gls_parcel(self.order(gateways=["Cash on Delivery (COD)"], total="9000.00"), g)
         self.assertEqual(order_flow.gls_parcel(self.order(total="1.00"), g)["CODAmount"], 0)  # PAID: nothing to collect, no check
     def test_automatic_discount_is_taken_off(self):
-        # Shopify puts an automatic discount only in discount_allocations; total_discount stays 0 (#1031, 2026-10-21)
-        raw = {"order": {"name": "#1031", "id": 5, "total_price": "14880.00", "payment_gateway_names": ["Vásárlás Utánvétellel"],
+        # Shopify puts an automatic discount only in discount_allocations; total_discount stays 0 (seen live 2026-10-21)
+        raw = {"order": {"name": "#5031", "id": 5, "total_price": "14880.00", "payment_gateway_names": ["Vásárlás Utánvétellel"],
                          "line_items": [{"title": "Geometrikus Tojás", "quantity": 1, "price": "5990.00", "total_discount": "0.00", "discount_allocations": [{"amount": "616.38"}]},
-                                        {"title": "Farmer Kalandkönyv", "quantity": 1, "price": "8490.00", "total_discount": "0.00", "discount_allocations": [{"amount": "873.62"}]}],
+                                        {"title": "Fa kirakó", "quantity": 1, "price": "8490.00", "total_discount": "0.00", "discount_allocations": [{"amount": "873.62"}]}],
                          "shipping_lines": [{"title": "GLS", "price": "1890.00", "discount_allocations": []}]}}
         os.environ.update(SHOPIFY_STORE="demo", SHOPIFY_ADMIN_TOKEN="tok")
         m = load("shopify")
@@ -187,36 +188,36 @@ class Gls(unittest.TestCase):
         self.assertEqual(order_flow.gls_parcel(o, mock.Mock(client_number=lambda: 1))["CODAmount"], 14880)
     def test_label_note_lists_the_products(self):
         import order_flow
-        lines = [{"title": "Farmer Kalandkönyv", "qty": 1, "price": "8490", "discount": "0"}, {"title": "Horgász játék", "qty": 2, "price": "3000", "discount": "0"}]
+        lines = [{"title": "Fa kirakó", "qty": 1, "price": "8490", "discount": "0"}, {"title": "Építőkocka", "qty": 2, "price": "3000", "discount": "0"}]
         o = self.order(lines=lines)
-        paid = "montivilag.hu #1042, 1× Farmer Kalandkönyv, 2× Horgász játék, PAID"
+        paid = "example-shop.hu #5042, 1× Fa kirakó, 2× Építőkocka, PAID"
         self.assertEqual(order_flow.gls_parcel(o, mock.Mock(client_number=lambda: 1))["Content"], paid)
         shop = mock.Mock(order_private=lambda i: o)
         self.assertEqual(order_flow.parcel_prepare("1", "no", shop=shop, gls=mock.Mock(client_number=lambda: 1))["content"], paid)
         cod = self.order(lines=lines, gateways=["Cash on Delivery (COD)"])
         self.assertEqual(order_flow.gls_parcel(cod, mock.Mock(client_number=lambda: 1))["Content"],
-                         "montivilag.hu #1042, 1× Farmer Kalandkönyv, 2× Horgász játék, COD 15980 Ft")  # 8490 + 2 x 3000 + 1490 shipping
+                         "example-shop.hu #5042, 1× Fa kirakó, 2× Építőkocka, COD 15980 Ft")  # 8490 + 2 x 3000 + 1490 shipping
         long = order_flow.gls_content(self.order(lines=[{"title": "X" * 300, "qty": 1}]))
         self.assertEqual(len(long), order_flow.CONTENT_MAX); self.assertTrue(long.endswith("…"))
-        self.assertEqual(order_flow.gls_content(self.order(lines=[])), "montivilag.hu #1042, PAID")
+        self.assertEqual(order_flow.gls_content(self.order(lines=[])), "example-shop.hu #5042, PAID")
     def test_manual_parcel_for_other_channels(self):
         import tempfile, parcel_manual
         gls = mock.Mock(client_number=lambda: 1, prepare_labels=mock.Mock(return_value=[{"parcel_id": 7}]))
-        data = dict(channel="eMAG", ref="113", goods="1× Zsiráf Kalandkönyv", cod="9890", name="Secret Name", zip="5700", city="Gyula",
-                    street="Béke sgt.", house="38", phone="06701234567", email="s@x.hu")
+        data = dict(channel="eMAG", ref="113", goods="1× Plüss maci", cod="9890", name="Secret Name", zip="9998", city="Mintafalu",
+                    street="Fő tér", house="1", phone="06701234567", email="s@x.hu")
         with tempfile.TemporaryDirectory() as d, mock.patch("os.environ", {**os.environ, "GLS_PICKUP_NAME": "Shop", "GLS_PICKUP_STREET": "Fő u.",
                                                                            "GLS_PICKUP_CITY": "Bp", "GLS_PICKUP_ZIP": "1011"}):
             flow = parcel_manual._flow(); flow.UPLOADED = pathlib.Path(d) / "up.json"; flow._load = lambda n: gls
             with mock.patch.object(parcel_manual, "_flow", lambda: flow):
                 dry = parcel_manual.prepare(**data)
                 self.assertTrue(dry["dry_run"]); gls.prepare_labels.assert_not_called()
-                self.assertEqual(dry["content"], "montivilag.hu 113, 1× Zsiráf Kalandkönyv, COD 9890 Ft"); self.assertNotIn("Secret", json.dumps(dry))
+                self.assertEqual(dry["content"], "example-shop.hu 113, 1× Plüss maci, COD 9890 Ft"); self.assertNotIn("Secret", json.dumps(dry))
                 out = parcel_manual.prepare(**data, send="yes")
                 sent = gls.prepare_labels.call_args.args[0][0]
-                self.assertEqual(sent["CODAmount"], 9890); self.assertEqual(sent["DeliveryAddress"]["HouseNumber"], "38"); self.assertNotIn("Secret", json.dumps(out))
+                self.assertEqual(sent["CODAmount"], 9890); self.assertEqual(sent["DeliveryAddress"]["HouseNumber"], "1"); self.assertNotIn("Secret", json.dumps(out))
                 self.assertIn("skipped", parcel_manual.prepare(**data, send="yes"))  # one reference, one parcel
                 with self.assertRaises(ConnectorError): parcel_manual.prepare(**{**data, "house": ""})
-                self.assertEqual(parcel_manual.prepare(**{**data, "ref": "114", "cod": "0"})["content"], "montivilag.hu 114, 1× Zsiráf Kalandkönyv, PAID")
+                self.assertEqual(parcel_manual.prepare(**{**data, "ref": "114", "cod": "0"})["content"], "example-shop.hu 114, 1× Plüss maci, PAID")
     def test_gls_errors_surface(self):
         m = load("gls")
         with mock.patch("requests.post", return_value=Resp({"PrepareLabelsError": [{"ErrorCode": 9, "ErrorDescription": "bad zip"}]})):
@@ -246,7 +247,7 @@ class GlsReplace(unittest.TestCase):
         import order_flow, tempfile
         g = Gls(); g.setUp()
         order_flow.UPLOADED = pathlib.Path(tempfile.mkdtemp()) / "up.json"
-        order_flow.UPLOADED.write_text(json.dumps({"#1042": 555}))
+        order_flow.UPLOADED.write_text(json.dumps({"#5042": 555}))
         gls = mock.Mock(client_number=lambda: 1, delete_labels=mock.Mock(return_value=True), prepare_labels=mock.Mock(return_value=[{"parcel_id": 556}]))
         shop = mock.Mock(order_private=lambda i: g.order(shipping={"name": "T E", "zip": "1011", "city": "Budapest", "address1": "Molnár utca", "country_code": "HU"}))
         skipped = order_flow.parcel_prepare("1", "yes", shop=shop, gls=gls); self.assertIn("skipped", skipped); gls.delete_labels.assert_not_called()
@@ -254,7 +255,7 @@ class GlsReplace(unittest.TestCase):
         gls.delete_labels.assert_called_once_with([555])
         sent = gls.prepare_labels.call_args.args[0][0]["DeliveryAddress"]
         self.assertEqual((sent["HouseNumber"], sent["HouseNumberInfo"]), ("13", "3. emelet 16. ajtó"))
-        rec = json.loads(order_flow.UPLOADED.read_text())["#1042"]
+        rec = json.loads(order_flow.UPLOADED.read_text())["#5042"]
         self.assertEqual((rec["parcel_id"], rec["cod_amount"]), (556, 0)); self.assertTrue(rec["at"]); self.assertNotIn("Molnár", json.dumps(out))
         # a later correction of a parcel recorded in the new format deletes the right id
         gls.delete_labels.reset_mock(); gls.prepare_labels.return_value = [{"parcel_id": 557}]
@@ -267,11 +268,11 @@ class GlsReplace(unittest.TestCase):
         gls = mock.Mock(client_number=lambda: 1, prepare_labels=mock.Mock(return_value=[{"parcel_id": 9}]))
         shop = mock.Mock(order_private=lambda i: g.order(gateways=["Cash on Delivery (COD)"]))
         order_flow.parcel_prepare("1", "yes", shop=shop, gls=gls)
-        self.assertEqual(json.loads(order_flow.UPLOADED.read_text())["#1042"]["cod_amount"], 9000 + 1490)
+        self.assertEqual(json.loads(order_flow.UPLOADED.read_text())["#5042"]["cod_amount"], 9000 + 1490)
     def test_failed_delete_uploads_nothing(self):
         import order_flow, tempfile
         g = Gls(); g.setUp()
-        order_flow.UPLOADED = pathlib.Path(tempfile.mkdtemp()) / "up.json"; order_flow.UPLOADED.write_text(json.dumps({"#1042": 555}))
+        order_flow.UPLOADED = pathlib.Path(tempfile.mkdtemp()) / "up.json"; order_flow.UPLOADED.write_text(json.dumps({"#5042": 555}))
         gls = mock.Mock(client_number=lambda: 1, delete_labels=mock.Mock(side_effect=ConnectorError("printed")), prepare_labels=mock.Mock())
         with self.assertRaises(ConnectorError): order_flow.parcel_prepare("1", "yes", "9", "", "yes", mock.Mock(order_private=lambda i: g.order()), gls)
         gls.prepare_labels.assert_not_called()
@@ -281,7 +282,7 @@ class Issue(unittest.TestCase):
     def setUp(self):
         import order_flow, tempfile
         order_flow.ISSUED = pathlib.Path(tempfile.mkdtemp()) / "inv.json"
-        self.bill = mock.Mock(document=lambda i: {"type": "draft", "comment": "Shopify #1042", "gross_total": 15282, "partner": {"id": 5}},
+        self.bill = mock.Mock(document=lambda i: {"type": "draft", "comment": "Shopify #5042", "gross_total": 15282, "partner": {"id": 5}},
                               partner_email=lambda p: "a@b.hu", create_from_draft=mock.Mock(return_value={"id": 77, "invoice_number": "A-2026-9"}),
                               send_by_email=mock.Mock(return_value=True))
     def test_dry_run_changes_nothing(self):
@@ -301,7 +302,7 @@ class Issue(unittest.TestCase):
         self.assertEqual(self.bill.create_from_draft.call_count, 1); self.assertEqual(self.bill.send_by_email.call_count, 1)
     def test_paid_order_records_payment_once(self):
         import order_flow
-        self.bill.document = lambda i: {"type": "draft", "comment": "Shopify #1042", "gross_total": 15282, "payment_method": "bankcard", "partner": {"id": 5}}
+        self.bill.document = lambda i: {"type": "draft", "comment": "Shopify #5042", "gross_total": 15282, "payment_method": "bankcard", "partner": {"id": 5}}
         out = order_flow.invoice_issue(1, "yes", "yes", "yes", bill=self.bill)
         self.assertEqual(out, {"invoice": "A-2026-9", "paid": True, "sent": True})
         self.bill.mark_paid.assert_called_once_with(77, 15282, "bankcard")

@@ -7,3 +7,7 @@ __pycache__/
 connectors/*/token.json
 *.zip
 forge-work/
+# The owner's own business: never in git (see config/business.example.yaml and README "Your business settings")
+config/business.yaml
+config/*.tmp
+config/private_patterns.txt

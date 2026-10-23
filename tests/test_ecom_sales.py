@@ -173,7 +173,7 @@ class History(unittest.TestCase):
         self.assertTrue(out["dry_run"]); self.assertTrue(out["sales"]["full_history"])
         self.assertFalse(self.m.HISTORY.exists())
         text = json.dumps(out["sales"], ensure_ascii=False)
-        for secret in PII + ("#1024", "#1025"): self.assertNotIn(secret, text)
+        for secret in PII + ("#5024", "#5025"): self.assertNotIn(secret, text)
     def test_history_failure_falls_back_to_last_days(self):
         s = fake_shop(orders=(order(1),))
         real = s._get.side_effect
@@ -195,7 +195,7 @@ class NoPersonalData(unittest.TestCase):
         for r in out["sales_daily"]: self.assertEqual(set(r), SALES_KEYS)
         for r in out["product_sales_daily"]: self.assertEqual(set(r), PRODUCT_KEYS)
         text = json.dumps([out["sales_daily"], out["product_sales_daily"], out["sales_window"]], ensure_ascii=False)
-        for secret in PII + ("#1024", "#1025"): self.assertNotIn(secret, text)
+        for secret in PII + ("#5024", "#5025"): self.assertNotIn(secret, text)
 
 class UnitCost(unittest.TestCase):
     def setUp(self): self.m = load()

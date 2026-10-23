@@ -6,6 +6,7 @@ services:
     volumes:
       - ./brain:/app/brain
       - ./handoffs:/app/handoffs
+      - ./config:/app/config        # config/business.yaml: the owner's business settings, edited on the host, never in the image
       - ./forge-work:/app/forge-work   # Forge's own clone of the repo: survives a rebuild, the merge stays with the owner
       - claude-auth:/root/.claude
     environment:

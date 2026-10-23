@@ -1,10 +1,10 @@
-"""Gmail connector, several accounts side by side (owner, 2026-10-19): the shop's info@montivilag.hu and the owner's own Gmail.
+"""Gmail connector, several accounts side by side (owner, 2026-10-19): e.g. the shop's info@ address and the owner's own Gmail.
 Raw Gmail API v1 over HTTPS with the owner's own Google Cloud OAuth client; no Google library.
 
 Accounts (.env):
   GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET     one OAuth client (Desktop app) for every account
-  GMAIL_ACCOUNTS=info,barni                the names the team uses; every op takes --account <name>
-  GMAIL_<NAME>_ADDRESS                     the address this account stands for (info@montivilag.hu)
+  GMAIL_ACCOUNTS=info,owner                the names the team uses; every op takes --account <name>
+  GMAIL_<NAME>_ADDRESS                     the address this account stands for (info@example-shop.hu)
   GMAIL_<NAME>_REFRESH_TOKEN               from `connectors/gmail/auth.py <name>`, run by the owner (never by an agent)
   GMAIL_<NAME>_MAILBOX=<other name>        only when this address is an alias inside another account's mailbox (it then uses
                                            that account's token and only sees mail sent to its own address)

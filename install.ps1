@@ -21,6 +21,9 @@ $packs = if ($pack -eq "2") { "general,ecom" } else { "general" }
                    -replace '^PACKS=.*',"PACKS=$packs" | Set-Content .env -Encoding UTF8
 New-Item -ItemType Directory -Force brain,handoffs | Out-Null
 $env:PACKS = $packs; python core\pack_loader.py --init
+# Your business (name, language, tone of voice; for a shop the parcel label) -> config\business.yaml, which never goes to git.
+if (Test-Path config\business.yaml) { Write-Host "config\business.yaml is already here: kept as it is." }
+else { python core\business.py setup; if ($LASTEXITCODE -ne 0) { throw "config\business.yaml could not be written." } }
 pip install -q -r requirements.txt
 claude login
 Start-Process python -ArgumentList "core\jinnee.py" -WindowStyle Hidden

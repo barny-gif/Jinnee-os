@@ -57,7 +57,8 @@ class Parse(unittest.TestCase):
 
     def test_env_example_parses(self):
         got = env.parse((REPO / ".env.example").read_text(encoding="utf-8"))
-        self.assertEqual((got["JINNEE_LANG"], got["PACKS"], got["DASHBOARD_PASSWORD"]), ("hu", "general", ""))
+        self.assertEqual((got["JINNEE_NAME"], got["PACKS"], got["DASHBOARD_PASSWORD"]), ("Jinnee", "general", ""))
+        self.assertNotIn("JINNEE_LANG", got)  # optional override only: the language is set in config/business.yaml
 
 
 class Load(unittest.TestCase):

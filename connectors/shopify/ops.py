@@ -3,7 +3,7 @@ fulfilled with the GLS tracking number, never e-mailing the customer), a dry run
 CLI: python3 connectors/shopify/ops.py list_orders --days 7
      python3 connectors/shopify/ops.py scopes                 (which scopes the token has, and which REQUIRED ones are missing)
      python3 connectors/shopify/ops.py sessions --days 7      (sessions and online store visitors per day; totals only)
-     python3 connectors/shopify/ops.py fulfill --order-id 123 --tracking 3424008826 [--confirm yes]"""
+     python3 connectors/shopify/ops.py fulfill --order-id 123 --tracking 1234567890 [--confirm yes]"""
 import os, sys, json, time, pathlib, datetime as dt
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import requests
@@ -86,7 +86,7 @@ def order_private(order_id):
     o = _get(f"orders/{order_id}.json")["order"]
     b = o.get("billing_address") or o.get("shipping_address") or {}
     sh = o.get("shipping_address") or b
-    # An automatic or order-level discount is only in discount_allocations; total_discount stays 0 for it (#1031, 2026-10-21)
+    # An automatic or order-level discount is only in discount_allocations; total_discount stays 0 for it (seen live 2026-10-21)
     def off(x): return sum(float(a.get("amount") or 0) for a in x.get("discount_allocations") or []) or float(x.get("total_discount") or 0)
     return {"name": o.get("name"), "id": o["id"], "currency": o.get("currency"), "taxes_included": o.get("taxes_included", True),
             "total": o.get("total_price"),

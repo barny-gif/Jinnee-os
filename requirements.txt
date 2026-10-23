@@ -2,3 +2,4 @@ python-telegram-bot[job-queue]>=21
 fastapi>=0.110
 uvicorn>=0.29
 requests>=2.31
+PyYAML>=6

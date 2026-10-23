@@ -3,8 +3,10 @@
 #
 # Works as `curl … | bash`: the questions are read from the terminal, not from the pipe the script arrives on.
 # Without a terminal (CI, cron, ssh without -t) nothing can be asked, so the answers must be in the environment:
-#   JINNEE_MODE=native TELEGRAM_BOT_TOKEN=… TELEGRAM_OWNER_ID=… bash install.sh
+#   JINNEE_MODE=native TELEGRAM_BOT_TOKEN=… TELEGRAM_OWNER_ID=… BUSINESS_NAME=… BUSINESS_VOICE=… bash install.sh
+# (with the ecom pack also SHOP_LABEL_NAME=…), or BUSINESS_FILE=/path/to/your/business.yaml instead of the BUSINESS_* answers.
 # A variable that is set is used instead of its question in a terminal too.
+# Your business answers go to config/business.yaml, which never goes to git (see config/business.example.yaml).
 set -euo pipefail
 REPO="https://github.com/barny-gif/Jinnee-os.git"
 RAW="https://raw.githubusercontent.com/barny-gif/Jinnee-os/main/install.sh"
@@ -19,6 +21,8 @@ ok_token(){ case "$1" in ''|*[[:space:]]*|*\'*) return 1;; esac; }
 ok_owner(){ case "$1" in ''|*[!0-9]*|0*) return 1;; esac; }
 ok_name(){ case "$1" in ''|*\'*) return 1;; esac; }
 ok_packs(){ case "$1" in ''|*[!a-z0-9_,-]*|,*|*,|*,,*) return 1;; esac; }
+ok_text(){ [ -n "$1" ]; }
+ok_lang(){ case "$1" in [a-z][a-z]|[a-z][a-z][a-z]|[a-z][a-z]-[A-Za-z][A-Za-z]) return 0;; esac; return 1; }
 
 ask(){ # ask "question" → REPLY, read from the terminal (fd 3), surrounding spaces removed
   printf '%s ' "$1" >&2
@@ -43,6 +47,13 @@ answer(){ # answer VAR check "question" "what a good answer looks like" [default
   done
 }
 
+optional(){ # optional VAR "question" → ANSWER: the variable if set, else asked once in a terminal (Enter = empty), else empty
+  local given="${!1:-}"
+  if [ -n "$given" ]; then echo "  $1: taken from the environment"; ANSWER="$given"; return; fi
+  ANSWER=""; [ "$TTY" = yes ] || return 0
+  ask "$2"; ANSWER="$REPLY"
+}
+
 no_terminal(){
   cat >&2 <<EOF
 
@@ -54,8 +65,15 @@ Set the answers as variables and run again. Nothing was installed.
   TELEGRAM_OWNER_ID   your numeric Telegram user ID (@userinfobot)   required
   JINNEE_NAME         what the agent is called                       default: Jinnee
   PACKS               general or general,ecom                        default: general
+  BUSINESS_NAME       your business name, as customers know it       required
+  BUSINESS_VOICE      how the team sounds to your customers          required
+  BUSINESS_LANGUAGE   language for you and your customers            default: hu
+  BUSINESS_INTRO      a sentence or two about the business           optional
+  SHOP_LABEL_NAME     shop name on the parcel label note             required with the ecom pack
+  SHOP_NOT_REVENUE_TAGS, BILLING_INVOICE_PREFIX                      optional (ecom), see config/business.example.yaml
+  BUSINESS_FILE       a ready config/business.yaml to use instead of the BUSINESS_* answers
 
-  curl -fsSL $RAW | JINNEE_MODE=native TELEGRAM_BOT_TOKEN=… TELEGRAM_OWNER_ID=… bash
+  curl -fsSL $RAW | JINNEE_MODE=native TELEGRAM_BOT_TOKEN=… TELEGRAM_OWNER_ID=… BUSINESS_NAME=… BUSINESS_VOICE=… bash
 EOF
   exit 1
 }
@@ -106,9 +124,35 @@ main(){
     done
   fi
   PACK_LIST="$ANSWER"
+
+  # Your business: name, language, tone of voice (and for a shop, the parcel label). It goes to config/business.yaml, never to git.
+  BIZ=ask; B_NAME=""; B_LANG=""; B_VOICE=""; B_INTRO=""; B_SHOP=""; B_TAGS=""; B_PREFIX=""
+  if [ -f "$DIR/config/business.yaml" ]; then BIZ=keep
+  elif [ -n "${BUSINESS_FILE:-}" ]; then
+    [ -f "$BUSINESS_FILE" ] || die "BUSINESS_FILE=$BUSINESS_FILE: no such file. Nothing was installed."
+    BIZ=file; B_FILE="$(cd "$(dirname "$BUSINESS_FILE")" && pwd)/$(basename "$BUSINESS_FILE")"
+  fi
+  if [ "$BIZ" = ask ]; then
+    answer BUSINESS_NAME ok_text "Your business name, as customers know it:" "A name is required: the team uses it with your customers."
+    B_NAME="$ANSWER"
+    answer BUSINESS_LANGUAGE ok_lang "Language for you and your customers (hu, en, de…) [hu]:" "A language code like hu, en or de." hu
+    B_LANG="$ANSWER"
+    answer BUSINESS_VOICE ok_text "How should the team sound to your customers? (e.g. warm, informal, short sentences):" \
+      "A few words are required, for example: friendly, informal, no exclamation marks."
+    B_VOICE="$ANSWER"
+    optional BUSINESS_INTRO "One or two sentences about the business (Enter to skip):"; B_INTRO="$ANSWER"
+    case ",$PACK_LIST," in *,ecom,*)
+      answer SHOP_LABEL_NAME ok_text "Shop name for the parcel label note (e.g. your-shop.com):" \
+        "Required with the ecom pack: it is the first thing on every GLS label note."
+      B_SHOP="$ANSWER"
+      optional SHOP_NOT_REVENUE_TAGS "Order tags that are not revenue, comma separated (e.g. test,gift; Enter = none):"; B_TAGS="$ANSWER"
+      optional BILLING_INVOICE_PREFIX "Show only invoice numbers starting with (Enter = every series):"; B_PREFIX="$ANSWER";;
+    esac
+  fi
   [ -z "$MISSING" ] || no_terminal
   # From here on .env is the only source: a rejected value must not reach the programs through the environment.
   unset JINNEE_MODE TELEGRAM_BOT_TOKEN TELEGRAM_OWNER_ID JINNEE_NAME PACKS
+  unset BUSINESS_NAME BUSINESS_LANGUAGE BUSINESS_VOICE BUSINESS_INTRO SHOP_LABEL_NAME SHOP_NOT_REVENUE_TAGS BILLING_INVOICE_PREFIX BUSINESS_FILE
 
   need git || die "git is required. Install it and run again."
   if [ "$MODE" = docker ]; then
@@ -132,6 +176,14 @@ main(){
   set_env PACKS "$PACK_LIST"
   mkdir -p brain handoffs
   PACKS="$PACK_LIST" python3 core/pack_loader.py --init
+  case "$BIZ" in
+    keep) echo "  config/business.yaml is already here: kept as it is.";;
+    file) mkdir -p config; cp "$B_FILE" config/business.yaml; echo "  config/business.yaml: copied from BUSINESS_FILE";;
+    ask) PACKS="$PACK_LIST" BUSINESS_NAME="$B_NAME" BUSINESS_LANGUAGE="$B_LANG" BUSINESS_VOICE="$B_VOICE" BUSINESS_INTRO="$B_INTRO" \
+           SHOP_LABEL_NAME="$B_SHOP" SHOP_NOT_REVENUE_TAGS="$B_TAGS" BILLING_INVOICE_PREFIX="$B_PREFIX" \
+           python3 core/business.py init >/dev/null || die "config/business.yaml could not be written."
+         echo "  config/business.yaml written (your business settings; edit any time, check with: python3 core/business.py check)";;
+  esac
 
   # `claude login` is interactive: it gets the terminal, not the pipe. Without a terminal it is left to the owner.
   LOGIN_LATER=""

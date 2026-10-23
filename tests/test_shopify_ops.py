@@ -65,28 +65,28 @@ FOS = {"fulfillment_orders": [{"id": 11, "status": "open", "supported_actions": 
 class Fulfill(Base):
     def test_dry_run_reads_only(self):
         with mock.patch.object(self.m.requests, "get", return_value=Resp(FOS)) as get, mock.patch.object(self.m.requests, "post") as post:
-            out = self.m.fulfill("6001", "3424008826")
+            out = self.m.fulfill("6001", "9000000003")
         post.assert_not_called()
         self.assertTrue(get.call_args.args[0].endswith("/orders/6001/fulfillment_orders.json"))
         self.assertEqual((out["dry_run"], out["fulfillment_orders"], out["notify_customer"]), (True, 2, False))
     def test_confirm_sends_open_orders_with_gls_tracking_and_no_customer_mail(self):
         with mock.patch.object(self.m.requests, "get", return_value=Resp(FOS)), \
              mock.patch.object(self.m.requests, "post", return_value=Resp({"fulfillment": {"id": 99, "status": "success"}}, 201)) as post:
-            out = self.m.fulfill("6001", "3424008826", confirm="yes")
+            out = self.m.fulfill("6001", "9000000003", confirm="yes")
         self.assertTrue(post.call_args.args[0].endswith("/admin/api/2026-07/fulfillments.json"))
         self.assertEqual(post.call_args.kwargs["json"], {"fulfillment": {
             "line_items_by_fulfillment_order": [{"fulfillment_order_id": 11}, {"fulfillment_order_id": 13}],
-            "tracking_info": {"number": "3424008826", "company": "GLS"}, "notify_customer": False}})
+            "tracking_info": {"number": "9000000003", "company": "GLS"}, "notify_customer": False}})
         self.assertEqual((out["created"], out["fulfillment_id"], out["notify_customer"]), (True, "99", False))
     def test_nothing_open_means_already_and_no_post(self):
         closed = {"fulfillment_orders": [{"id": 12, "status": "closed", "supported_actions": []}]}
         with mock.patch.object(self.m.requests, "get", return_value=Resp(closed)), mock.patch.object(self.m.requests, "post") as post:
-            out = self.m.fulfill("6001", "3424008826", confirm="yes")
+            out = self.m.fulfill("6001", "9000000003", confirm="yes")
         post.assert_not_called(); self.assertTrue(out["already"]); self.assertFalse(out["created"])
     def test_no_tracking_no_call(self):
         with mock.patch.object(self.m.requests, "get") as get:
             with self.assertRaisesRegex(ConnectorError, "tracking"): self.m.fulfill("6001", "")
-            with self.assertRaisesRegex(ConnectorError, "digits"): self.m.fulfill("#1025", "1")
+            with self.assertRaisesRegex(ConnectorError, "digits"): self.m.fulfill("#5025", "1")
         get.assert_not_called()
     def test_422_shows_shopify_errors(self):
         with mock.patch.object(self.m.requests, "get", return_value=Resp(FOS)), \

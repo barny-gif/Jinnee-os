@@ -1,0 +1,31 @@
+# Jinnee OS business settings: TEMPLATE with made-up values.
+# Copy it to config/business.yaml and put your own business in (or run: python3 core/business.py setup).
+# config/business.yaml is in .gitignore: your business never goes to GitHub. Only this example does.
+# Check your file with: python3 core/business.py check
+#
+# What goes where:
+#   .env                  how the system connects (API keys, tokens, Shopify store handle, GLS pickup address, VAT)
+#   config/business.yaml  who you are and what goes on your documents (this file)
+# A value a step needs and that is missing stops that step with an error naming the key. There is no hidden default.
+
+business:
+  name: "Example Kft."                     # required: as your customers know you
+  language: "hu"                           # required: the language the team speaks with you and your customers
+  voice: "Warm and informal, short sentences, no exclamation marks."   # required: how the team sounds to customers
+  intro: "A small family shop selling wooden toys."                    # optional: a sentence or two, in your words
+
+# Everything below is used by the ecom pack (Shopify + GLS + Billingo). Required when PACKS includes ecom.
+shop:
+  label_name: "example-shop.hu"            # the first thing on the parcel label note
+  not_revenue_tags: ["test", "gift", "barter", "influencer"]   # orders tagged with one of these are not counted as sales ([] = none)
+
+labels:
+  # The note printed on the GLS label. Placeholders: {shop} {order} {goods} {payment}.
+  # The template is split at ", "; a part that comes out empty (an order with no goods listed) is left out with its comma.
+  # Never put customer data here: the label note is visible to everyone who handles the parcel.
+  note: "{shop} {order}, {goods}, {payment}"   # -> "example-shop.hu #1001, 1× Wooden puzzle, COD 9890 Ft"
+  cod: "COD {amount} Ft"                       # {amount} = the cash on delivery amount
+  paid: "PAID"                                 # when the customer already paid
+
+billing:
+  invoice_prefix: "EX-"                    # Payments shows only invoice numbers starting with this. "" = every series.

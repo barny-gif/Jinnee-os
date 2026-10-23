@@ -3,7 +3,8 @@ Auth: BILLINGO_API_KEY (header X-API-KEY). CLI: python3 connectors/billingo/ops.
 import os, re, sys, json, pathlib, datetime as dt
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import requests
-from cbase import ConnectorError, need, run_cli
+from cbase import ConnectorError, need, run_cli, setting
+import business
 
 BASE = "https://api.billingo.hu/v3"
 
@@ -117,11 +118,11 @@ def _last4(number):
 
 def payments(days="400", pages="10"):
     """The site's Payments tab: the owner's bank accounts (name, currency, last 4 characters only) and every issued invoice
-    of the window with its due and paid date. Since the Revolut bank sync (2026-10-18) Billingo marks invoices paid on its own;
+    of the window with its due and paid date. Since the bank sync (2026-10-18) Billingo marks invoices paid on its own;
     the API gives no balance and no bank transactions (/bank-transactions is 404), so neither is here. No partner data.
-    Only Monti Világ invoices (owner, 2026-10-19): numbers starting with BILLINGO_PAYMENTS_PREFIX (default "MV-"); the old
-    Gyerekvilág series (GYV-…) is left out. An empty BILLINGO_PAYMENTS_PREFIX shows every series."""
-    prefix = os.getenv("BILLINGO_PAYMENTS_PREFIX", "MV-").strip()
+    Only one invoice series when the owner has several: numbers starting with billing.invoice_prefix in config/business.yaml
+    (other series are left out); "" shows every series. A missing setting stops here, before Billingo is asked."""
+    prefix = setting(business.invoice_prefix)
     accounts = [{"id": str(a.get("id")), "name": a.get("name") or None, "currency": a.get("currency"),
                  "last4": _last4(a.get("account_number_iban") or a.get("account_number"))}
                 for a in _call("GET", "/bank-accounts", {"page": 1, "per_page": 100}).json().get("data", [])]

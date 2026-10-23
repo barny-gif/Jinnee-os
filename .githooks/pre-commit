@@ -1,0 +1,4 @@
+#!/bin/sh
+# Refuses a commit that would add a phone number, e-mail address, real Shopify store handle, access token, or one of your
+# own words from config/private_patterns.txt. Turn on once per clone: python3 tools/guard.py install-hooks
+exec python3 "$(git rev-parse --show-toplevel)/tools/guard.py" staged
