@@ -16,9 +16,10 @@ At most 3 questions at a time, conversational, never a form. Output: `brain/comp
 ## 4. Competitors
 - 3–5 businesses or pages to keep an eye on (URL / Instagram / Facebook).
 - What matters about them: prices, promotions, new services, posting?
+- Save the list as `brain/watch/competitors.md` (one name with its page per line): Scout's Thursday round starts once it is there.
 
 ## 5. Limits and rhythm
 - What should I never spend on, and never do without asking? (money, prices, refunds, customer emails, invoices and posts are already locked to "ask first" or stricter)
-- When and where should the daily brief arrive? (default: 08:00, Telegram, 5 lines)
+- When and where should the daily brief arrive? (default: 08:00, Telegram, 5 lines). Times are set in `config/business.yaml` under `schedule` (the owner edits it; `/schedule` shows what runs when): tell the owner the line to change, do not edit it.
 
 If a vertical pack (ecom, photographer) is installed, its onboarding follows and asks only for the extras.

@@ -1,8 +1,9 @@
 """
 Entry point: the Telegram bridge. The owner's messages go to Claude Code with the lead persona; the owner's decisions
 (/ok, /change, /drop, /undo) are recorded here in plain code, never by the agent; a check once a minute sends alerts and
-hands decided items to the lead; the morning brief runs daily. A text file the owner sends (.txt, .md, .csv, .html) is saved
-under handoffs/inbox/ and the lead is told where it is.
+hands decided items to the lead; another once a minute starts what core/scheduler.py says is due (the morning brief, the
+agents' own rhythm), one job at a time and never while the owner's own run is going. /schedule shows it. A text file the owner sends
+(.txt, .md, .csv, .html) is saved under handoffs/inbox/ and the lead is told where it is.
 run_agent() is the hook for the full orchestration logic (sessions, intake, delegation).
 """
 import os, re, sys, time, subprocess, pathlib, asyncio, logging, threading, datetime as dt
@@ -13,7 +14,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, Cal
 from pack_loader import agent_files, resolve
 from heartbeat import beat, trouble
 from registry_client import check as registry_check
-import alerts, approvals, business, logs, store
+import alerts, approvals, business, logs, scheduler, store
 
 log = logging.getLogger("jinnee")
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -49,6 +50,13 @@ TOOLS += [f"Bash({py} core/forge_git.py *)" for py in ("python3", "python")]
 # Forge needs to read API docs and run the connectors and tests it writes; still no curl, rm or free shell.
 TOOLS += ["WebFetch", "WebSearch"] + [f"Bash({py} {cmd})" for py in ("python3", "python") for cmd in ("connectors/*", "-m unittest *", "-I connectors/*")]
 GUARDED = [f"Edit(brain/{name})" for name in ("approvals.json", "autonomy_config.json", "alerts_state.json")]
+# A scheduled run (core/scheduler.py) has nobody watching it. It gets less: no building (Lovable, git, tests), writing only
+# in brain/ and handoffs/ (dontAsk refuses everything not allowed here), and JINNEE_UNATTENDED=1, with which the connectors
+# refuse every outgoing step and approvals.py refuses to hand out a decision.
+SCHEDULED_TOOLS = [t for t in TOOLS if not any(x in t for x in ("forge_git", "-m unittest", "Lovable__send_message", "Lovable__get_message"))]
+SCHEDULED_TOOLS += ["Edit(brain/**)", "Edit(handoffs/**)"]
+SCHEDULED_DENY = GUARDED + [f"Edit(brain/{name})" for name in ("schedule_state.json", "schedule_outbox.json", "heartbeat.json")]
+SCHEDULED_DENY += [f"Bash({py} core/{cmd} *)" for py in ("python3", "python") for cmd in ("approvals.py consume", "autonomy.py apply")]
 
 RULES = """The agent files are your team's rules; brain/ is the business memory. Log every decision as one line in brain/decisions.log.md.
 
@@ -82,15 +90,27 @@ RUNNING = threading.Lock()  # one agent run at a time: the owner's message and a
 HELP = ("What you can do: send it again. If it keeps happening, send /new to start a clean conversation. "
         "/pending shows what is waiting.")
 
-def call_claude(message: str):
-    """→ (worked, text for the owner, short note for the heartbeat)."""
-    base = ["claude", "-p", message, "--permission-mode", "acceptEdits", "--allowedTools", *TOOLS, "--disallowedTools", *GUARDED,
+def command(message: str, unattended=False, conversation=True):
+    """→ (the command, the same without --continue, the environment). unattended: started by the schedule.
+    conversation=False: a session of its own that is not kept, so the owner's next message does not continue it."""
+    if unattended:
+        mode, tools, deny = "dontAsk", SCHEDULED_TOOLS, SCHEDULED_DENY
+        run_env = {**os.environ, "JINNEE_UNATTENDED": "1"}
+    else:
+        mode, tools, deny = "acceptEdits", TOOLS, GUARDED
+        run_env = {k: v for k, v in os.environ.items() if k != "JINNEE_UNATTENDED"}
+    base = ["claude", "-p", message, "--permission-mode", mode, "--allowedTools", *tools, "--disallowedTools", *deny,
             "--append-system-prompt", system_prompt(), "--output-format", "text"] + (["--model", MODEL] if MODEL else [])
-    cmd = base if FRESH["next"] else base[:2] + ["--continue"] + base[2:]
+    if not conversation: return base + ["--no-session-persistence"], None, run_env
+    return (base if FRESH["next"] else base[:2] + ["--continue"] + base[2:]), base, run_env
+
+def call_claude(message: str, unattended=False, conversation=True):
+    """→ (worked, text for the owner, short note for the heartbeat)."""
+    cmd, base, run_env = command(message, unattended, conversation)
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=TIMEOUT)
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=TIMEOUT, env=run_env)
         if r.returncode != 0 and "--continue" in cmd:
-            r = subprocess.run(base, capture_output=True, text=True, cwd=ROOT, timeout=TIMEOUT)
+            r = subprocess.run(base, capture_output=True, text=True, cwd=ROOT, timeout=TIMEOUT, env=run_env)
     except FileNotFoundError:
         return False, ("I could not start: the `claude` program is not installed on this machine, or not found. Nothing was done. "
                        "What you can do: install Claude Code and run `claude login` on the machine, then send your message again."), "claude not found"
@@ -103,7 +123,7 @@ def call_claude(message: str):
         return False, ("I could not finish this: the Claude program stopped with an error, so nothing more was done. " + HELP +
                        " If the error below mentions signing in, run `claude login` on the machine." +
                        (f"\n\nError: {detail}" if detail else "")), f"stopped with an error (exit {r.returncode})"
-    FRESH["next"] = False
+    if conversation: FRESH["next"] = False
     return True, r.stdout.strip() or r.stderr.strip() or "…", "replied"
 
 def run_agent(message: str) -> str:
@@ -123,7 +143,7 @@ async def say(send, text, markup=None):
         await send(text[i:i+4000], **({"reply_markup": markup} if markup is not None and last else {}))
 
 # --- the owner's decisions, recorded without the agent in between
-COMMAND = re.compile(r"/(ok|change|drop|undo|pending)(?:@\w+)?(?:[_ ]+(\S+))?(?:\s+(.*))?", re.S)
+COMMAND = re.compile(r"/(ok|change|drop|undo|pending|schedule)(?:@\w+)?(?:[_ ]+(\S+))?(?:\s+(.*))?", re.S)
 DECISION = {"ok": "ok", "change": "edit", "drop": "drop"}
 PLAIN_OK = {"ok", "oké", "oke", "go", "mehet"}  # said alone, they approve the one waiting item; the /undo window still applies
 AWAITING = {}  # {"id", "decision", "until"} while the bridge waits for the owner's words after a bare /change or /drop
@@ -141,10 +161,12 @@ def decide(item_id, decision, note):
     return f"Dropped: {what}\nYour reason is saved for the team. /undo_{item_id} takes it back."
 
 def owner_command(text: str) -> str:
-    """/ok k7qd · /ok_k7qd · /change k7qd shorter · /drop k7qd why · /undo k7qd · /pending. The id may be left out when only one item fits."""
+    """/ok k7qd · /ok_k7qd · /change k7qd shorter · /drop k7qd why · /undo k7qd · /pending · /schedule.
+    The id may be left out when only one item fits."""
     m = COMMAND.fullmatch(text.strip())
-    if not m: return "Commands: /pending · /ok · /change · /drop · /undo · /new"
+    if not m: return "Commands: /pending · /ok · /change · /drop · /undo · /schedule · /new"
     word, first, rest = m.group(1), m.group(2) or "", (m.group(3) or "").strip()
+    if word == "schedule": return SCHED.summary()
     pending, decided, _ = BOOK.open_items()
     if word == "pending":
         rows = [f"• {alerts.line(BOOK, i)}: {BOOK.status(i)}" for i in pending + decided]
@@ -194,6 +216,9 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await answer(update, text)
 
 async def answer(update, text):
+    if SCHEDULING["busy"] and RUNNING.locked():  # a scheduled job started just before: say so instead of a silent wait
+        await update.message.reply_text(f"One moment: a scheduled run is finishing ({SCHEDULING['job']}). Your message is next, "
+                                        f"within {MINUTES} minutes at most.")
     reply = await asyncio.to_thread(run_agent, text)
     ids = [i["id"] for i in BOOK.open_items()[0] if i["id"] in reply][:5]  # the agent named a waiting item: put the tap buttons under it
     await say(update.message.reply_text, reply, buttons(ids))
@@ -289,16 +314,56 @@ async def hand_over(bot, items):
     reply = await asyncio.to_thread(run_agent, alerts.hand_over_message(BOOK, items))
     await say(lambda t: bot.send_message(chat_id=OWNER, text=t), reply)
 
-async def morning_brief(ctx: ContextTypes.DEFAULT_TYPE):
+# --- the schedule (core/scheduler.py decides; this runs it)
+SCHED = scheduler.Scheduler(BRAIN, PACKS)
+SCHEDULING = {"busy": False, "job": ""}  # one scheduled job at a time from this program
+
+def brief_extra() -> str:
+    """What the morning brief is told on top of its task: agents in trouble (with the schedule's rhythm) and updates."""
     extra = ""
-    stuck = trouble(BRAIN)  # before this run records its own start
+    stuck = trouble(BRAIN, expected=SCHED.expected())
     if stuck: extra += f"\nAgents in trouble: {'; '.join(stuck)}."
     ups = registry_check()
     if ups: extra += "\nUpdates available: " + "; ".join(f"{u['key']} → {u['to']}" for u in ups) + " Ask the owner whether to update."
-    text = await asyncio.to_thread(run_agent,
-        "Write the 5-line morning brief from brain/ and handoffs/, and also save it to brain/brief_today.md. "
-        "Include what is waiting for the owner's decision (see 'approvals right now')." + extra)
-    await ctx.bot.send_message(chat_id=OWNER, text=text[:4000])
+    return extra
+
+SCHED.extra["jinnee.brief"] = brief_extra
+
+class Runner:
+    """The scheduler's way into Claude: the same prompt, the narrower tools, and no start while the owner's run is going."""
+    def busy(self):
+        return RUNNING.locked()  # the owner's conversation (or a hand-over) is running: the job waits for the next minute
+    def run(self, job, prompt):
+        with RUNNING:
+            return call_claude(prompt, unattended=True, conversation=job.lead)  # the brief stays in the owner's conversation
+
+RUNNER = Runner()
+
+async def schedule_tick(ctx: ContextTypes.DEFAULT_TYPE):
+    """Once a minute: deliver what finished during the quiet hours, then start the earliest due job, one at a time."""
+    try:
+        for text in await asyncio.to_thread(SCHED.outbox):
+            await say(lambda t: ctx.bot.send_message(chat_id=OWNER, text=t), text)
+        if SCHEDULING["busy"]: return
+        due = await asyncio.to_thread(SCHED.due)
+    except Exception:
+        log.exception("schedule check failed; it runs again in a minute")
+        return
+    if not due: return
+    SCHEDULING.update(busy=True, job=due[0][0].name)
+    ctx.application.create_task(run_job(ctx.bot, *due[0]))
+
+async def run_job(bot, job, t, key):
+    try:
+        out = await asyncio.to_thread(SCHED.run, job, t, key, RUNNER)
+        if out.result in ("failed", "ok", "silent"): log.info("scheduled %s: %s (%s)", job.id, out.result, out.note)
+        if out.message:
+            if alerts.quiet(time.time()): await asyncio.to_thread(SCHED.later, out.message)  # finished after the quiet hours began
+            else: await say(lambda t: bot.send_message(chat_id=OWNER, text=t), out.message)
+    except Exception:
+        log.exception("scheduled job %s could not be finished", job.id)
+    finally:
+        SCHEDULING["busy"] = False
 
 async def cmd_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not from_owner(update) or update.message is None: return
@@ -318,6 +383,7 @@ def main():
     logs.setup("jinnee")
     BOOK.gate.migrate()  # a file from before locks existed keeps its levels
     BOOK.tidy()          # items from before the lifecycle: decided ones are closed, never carried out twice
+    for jid in SCHED.recover(): log.warning("scheduled %s was cut off by the restart; recorded as failed", jid)
     app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("new", cmd_new))
     app.add_handler(CallbackQueryHandler(on_tap))
@@ -325,9 +391,12 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))
     if app.job_queue:  # both go to OWNER, which is always set here
-        app.job_queue.run_daily(morning_brief, time=dt.time(hour=8, minute=0, tzinfo=alerts.zone()))
         app.job_queue.run_repeating(alert_tick, interval=60, first=20)
-    print(f"{NAME} is running. Packs: {', '.join(PACKS)}")
+        app.job_queue.run_repeating(schedule_tick, interval=60, first=40)
+    else:
+        print("The Telegram job queue is missing (pip install 'python-telegram-bot[job-queue]'): no alerts and no schedule.")
+    on = [j.id for j in SCHED.jobs() if not j.off]
+    print(f"{NAME} is running. Packs: {', '.join(PACKS)}. Scheduled: {', '.join(on) or 'nothing'} (python3 core/scheduler.py plan)")
     app.run_polling()
 
 if __name__ == "__main__":

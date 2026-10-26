@@ -14,6 +14,7 @@ Reading and drafts are free (read_anything, draft_anything). Sending a draft is 
 from the approval queue (send_customer_email). Tokens are never printed.
 CLI: python3 connectors/gmail/ops.py accounts
      python3 connectors/gmail/ops.py search --account info --query "is:unread" --max 20
+     python3 connectors/gmail/ops.py new_since --account info --after 1792044000   (a count only)
      python3 connectors/gmail/ops.py read --account info --id <message id>
      python3 connectors/gmail/ops.py draft_reply --account info --id <message id> --body_file handoffs/echo/....txt
      python3 connectors/gmail/ops.py send --account info --draft_id <id> [--confirm yes]"""
@@ -127,6 +128,15 @@ def search(account, query="in:inbox", max="20"):
                     "snippet": msg.get("snippet")})
     return out
 
+def new_since(account, after):
+    """How many inbox messages came in after `after` (epoch seconds), up to 50. A count only: no sender, subject or text.
+    The scheduler asks this before an hourly mail triage, so an hour without mail costs no agent run."""
+    acct = _account(account)
+    try: after = int(float(after))
+    except (TypeError, ValueError): raise ConnectorError("--after must be a time in epoch seconds")
+    ids = _call(acct, "GET", "/messages", {"q": _scope(acct, f"in:inbox after:{after}"), "maxResults": 50}).get("messages", [])
+    return {"account": acct["name"], "new": len(ids)}
+
 def read(account, id):
     acct = _account(account); msg = _call(acct, "GET", f"/messages/{id}", {"format": "full"}); h = _headers(msg)
     return {"account": acct["name"], "id": msg["id"], "thread": msg.get("threadId"), "from": h.get("from"), "to": h.get("to"),
@@ -163,5 +173,5 @@ def send(account, draft_id, confirm="no"):
     s = _call(acct, "POST", "/drafts/send", body={"id": draft_id})
     return {"sent": True, "account": acct["name"], "message_id": s.get("id"), "thread": s.get("threadId")}
 
-OPS = {"accounts": accounts, "check": check, "search": search, "read": read, "draft_reply": draft_reply, "send": send}
+OPS = {"accounts": accounts, "check": check, "search": search, "new_since": new_since, "read": read, "draft_reply": draft_reply, "send": send}
 if __name__ == "__main__": sys.exit(run_cli(OPS))

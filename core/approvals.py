@@ -16,7 +16,7 @@ An item lives once:  pending → decided (ok / edit / drop: who, when, note) →
   python core/approvals.py result ID "what happened" [--failed]
   python core/approvals.py withdraw ID "why"
 """
-import contextlib, hashlib, pathlib, re, secrets, sys, time
+import contextlib, hashlib, os, pathlib, re, secrets, sys, time
 from typing import NamedTuple
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import store, autonomy
@@ -235,7 +235,12 @@ class Book:
             return dict(it)
 
     def consume(self, item_id):
-        """Take the decision, exactly once. Only GO means act."""
+        """Take the decision, exactly once. Only GO means act.
+        Never from a scheduled run (JINNEE_UNATTENDED=1, set by core/scheduler.py): decided items reach the lead through the
+        bridge's hand-over, with the owner's undo window behind them, not from a run nobody is watching."""
+        if os.getenv("JINNEE_UNATTENDED", "").strip() == "1":
+            return Verdict("REFUSED", "this is a scheduled run, and decisions are never carried out from one. Leave it: the bridge "
+                                      "hands decided items to the lead on its own", None)
         with self._open() as items:
             try: it = self._find(items, item_id)
             except Missing as e: return Verdict("REFUSED", str(e), None)

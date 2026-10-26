@@ -18,9 +18,10 @@ def order(pack_ids):
 
 def resolve(pack_ids):
     """general always comes first; vertical packs inherit and override.
-    autonomy_defaults: action → level, or {"level", "max_level", "locked", "label"} (core/autonomy.py reads both)."""
+    autonomy_defaults: action → level, or {"level", "max_level", "locked", "label"} (core/autonomy.py reads both).
+    schedule: job id → {"agent", "name", "when", "needs", "precheck", "task"} (core/scheduler.py); a later pack replaces a job."""
     merged = {"agents": ["jinnee"], "connectors": {"required": [], "optional": [], "defaults": {}},
-              "autonomy_defaults": {}, "onboarding": []}
+              "autonomy_defaults": {}, "onboarding": [], "schedule": {}}
     for pid in order(pack_ids):
         pk = load_pack(pid)
         for a in pk.get("agents", []):
@@ -31,6 +32,8 @@ def resolve(pack_ids):
                 if x not in merged["connectors"][k]: merged["connectors"][k].append(x)
         merged["connectors"]["defaults"].update(c.get("defaults", {}))
         merged["autonomy_defaults"].update(pk.get("autonomy_defaults", {}))
+        for job, spec in (pk.get("schedule") or {}).items():  # core/scheduler.py: the rhythm the agent files promise
+            if isinstance(spec, dict): merged["schedule"][job] = {**spec, "pack": pid}
         if pk.get("onboarding"): merged["onboarding"].append(f"{pk['_dir']}/{pk['onboarding']}")
     return merged
 
