@@ -27,6 +27,7 @@ from cbase import ConnectorError, need, run_cli, setting
 import business
 import order_checks
 import order_auto
+import complaints
 
 def _load(name):
     spec = importlib.util.spec_from_file_location(f"sync_{name}", HERE / name / "ops.py")
@@ -515,7 +516,10 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
     shipping, gls_err = _shipping(uploaded, gls, now)
     fulfilled, fulfill_errs, fulfilled_now = _fulfillments(every, shipping, shop, now, act)  # an older open order may still be picked up; the switch-on moment still limits it
     fulfill_err = "; ".join(dict.fromkeys(fulfill_errs)) or None
-    errors = [e for e in (shop_err, bill_err, pay_err, prod_err, cost_err, sales_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err) if e]
+    # The Complaints page; None = could not be read, the site keeps what it has. A broken complaint never stops the round.
+    try: complaint_rows, complaints_err = complaints.payload(every), None
+    except Exception as e: complaint_rows, complaints_err = None, f"[complaints] {type(e).__name__}: {e}"
+    errors = [e for e in (shop_err, bill_err, pay_err, prod_err, cost_err, sales_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err, complaints_err) if e]
     if billing is not None and not billing["complete"]: errors.append("[Billingo payments] more than 1000 invoices in the window: only the newest are shown")
     if scopes and scopes["missing"]: errors.append(f"[Shopify scopes] missing: {', '.join(scopes['missing'])}")
     if every is not None and len(every) >= PAGE: errors.append(f"[Shopify orders] more than {PAGE} orders in {reach} days: only the newest {PAGE} are shown")
@@ -548,7 +552,9 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
             "products": None if prods is None else [v for p in prods for v in _variants(p, costs)],
             # daily totals without personal data; None = not sent this round, the site keeps what it has
             "sales_daily": sales, "product_sales_daily": product_sales,
-            "sales_window": sales_window}  # which days the totals cover and why orders were left out (counts only)
+            "sales_window": sales_window,  # which days the totals cover and why orders were left out (counts only)
+            # brain/complaints.json: the reply text and the order's e-mail only once the owner approved the reply (connectors/complaints.py)
+            "complaints": complaint_rows}
 
 def _sales_count(payload):
     """Totals only (no order is named): days, rows, sums, left-out orders by reason, and orders / revenue per month."""
@@ -585,6 +591,8 @@ def push(send="no", days=DAYS, shop=None, bill=None, gls=None, history="auto"):
     count["billing"] = None if b is None else {"bank_accounts": len(b["bank_accounts"]), "invoices": len(b["invoices"]),
                                                "paid": sum(1 for i in b["invoices"] if i["payment_status"] == "paid"),
                                                "overdue": [i["number"] for i in b["invoices"] if i["overdue"]]}
+    cs = payload["complaints"]
+    count["complaints"] = None if cs is None else {"count": len(cs), "reply_ready": [c["complaint_id"] for c in cs if c.get("reply_body")]}
     count["shopify_fulfilled"] = sum(1 for o in payload["orders"] or [] if o["shopify_fulfillment"]["state"] == "fulfilled")
     private = [o["private"] for o in payload["orders"] or []]  # how many orders came with contact data: numbers only
     count.update(with_name=sum(1 for p in private if p["customer_name"]), with_address=sum(1 for p in private if p["shipping_address"]),

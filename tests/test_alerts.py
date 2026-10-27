@@ -679,7 +679,10 @@ class ScheduledRuns(Bridge):
         self.assertEqual(got[1]["replies"], ["agent reply"])  # no note when nothing scheduled is running
 
     def test_schedule_command(self):
-        got = self.drive([["msg", OWNER, "/schedule"], ["msg", STRANGER, "/schedule"]])
+        # The machine running the tests may have a real shop in its environment (the VPS container does): blank it here,
+        # so "order watch: off, needs shop" is tested on its own (it failed in the container on 2026-10-26)
+        no_shop = {k: "" for k in ("SHOPIFY_STORE", "SHOPIFY_CLIENT_ID", "SHOPIFY_CLIENT_SECRET", "SHOPIFY_ADMIN_TOKEN")}
+        got = self.drive([["msg", OWNER, "/schedule"], ["msg", STRANGER, "/schedule"]], extra=no_shop)
         reply = got[0]["replies"][0]
         self.assertEqual(got[0]["ran"], [])  # plain code, no agent run
         for needed in ("Schedule (", "Jinnee: morning brief: daily 08:00. Next", "Milo: order watch: off, needs shop",
