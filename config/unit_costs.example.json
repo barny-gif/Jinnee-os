@@ -1,0 +1,4 @@
+{
+  "_note": "Format of brain/unit_costs.json (the live file; not in git, purchase prices are business data). Key: Shopify product id (python3 connectors/shopify/ops.py list_products). unit_cost: HUF per unit, all variants of the product. Used only when Shopify's 'Cost per item' is empty; Shopify's value wins.",
+  "1234567890123": {"title": "Example product", "unit_cost": 1000, "currency": "HUF", "source": "owner, YYYY-MM-DD"}
+}

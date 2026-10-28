@@ -207,7 +207,8 @@ class UnitCost(unittest.TestCase):
         s = fake_shop(products=(self.PROD,), items={"501": "2100.50", "502": None})
         a, b, c = self.m.build(shop=s, bill=bill(), now=NOW)["products"]
         self.assertEqual((a["unit_cost"], a["sku"]), (2100.5, "FK1"))
-        self.assertIsNone(b["unit_cost"])          # not filled in Shopify: null
+        self.assertEqual(a["unit_cost_source"], "shopify")
+        self.assertNotIn("unit_cost", b)            # empty in Shopify, no owner price: left out (null would wipe it on the site)
         self.assertNotIn("unit_cost", c)            # not returned: the site keeps what it has
         self.assertIsNone(c["sku"])
         inv = [p for path, p in s.calls if path == "inventory_items.json"]
@@ -225,5 +226,84 @@ class UnitCost(unittest.TestCase):
         self.assertFalse(next(a for a in out["automations"] if a["key"] == "shopify_unit_cost")["ok"])
     def test_negative_or_bad_cost_is_null(self):
         self.assertIsNone(self.m._cost("-5")); self.assertIsNone(self.m._cost("abc")); self.assertEqual(self.m._cost("12"), 12.0)
+
+class OwnerUnitCost(unittest.TestCase):
+    """brain/unit_costs.json: the owner's procurement price when Shopify's Cost per item is empty (2026-10-28)."""
+    PROD = UnitCost.PROD
+    def setUp(self): self.m = load()
+    def owner(self, data):
+        self.m.UNIT_COSTS.write_text(data if isinstance(data, str) else json.dumps(data), encoding="utf-8")
+    def products(self, items, fail=None):
+        return self.m.build(shop=fake_shop(products=(self.PROD,), items=items, fail=fail), bill=bill(), now=NOW)
+    def test_empty_shopify_cost_uses_the_owner_price(self):
+        self.owner({"9": {"unit_cost": 3782, "currency": "HUF"}})
+        a, b, c = self.products({"501": None, "502": None, "503": None})["products"]
+        for p in (a, b, c): self.assertEqual((p["unit_cost"], p["unit_cost_source"]), (3782.0, "owner"))
+    def test_shopify_cost_wins_over_the_owner_price(self):
+        self.owner({"9": {"unit_cost": 3782}})
+        a, b, _ = self.products({"501": "2100", "502": None, "503": None})["products"]
+        self.assertEqual((a["unit_cost"], a["unit_cost_source"]), (2100.0, "shopify"))
+        self.assertEqual((b["unit_cost"], b["unit_cost_source"]), (3782.0, "owner"))
+    def test_no_value_anywhere_leaves_the_key_out_never_null(self):
+        self.owner({"12345": {"unit_cost": 999}})  # another product only
+        out = self.products({"501": None, "502": None, "503": None})
+        for p in out["products"]:
+            self.assertNotIn("unit_cost", p); self.assertNotIn("unit_cost_source", p)
+        self.assertNotIn(None, [p.get("unit_cost", 0) for p in out["products"]])
+    def test_shopify_unreadable_sends_no_owner_price(self):
+        self.owner({"9": {"unit_cost": 3782}})  # one bad round must not overwrite a real Shopify cost on the site
+        out = self.products(None, fail="inventory_items")
+        self.assertTrue(all("unit_cost" not in p for p in out["products"]))
+    def test_bad_entries_are_skipped_and_a_broken_file_is_reported(self):
+        self.owner({"9": {"unit_cost": -1}, "abc": {"unit_cost": 5}, "10": {"unit_cost": 5, "currency": "USD"}})
+        self.assertEqual(self.m._owner_costs(), {})
+        self.owner("{not json")
+        out = self.products({"501": None, "502": None, "503": None})
+        self.assertTrue(any("owner unit costs" in e for e in out["errors"]))
+        self.assertTrue(all("unit_cost" not in p for p in out["products"]))
+        self.assertEqual(len(out["products"]), 3)  # the round still goes
+    def test_switch_off(self):
+        self.owner({"9": {"unit_cost": 3782}})
+        with mock.patch.dict(os.environ, {"ECOM_UNIT_COST_FALLBACK": "no"}):
+            out = self.products({"501": None, "502": None, "503": None})
+        self.assertTrue(all("unit_cost" not in p for p in out["products"]))
+    def test_dry_run_counts(self):
+        self.owner({"9": {"unit_cost": 3782}})
+        out = self.m.push(shop=fake_shop(products=(self.PROD,), items={"501": "2100", "502": None, "503": None}), bill=bill())
+        self.assertTrue(out["dry_run"])
+        self.assertEqual((out["unit_cost_known"], out["unit_cost_from_owner"]), (3, 2))
+
+class ProductImage(unittest.TestCase):
+    """image_url: the variant's own photo, else the product's main photo; left out when there is none (2026-10-28)."""
+    def setUp(self): self.m = load()
+    def prod(self, **kw):
+        p = {"id": 9, "title": "Farmer", "status": "active", "variants": [
+            {"id": 77, "title": "Default Title", "price": "8490", "inventory_item_id": 501, "image_id": None},
+            {"id": 78, "title": "Zöld", "price": "8490", "inventory_item_id": 502, "image_id": 2}]}
+        p.update(kw); return p
+    def build(self, p):
+        return self.m.build(shop=fake_shop(products=(p,), items={"501": None, "502": None}), bill=bill(), now=NOW)["products"]
+    def test_main_image_and_variant_image(self):
+        p = self.prod(image={"id": 1, "src": "https://cdn.shopify.com/a.jpg?v=1"},
+                      images=[{"id": 1, "src": "https://cdn.shopify.com/a.jpg?v=1"}, {"id": 2, "src": "https://cdn.shopify.com/b.jpg"}])
+        a, b = self.build(p)
+        self.assertEqual(a["image_url"], "https://cdn.shopify.com/a.jpg?v=1")
+        self.assertEqual(b["image_url"], "https://cdn.shopify.com/b.jpg")
+    def test_no_image_leaves_the_key_out(self):
+        for p in (self.prod(), self.prod(image=None, images=[]), self.prod(image={"src": "http://insecure/a.jpg"}),
+                  self.prod(image={"src": "https://x/" + "a" * 2100})):
+            for row in self.build(p): self.assertNotIn("image_url", row)
+    def test_variant_image_missing_falls_back_to_main(self):
+        a, b = self.build(self.prod(image={"src": "https://cdn.shopify.com/a.jpg"}, images=[]))
+        self.assertEqual(b["image_url"], "https://cdn.shopify.com/a.jpg")
+    def test_products_call_asks_for_images_only(self):
+        s = fake_shop(products=(self.prod(),), items={})
+        self.m.build(shop=s, bill=bill(), now=NOW)
+        fields = next(p for path, p in s.calls if path == "products.json")["fields"]
+        self.assertEqual(fields, "id,title,status,variants,image,images")
+    def test_switch_off(self):
+        with mock.patch.dict(os.environ, {"ECOM_PRODUCT_IMAGES": "no"}):
+            rows = self.build(self.prod(image={"src": "https://cdn.shopify.com/a.jpg"}))
+        self.assertTrue(all("image_url" not in r for r in rows))
 
 if __name__ == "__main__": unittest.main()
