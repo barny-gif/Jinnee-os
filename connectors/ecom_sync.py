@@ -8,7 +8,9 @@ The site never calls this machine.
 Customer contact data (name, e-mail, phone, addresses) is sent too, in a separate "private" block per order: the owner decided
 on 2026-10-12 that it may live in the site's protected table. It goes nowhere else: this file never prints or logs it, and the
 CLI only ever shows counts. The order note is not fetched.
-Product costs tab (owner, 2026-10-23): products carry `unit_cost` (Shopify "Cost per item", inventory item, asked hourly);
+Product costs tab (owner, 2026-10-23): products carry `unit_cost` (Shopify "Cost per item", inventory item, asked hourly;
+when that is empty, the owner's procurement price from brain/unit_costs.json, with `unit_cost_source` shopify / owner) and
+`image_url` (the product photo, 2026-10-28); ECOM_UNIT_COST_FALLBACK=no / ECOM_PRODUCT_IMAGES=no switch these two off;
 orders carry `shipping_paid`, `discounts` (automatic discounts too, from discount_allocations) and `payment_type`; and two daily
 aggregates go with them, with no personal data at all: `sales_daily` and `product_sales_daily`. Each round sends the last DAYS
 days (from the orders already read); the full history (ECOM_HISTORY_DAYS, default 180) goes once a day (brain/ecom_sales_history.json).
@@ -48,7 +50,11 @@ BANK = ("bank deposit", "átutal", "atutal", "wire", "bank transfer")  # the sam
 COST_TTL = 3600  # Shopify "Cost per item" is asked once an hour
 _cost_cache = {"at": 0.0, "costs": None}
 _hist_try = {"at": 0.0}
-PRODUCT_FIELDS = "id,title,status,variants"
+PRODUCT_FIELDS = "id,title,status,variants,image,images"  # image / images: the product photo's URL only (no customer data)
+# The owner's procurement price per Shopify product id (owner, 2026-10-27/28), used when Shopify's "Cost per item" is empty.
+# Live store: brain/ (not in git: purchase prices are business data). Format: config/unit_costs.example.json.
+UNIT_COSTS = HERE.parent / "brain" / "unit_costs.json"
+IMAGE_MAX = 2000  # longest image URL sent
 ADDRESS_KEYS = ("name", "company", "address1", "address2", "zip", "city", "province", "country_code", "phone")
 COD = ("cash on delivery", "cod", "utánvét", "utanvet")  # the same words as order_flow.COD
 DAYS = "7"   # the owner asked for the last 7 days only; Shopify gives 60 without read_all_orders
@@ -311,17 +317,49 @@ def _closed(row):
 def _in_window(o, since):
     return (_ts(o.get("created_at")) or 0) >= since
 
-def _variants(p, costs=None):
-    """costs: inventory item id -> Shopify cost per item (None = not filled in Shopify). A variant whose cost could not be read
-    gets no unit_cost key at all, so the site keeps the cost it already has (sending null would wipe it)."""
+def _on(name):
+    """A switch in .env that is ON unless set to 'no'."""
+    return os.getenv(name, "").strip().lower() != "no"
+
+def _image(p, v):
+    """The variant's own photo if it has one, else the product's main photo: an https URL, or None (then the key is left out)."""
+    src = None
+    if v.get("image_id") is not None:
+        src = next((i.get("src") for i in p.get("images") or [] if isinstance(i, dict) and i.get("id") == v["image_id"]), None)
+    if not src: src = (p.get("image") or {}).get("src") if isinstance(p.get("image"), dict) else None
+    return src if isinstance(src, str) and src.startswith("https://") and len(src) <= IMAGE_MAX else None
+
+def _variants(p, costs=None, owner=None, images=True):
+    """costs: inventory item id -> Shopify cost per item (None = not filled in Shopify). owner: product id -> the owner's
+    procurement price (brain/unit_costs.json). Shopify's value wins; an empty Shopify cost falls back to the owner's price.
+    No value from either, or Shopify could not be read: no unit_cost key at all, so the site keeps the cost it already has
+    (sending null would wipe it). image_url likewise: left out when there is none."""
     out = []
     for v in p.get("variants") or []:
         row = {"variant_id": str(v["id"]), "product_id": str(p["id"]), "title": p.get("title"),
                "variant_title": None if (v.get("title") or "") == "Default Title" else v.get("title"), "sku": v.get("sku") or None,
                "price": float(v.get("price") or 0), "stock": v.get("inventory_quantity"), "status": p.get("status")}
         inv = str(v.get("inventory_item_id") or "")
-        if costs is not None and inv in costs: row["unit_cost"] = costs[inv]
+        if costs is not None and inv in costs:
+            if costs[inv] is not None: row.update(unit_cost=costs[inv], unit_cost_source="shopify")
+            elif (owner or {}).get(str(p["id"])) is not None: row.update(unit_cost=owner[str(p["id"])], unit_cost_source="owner")
+        img = _image(p, v) if images else None
+        if img: row["image_url"] = img
         out.append(row)
+    return out
+
+def _owner_costs():
+    """brain/unit_costs.json → {product id: HUF per unit}. No file = {}. An entry without a valid HUF amount is skipped;
+    a file that is not JSON raises (reported in errors, never guessed)."""
+    if not UNIT_COSTS.exists(): return {}
+    try: data = json.loads(UNIT_COSTS.read_text(encoding="utf-8"))
+    except ValueError as e: raise ConnectorError(f"[owner unit costs] {UNIT_COSTS.name} is not valid JSON: {e}")
+    out = {}
+    for pid, entry in (data.items() if isinstance(data, dict) else []):
+        if not str(pid).isdigit() or not isinstance(entry, dict): continue
+        if str(entry.get("currency") or "HUF").upper() != "HUF": continue
+        cost = _cost(entry.get("unit_cost"))
+        if cost is not None: out[str(pid)] = cost
     return out
 
 def _cost(value):
@@ -504,6 +542,8 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
     billing, pay_err = _billing(bill, now)
     prods, prod_err = _try("Shopify products", lambda: shop._get("products.json", {"limit": PAGE, "fields": PRODUCT_FIELDS}).get("products", []))
     costs, cost_err = (None, None) if not prods else _try("Shopify unit cost", lambda: _unit_costs(shop, prods, now))
+    # ECOM_UNIT_COST_FALLBACK=no switches the owner's prices off; ECOM_PRODUCT_IMAGES=no stops sending image_url
+    owner, owner_err = (_try("owner unit costs", _owner_costs) if _on("ECOM_UNIT_COST_FALLBACK") else ({}, None))
     full = history == "yes" or (history == "auto" and act and _history_due(now))
     if full and act: _hist_try["at"] = now  # a failed send is not retried every round, only after HISTORY_RETRY
     sales, product_sales, sales_window, sales_err = _sales(shop, every, now, min(int(days), int(reach) - 1), "yes" if full else "no")
@@ -519,7 +559,7 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
     # The Complaints page; None = could not be read, the site keeps what it has. A broken complaint never stops the round.
     try: complaint_rows, complaints_err = complaints.payload(every), None
     except Exception as e: complaint_rows, complaints_err = None, f"[complaints] {type(e).__name__}: {e}"
-    errors = [e for e in (shop_err, bill_err, pay_err, prod_err, cost_err, sales_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err, complaints_err) if e]
+    errors = [e for e in (shop_err, bill_err, pay_err, prod_err, cost_err, owner_err, sales_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err, complaints_err) if e]
     if billing is not None and not billing["complete"]: errors.append("[Billingo payments] more than 1000 invoices in the window: only the newest are shown")
     if scopes and scopes["missing"]: errors.append(f"[Shopify scopes] missing: {', '.join(scopes['missing'])}")
     if every is not None and len(every) >= PAGE: errors.append(f"[Shopify orders] more than {PAGE} orders in {reach} days: only the newest {PAGE} are shown")
@@ -549,7 +589,7 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
             # the last days' orders, plus any older one (up to OPEN_DAYS) that is still open; a closed older order keeps its last state on the site
             "orders": None if every is None else [r for o in every for r in [_order(o, invoices, uploaded, shipping, fulfilled)]
                                                   if _in_window(o, recent_since) or not _closed(r)],
-            "products": None if prods is None else [v for p in prods for v in _variants(p, costs)],
+            "products": None if prods is None else [v for p in prods for v in _variants(p, costs, owner, _on("ECOM_PRODUCT_IMAGES"))],
             # daily totals without personal data; None = not sent this round, the site keeps what it has
             "sales_daily": sales, "product_sales_daily": product_sales,
             "sales_window": sales_window,  # which days the totals cover and why orders were left out (counts only)
@@ -577,6 +617,8 @@ def push(send="no", days=DAYS, shop=None, bill=None, gls=None, history="auto"):
     payload = build(days, shop, bill, now=now, gls=gls, act=send == "yes", history=history)
     count = {k: None if payload[k] is None else len(payload[k]) for k in ("orders", "products")}
     count["unit_cost_known"] = None if payload["products"] is None else sum(1 for p in payload["products"] if p.get("unit_cost") is not None)
+    count["unit_cost_from_owner"] = None if payload["products"] is None else sum(1 for p in payload["products"] if p.get("unit_cost_source") == "owner")
+    count["image_url_known"] = None if payload["products"] is None else sum(1 for p in payload["products"] if p.get("image_url"))
     count["sales"] = _sales_count(payload)
     count["traffic_days"] = None if payload["traffic"] is None else len(payload["traffic"])
     count["visitors"] = None if payload["traffic"] is None else sum(t["visitors"] for t in payload["traffic"])
