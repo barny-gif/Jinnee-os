@@ -1,6 +1,6 @@
 """Who the Telegram bridge obeys. Run: python -m unittest discover tests
 core/jinnee.py runs in a copy of the repo with stand-in `telegram` modules: no real token, no network, and `claude` is never called."""
-import json, unittest
+import importlib.util, json, unittest
 
 import test_env as base
 
@@ -63,8 +63,28 @@ for user_id, name, data, size, caption in json.loads(sys.argv[1]):
     asyncio.run(jinnee.on_document(types.SimpleNamespace(effective_user=types.SimpleNamespace(id=user_id), message=msg), None))
     out.append({"ran": ran[before:], "replies": msg.replies})
 files = sorted(p for p in (pathlib.Path("handoffs") / "inbox").glob("*")) if (pathlib.Path("handoffs") / "inbox").exists() else []
-print("RESULT " + json.dumps({"steps": out, "files": {p.name: p.read_text(encoding="utf-8") for p in files}}))
+print("RESULT " + json.dumps({"steps": out, "files": {p.name: (p.read_bytes().hex() if p.suffix == ".pdf" else p.read_text(encoding="utf-8"))
+                                                       for p in files}}))
 """
+
+
+def text_pdf(line):
+    """A one-page PDF whose text layer is `line` (ASCII), with a correct xref table, built by hand so the test needs no PDF tool."""
+    stream = f"BT /F1 12 Tf 72 720 Td ({line}) Tj ET".encode()
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    out, offsets = bytearray(b"%PDF-1.4\n"), []
+    for i, body in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+    return bytes(out)
 
 
 class Bridge(base.RepoCopy):
@@ -152,19 +172,50 @@ class Bridge(base.RepoCopy):
     def test_files_that_are_not_taken(self):
         got = self.send_files([
             [STRANGER, "brief.md", b"hi".hex(), 2, ""],            # a stranger: no reply, nothing saved
-            [OWNER, "invoice.pdf", b"%PDF".hex(), 4, ""],          # not a text type
+            [OWNER, "offer.docx", b"PK\x03\x04".hex(), 4, ""],     # not a text type and not a PDF
             [OWNER, "run.sh", b"rm -rf /".hex(), 8, ""],
             [OWNER, "big.txt", b"x".hex(), 2_000_000, ""],          # over the limit by Telegram's size
             [OWNER, "fake.txt", b"\x00\x01\x02".hex(), 3, ""],      # binary behind a .txt name
+            [OWNER, "fake.pdf", b"MZ\x90\x00 not a pdf".hex(), 15, ""],  # something else behind a .pdf name
+            [OWNER, "huge.pdf", b"%PDF-".hex(), 11_000_000, ""],    # a PDF over its own, larger limit
         ])
-        stranger, pdf, sh, big, fake = got["steps"]
+        stranger, docx, sh, big, fake, fake_pdf, huge_pdf = got["steps"]
         self.assertEqual(stranger, {"ran": [], "replies": []})
-        for step in (pdf, sh, big, fake):
+        for step in (docx, sh, big, fake, fake_pdf, huge_pdf):
             self.assertEqual(step["ran"], [])
             self.assertEqual(len(step["replies"]), 1)
             self.assertIn("Nothing was saved", step["replies"][0].replace("nothing was saved", "Nothing was saved"))
-        self.assertIn(".txt, .md, .csv, .html", pdf["replies"][0])
+        self.assertIn(".txt, .md, .csv, .html", docx["replies"][0])
+        self.assertIn(".pdf", docx["replies"][0])
+        self.assertIn("does not read as a PDF", fake_pdf["replies"][0])
+        self.assertIn("10000 kB", huge_pdf["replies"][0])
         self.assertEqual(got["files"], {})
+
+    def test_pdf_without_a_text_layer_is_kept_and_the_lead_is_told_not_to_guess(self):
+        scan = b"%PDF-1.4\n%%EOF\n"  # no pages, no text: what a scan looks like to a text reader
+        got = self.send_files([[OWNER, "GLS szerzodes.pdf", scan.hex(), len(scan), "a díjtábla"]])
+        (step,) = got["steps"]
+        self.assertEqual(step["replies"], ["reply"])
+        self.assertIn("no readable text", step["ran"][0])
+        self.assertIn("Do not guess", step["ran"][0])
+        self.assertIn("a díjtábla", step["ran"][0])
+        (name,) = got["files"]  # only the PDF, no empty .txt next to it
+        self.assertTrue(name.endswith("-GLS_szerzodes.pdf"), name)
+        self.assertEqual(bytes.fromhex(got["files"][name]), scan)  # kept byte for byte
+
+    @unittest.skipUnless(importlib.util.find_spec("pypdf"), "pypdf is not installed here (it is in requirements.txt)")
+    def test_pdf_text_is_saved_next_to_the_pdf_and_handed_to_the_lead(self):
+        pdf = text_pdf("GLS dij 2244 Ft csomagonkent")
+        got = self.send_files([[OWNER, "gls.pdf", pdf.hex(), len(pdf), None]])
+        (step,) = got["steps"]
+        self.assertEqual(step["replies"], ["reply"])
+        self.assertIn("-gls.pdf.txt", step["ran"][0])
+        self.assertIn("check a number against its row", step["ran"][0])
+        self.assertIn("No message came with it", step["ran"][0])
+        pdf_name = next(n for n in got["files"] if n.endswith(".pdf"))
+        self.assertEqual(bytes.fromhex(got["files"][pdf_name]), pdf)
+        self.assertIn("GLS dij 2244 Ft csomagonkent", got["files"][pdf_name + ".txt"])
+        self.assertIn("--- page 1 ---", got["files"][pdf_name + ".txt"])
 
     def test_owner_html_file_is_saved_as_text_with_a_warning(self):
         page = "<html><body><h1>Brief</h1><script>alert(1)</script></body></html>\n"

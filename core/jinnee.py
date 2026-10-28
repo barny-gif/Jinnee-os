@@ -3,7 +3,7 @@ Entry point: the Telegram bridge. The owner's messages go to Claude Code with th
 (/ok, /change, /drop, /undo) are recorded here in plain code, never by the agent; a check once a minute sends alerts and
 hands decided items to the lead; another once a minute starts what core/scheduler.py says is due (the morning brief, the
 agents' own rhythm), one job at a time and never while the owner's own run is going. /schedule shows it. A text file the owner sends
-(.txt, .md, .csv, .html) is saved under handoffs/inbox/ and the lead is told where it is.
+(.txt, .md, .csv, .html) or a PDF (kept as it came, its text next to it) is saved under handoffs/inbox/ and the lead is told where it is.
 run_agent() is the hook for the full orchestration logic (sessions, intake, delegation).
 """
 import os, re, sys, time, subprocess, pathlib, asyncio, logging, threading, datetime as dt
@@ -223,12 +223,32 @@ async def answer(update, text):
     ids = [i["id"] for i in BOOK.open_items()[0] if i["id"] in reply][:5]  # the agent named a waiting item: put the tap buttons under it
     await say(update.message.reply_text, reply, buttons(ids))
 
-# --- text files from the owner (a brief, an invoice export): saved under handoffs/inbox/, then the lead is told where it is.
-# Plain text only: the agent reads it like any handoff. Nothing in it is run, and other file types are refused with a reason.
+# --- text files and PDFs from the owner (a brief, an invoice export, a contract): saved under handoffs/inbox/, then the lead is told where it is.
+# Text files are stored as text; a PDF is stored as it came, with its text layer next to it (.pdf.txt). Nothing in either is run,
+# and other file types are refused with a reason.
 INBOX = ROOT / "handoffs" / "inbox"  # handoffs/ is a mounted volume, so the file survives a rebuild
 TEXT_FILES = (".txt", ".md", ".csv", ".html", ".htm")  # .csv: exports (GLS, Billingo); .html: briefs and saved pages
 HTML_FILES = (".html", ".htm")  # kept as text: the agent reads the markup, nothing in it is opened, fetched or run
 MAX_FILE = 1_000_000  # bytes; a brief or an export is far smaller, and the whole file goes into one agent run
+PDF_FILES = (".pdf",)  # contracts, GLS settlements, supplier offers: the file is kept as it came, its text layer next to it
+MAX_PDF = 10_000_000  # bytes; a scanned contract is a few MB, and only the extracted text goes to the agent
+MAX_PDF_TEXT = 200_000  # characters of extracted text kept; more is cut, and the lead is told
+
+def is_pdf(name: str) -> bool:
+    return pathlib.PurePath(name or "").suffix.lower() in PDF_FILES
+
+def pdf_text(data: bytes) -> str:
+    """The PDF's text layer, page by page; '' when it has none (a scan), is encrypted or cannot be parsed.
+    pypdf only reads: nothing in the PDF (JavaScript, links, attachments) is opened or run."""
+    try:
+        import io, pypdf
+        reader = pypdf.PdfReader(io.BytesIO(data))
+        if reader.is_encrypted: return ""
+        pages = [(p.extract_text() or "").strip() for p in reader.pages]
+    except Exception as e:  # ImportError (pypdf missing) included: the PDF is still saved, the lead is told there is no text
+        log.warning("pdf text failed: %s", type(e).__name__)
+        return ""
+    return "\n\n".join(f"--- page {i} ---\n{t}" for i, t in enumerate(pages, 1) if t)
 
 def safe_name(name: str) -> str:
     """The owner's file name without folders or odd characters, so it can only land inside handoffs/inbox/."""
@@ -245,10 +265,11 @@ def decode(data: bytes) -> str:
 
 def file_refusal(name: str, size) -> str:
     """'' when the file may be taken; otherwise the reason, in words the owner can act on."""
-    if pathlib.PurePath(name or "").suffix.lower() not in TEXT_FILES:
-        return f"I can only take text files ({', '.join(TEXT_FILES)}). Nothing was saved. Send it as one of these, or paste the text."
-    if size and size > MAX_FILE:
-        return f"This file is {size // 1000} kB; the limit is {MAX_FILE // 1000} kB. Nothing was saved. Split it, or send the part that matters."
+    if pathlib.PurePath(name or "").suffix.lower() not in TEXT_FILES and not is_pdf(name):
+        return f"I can only take text files and PDFs ({', '.join(TEXT_FILES + PDF_FILES)}). Nothing was saved. Send it as one of these, or paste the text."
+    limit = MAX_PDF if is_pdf(name) else MAX_FILE
+    if size and size > limit:
+        return f"This file is {size // 1000} kB; the limit is {limit // 1000} kB. Nothing was saved. Split it, or send the part that matters."
     return ""
 
 async def on_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -258,23 +279,40 @@ async def on_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     name = getattr(doc, "file_name", "") or ""
     no = file_refusal(name, getattr(doc, "file_size", 0))
     if no: return await update.message.reply_text(no)
+    pdf = is_pdf(name)
     try:
         data = bytes(await (await doc.get_file()).download_as_bytearray())
-        if len(data) > MAX_FILE: return await update.message.reply_text(file_refusal(name, len(data)))
-        text = decode(data)
+        if len(data) > (MAX_PDF if pdf else MAX_FILE): return await update.message.reply_text(file_refusal(name, len(data)))
+        if pdf and not data.lstrip()[:5] == b"%PDF-": raise ValueError("not a pdf")
+        text = pdf_text(data) if pdf else decode(data)
     except ValueError:
-        return await update.message.reply_text("This does not read as a text file, so nothing was saved. Paste the text instead.")
+        kind = "a PDF" if pdf else "a text file"
+        return await update.message.reply_text(f"This does not read as {kind}, so nothing was saved. Send it again, or paste the text instead.")
     except Exception as e:
         log.warning("file download failed: %s", type(e).__name__)
         return await update.message.reply_text("I could not download the file from Telegram, so nothing was saved. Send it again.")
     INBOX.mkdir(parents=True, exist_ok=True)
     path = INBOX / f"{dt.datetime.now(alerts.zone()):%Y-%m-%d_%H%M%S}-{safe_name(name)}"
-    path.write_text(text, encoding="utf-8")
     caption = (update.message.caption or "").strip()
+    said = (f"The owner's message with it: {caption}" if caption else "No message came with it.")
+    if pdf:
+        path.write_bytes(data)  # the original, for the owner and the accountant; the agent reads the text file next to it
+        if not text:
+            return await answer(update, f"The owner sent a PDF on Telegram, saved as {path.relative_to(ROOT)}. It has no readable text "
+                                        "(probably a scan or a locked file), so nothing could be read from it: say so, and ask the owner "
+                                        "for the numbers in a message or a text export. Do not guess its content. " + said)
+        cut = len(text) > MAX_PDF_TEXT
+        txt = path.with_name(path.name + ".txt")
+        txt.write_text(text[:MAX_PDF_TEXT], encoding="utf-8")
+        return await answer(update, f"The owner sent a PDF on Telegram, saved as {path.relative_to(ROOT)}; its text is in "
+                                    f"{txt.relative_to(ROOT)} ({min(len(text), MAX_PDF_TEXT)} characters"
+                                    + (", cut at the limit: the rest is only in the PDF" if cut else "") + "). Read the text file. "
+                                    "Tables can come out jumbled: check a number against its row before you use it. " + said)
+    path.write_text(text, encoding="utf-8")
     await answer(update, f"The owner sent a file on Telegram, saved as {path.relative_to(ROOT)} ({len(text)} characters). "
                          "Read it from there. "
                          + ("It is HTML: read it as text only; do not open its links or run its scripts. " if path.suffix.lower() in HTML_FILES else "")
-                         + (f"The owner's message with it: {caption}" if caption else "No message came with it."))
+                         + said)
 
 def buttons(ids):
     """Tap instead of typing: one row per waiting item. The tap goes through the same owner_command as /ok, /change, /drop."""
