@@ -18,6 +18,7 @@ def load(traffic=True):
     m.HISTORY = tmp / "sales_history.json"
     m.UNIT_COSTS = tmp / "unit_costs.json"  # absent unless a test writes it
     m.complaints.STATE = tmp / "complaints.json"
+    m.HIGHLIGHTS = tmp / "highlights.json"  # absent unless a test writes it
     m.order_auto.STATE, m.order_auto.START = tmp / "order_auto.json", tmp / "order_auto_start.json"
     m.order_auto._gate = lambda action: 1  # the automatic chain has its own tests (test_order_auto.py); off here
     m._gls_fail.update(at=0.0, error=None)
