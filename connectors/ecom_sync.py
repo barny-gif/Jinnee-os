@@ -67,6 +67,8 @@ GLS_STATUS = HERE.parent / "brain" / "gls_status.json"  # order name -> parcel i
 GLS_TTL = 3600       # a parcel is asked from GLS at most once an hour
 GLS_RETRY = 600      # after a failed GLS call, wait 10 minutes before asking again
 GLS_FINAL = ("delivered", "returned")  # never asked again
+HIGHLIGHTS = HERE.parent / "brain" / "highlights.json"  # id -> {order_name, title, note, trigger, complaint_id, created, done}: the Overview's "Kiemelt figyelés"
+MANUAL_KINDS = ("emag", "barter", "influencer", "gift", "test")
 FULFILLED = HERE.parent / "brain" / "shopify_fulfilled.json"  # order name -> {order_id, tracking, at, fulfillment_id} or {..., error, tried}
 FULFILL_RETRY = 1800  # a failed Shopify fulfillment is tried again after 30 minutes, not every round
 PICKED_UP = ("handed_to_gls", "in_transit", "out_for_delivery", "delivered", "returned", "problem")  # GLS had the parcel
@@ -85,6 +87,33 @@ def _try(label, fn):
 def _uploaded():
     try: return json.loads(UPLOADED.read_text(encoding="utf-8"))
     except (OSError, ValueError): return {}
+
+def _manual_parcels(uploaded, shipping):
+    """Parcels outside Shopify (eMAG, influencer / barter packages) for the site's packing queue: reference, kind, contents,
+    COD and GLS state. No address, name or phone: those never leave parcel_manual. Older records carry no contents ("")."""
+    out = []
+    for ref, entry in uploaded.items():
+        if ref.startswith("#"): continue  # Shopify orders go in "orders"
+        rec = entry if isinstance(entry, dict) else {"parcel_id": entry}
+        info = rec.get("manual") or {}
+        channel = "emag" if ref.lower().startswith("emag") else "manual"
+        kind = (info.get("kind") or "").lower()
+        if kind not in MANUAL_KINDS:  # records from before 2026-10-30: the kind is the reference's first word
+            kind = "emag" if channel == "emag" else next((k for k in MANUAL_KINDS if ref.lower().startswith(k)), "barter")
+        s = shipping.get(ref) or {}
+        out.append({"ref": ref, "channel": channel, "kind": kind, "items": info.get("items") or "",
+                    "cod_amount": float(rec.get("cod_amount") or 0), "uploaded_at": rec.get("at"), "parcel_id": rec.get("parcel_id"),
+                    "gls_state": s.get("state"), "handed_at": s.get("handed_at"), "delivered_at": s.get("delivered_at")})
+    return out
+
+def _highlights():
+    """brain/highlights.json for the Overview. The site never reopens an item the owner closed there."""
+    try: d = json.loads(HIGHLIGHTS.read_text(encoding="utf-8"))
+    except FileNotFoundError: return []
+    if not isinstance(d, dict): raise ConnectorError("[highlights] brain/highlights.json is not an object")
+    return [{"id": k, "order_name": v.get("order_name"), "title": v.get("title"), "note": v.get("note"), "trigger": v.get("trigger"),
+             "complaint_id": v.get("complaint_id"), "created_on": v.get("created"), "done": bool(v.get("done"))}
+            for k, v in d.items() if isinstance(v, dict)]
 
 def _invoices(bill, days, now):
     """Billingo's list, at most BILL_TTL old. A failed call is never cached: unknown stays unknown until it answers."""
@@ -559,7 +588,8 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
     # The Complaints page; None = could not be read, the site keeps what it has. A broken complaint never stops the round.
     try: complaint_rows, complaints_err = complaints.payload(every), None
     except Exception as e: complaint_rows, complaints_err = None, f"[complaints] {type(e).__name__}: {e}"
-    errors = [e for e in (shop_err, bill_err, pay_err, prod_err, cost_err, owner_err, sales_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err, complaints_err) if e]
+    highlights, highlights_err = _try("highlights", _highlights)
+    errors = [e for e in (shop_err, bill_err, pay_err, prod_err, cost_err, owner_err, sales_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err, complaints_err, highlights_err) if e]
     if billing is not None and not billing["complete"]: errors.append("[Billingo payments] more than 1000 invoices in the window: only the newest are shown")
     if scopes and scopes["missing"]: errors.append(f"[Shopify scopes] missing: {', '.join(scopes['missing'])}")
     if every is not None and len(every) >= PAGE: errors.append(f"[Shopify orders] more than {PAGE} orders in {reach} days: only the newest {PAGE} are shown")
@@ -594,7 +624,9 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
             "sales_daily": sales, "product_sales_daily": product_sales,
             "sales_window": sales_window,  # which days the totals cover and why orders were left out (counts only)
             # brain/complaints.json: the reply text and the order's e-mail only once the owner approved the reply (connectors/complaints.py)
-            "complaints": complaint_rows}
+            "complaints": complaint_rows,
+            # the packing queue: parcels outside Shopify (no personal data); and the Overview's watch list (None = unreadable, the site keeps it)
+            "manual_parcels": _manual_parcels(uploaded, shipping), "highlights": highlights}
 
 def _sales_count(payload):
     """Totals only (no order is named): days, rows, sums, left-out orders by reason, and orders / revenue per month."""
@@ -635,6 +667,8 @@ def push(send="no", days=DAYS, shop=None, bill=None, gls=None, history="auto"):
                                                "overdue": [i["number"] for i in b["invoices"] if i["overdue"]]}
     cs = payload["complaints"]
     count["complaints"] = None if cs is None else {"count": len(cs), "reply_ready": [c["complaint_id"] for c in cs if c.get("reply_body")]}
+    count["manual_parcels"] = [p["ref"] for p in payload["manual_parcels"] if not p["handed_at"]]  # still to be packed / picked up
+    count["highlights"] = None if payload["highlights"] is None else [h["id"] for h in payload["highlights"] if not h["done"]]
     count["shopify_fulfilled"] = sum(1 for o in payload["orders"] or [] if o["shopify_fulfillment"]["state"] == "fulfilled")
     private = [o["private"] for o in payload["orders"] or []]  # how many orders came with contact data: numbers only
     count.update(with_name=sum(1 for p in private if p["customer_name"]), with_address=sum(1 for p in private if p["shipping_address"]),

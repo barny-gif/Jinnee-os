@@ -47,7 +47,9 @@ def prepare(channel, ref, goods, cod, name, zip, city, street, house, phone, ema
     if send != "yes":
         return {"order": key, "dry_run": True, "cod_amount": cod, "content": parcel["Content"], "next": "run again with --send yes"}
     out = flow.step("upload to MyGLS", gls.prepare_labels, [parcel])
-    rec = {"parcel_id": out[0]["parcel_id"] if out else None, "cod_amount": cod, "at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")}
+    rec = {"parcel_id": out[0]["parcel_id"] if out else None, "cod_amount": cod, "at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+           # for the site's packing queue (ecom_sync): kind and contents only, never the address
+           "manual": {"kind": kind or ("emag" if channel.lower() == "emag" else "barter"), "items": goods.strip()}}
     flow.UPLOADED.write_text(json.dumps({**flow._uploaded(), key: rec}), encoding="utf-8")
     return {"order": key, "uploaded": out, "cod_amount": cod, "content": parcel["Content"]}
 
