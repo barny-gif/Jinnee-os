@@ -45,6 +45,23 @@ class Upload(unittest.TestCase):
         self.assertEqual(http.calls[0][2], {"Content-Type": "image/jpeg"})
         self.assertNotIn("secret", str(out)); self.assertEqual(out["host"], "uploads.example.test")
 
+    def test_signed_goog_headers_are_sent(self):
+        # t4r2, 2026-10-31: the URL is signed with these two headers; Content-Type alone got 400 from storage
+        http = FakeHTTP()
+        h = '{"x-goog-content-length-range": "0,262144000", "x-goog-meta-user_id": "u1"}'
+        out = lu.put(url=URL, file="handoffs/inbox/p01.jpg", content_type="image/jpeg", headers=h, send="yes", _http=http)
+        self.assertEqual(http.calls[0][2], {"x-goog-content-length-range": "0,262144000", "x-goog-meta-user_id": "u1",
+                                            "Content-Type": "image/jpeg"})
+        self.assertEqual(out["headers"], ["x-goog-content-length-range", "x-goog-meta-user_id"])
+        self.assertNotIn("u1", str(out))
+
+    def test_refuses_other_headers_and_bad_json(self):
+        for h in ('{"Authorization": "x"}', '{"x-goog-a": "1\\nHost: evil"}', "not json", "[1]"):
+            http = FakeHTTP()
+            with self.assertRaises(lu.ConnectorError):
+                lu.put(url=URL, file="handoffs/inbox/p01.jpg", headers=h, send="yes", _http=http)
+            self.assertEqual(http.calls, [])
+
     def test_refuses_files_outside_handoffs(self):
         for f in ("brain/secret.json", ".env", "handoffs/../.env"):
             with self.assertRaises(lu.ConnectorError): lu.put(url=URL, file=f, send="yes", _http=FakeHTTP())
