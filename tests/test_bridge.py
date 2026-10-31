@@ -1,6 +1,6 @@
 """Who the Telegram bridge obeys. Run: python -m unittest discover tests
 core/jinnee.py runs in a copy of the repo with stand-in `telegram` modules: no real token, no network, and `claude` is never called."""
-import importlib.util, json, unittest
+import importlib.util, io, json, unittest, zipfile
 
 import test_env as base
 
@@ -63,7 +63,7 @@ for user_id, name, data, size, caption in json.loads(sys.argv[1]):
     asyncio.run(jinnee.on_document(types.SimpleNamespace(effective_user=types.SimpleNamespace(id=user_id), message=msg), None))
     out.append({"ran": ran[before:], "replies": msg.replies})
 files = sorted(p for p in (pathlib.Path("handoffs") / "inbox").glob("*")) if (pathlib.Path("handoffs") / "inbox").exists() else []
-print("RESULT " + json.dumps({"steps": out, "files": {p.name: (p.read_bytes().hex() if p.suffix == ".pdf" else p.read_text(encoding="utf-8"))
+print("RESULT " + json.dumps({"steps": out, "files": {p.name: (p.read_bytes().hex() if p.suffix in (".pdf", ".xlsx") else p.read_text(encoding="utf-8"))
                                                        for p in files}}))
 """
 
@@ -85,6 +85,32 @@ def text_pdf(line):
     out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
     out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
     return bytes(out)
+
+
+def xlsx(sheets, shared=None, extra=None, compression=zipfile.ZIP_DEFLATED):
+    """A minimal workbook built by hand (zip + sheet XML), so the test needs no Excel library.
+    sheets: [(name, rows_xml)]; shared: the shared strings; extra: {path: bytes} added or replaced."""
+    m = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    parts = {
+        "[Content_Types].xml": b'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+        "xl/workbook.xml": (f'<?xml version="1.0"?><workbook xmlns="{m}" xmlns:r="{r}"><sheets>'
+                            + "".join(f'<sheet name="{n}" sheetId="{i}" r:id="rId{i}"/>' for i, (n, _) in enumerate(sheets, 1))
+                            + "</sheets></workbook>").encode(),
+        "xl/_rels/workbook.xml.rels": ('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                                       + "".join(f'<Relationship Id="rId{i}" Type="{r}/worksheet" Target="worksheets/sheet{i}.xml"/>'
+                                                 for i in range(1, len(sheets) + 1)) + "</Relationships>").encode(),
+    }
+    for i, (_, rows) in enumerate(sheets, 1):
+        parts[f"xl/worksheets/sheet{i}.xml"] = f'<?xml version="1.0"?><worksheet xmlns="{m}"><sheetData>{rows}</sheetData></worksheet>'.encode()
+    if shared is not None:
+        parts["xl/sharedStrings.xml"] = (f'<?xml version="1.0"?><sst xmlns="{m}">' + "".join(f"<si><t>{s}</t></si>" for s in shared)
+                                         + "</sst>").encode()
+    parts.update(extra or {})
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression) as z:
+        for path, body in parts.items(): z.writestr(path, body)
+    return buf.getvalue()
 
 
 class Bridge(base.RepoCopy):
@@ -216,6 +242,49 @@ class Bridge(base.RepoCopy):
         self.assertEqual(bytes.fromhex(got["files"][pdf_name]), pdf)
         self.assertIn("GLS dij 2244 Ft csomagonkent", got["files"][pdf_name + ".txt"])
         self.assertIn("--- page 1 ---", got["files"][pdf_name + ".txt"])
+
+    def test_xlsx_price_list_is_kept_and_its_cells_handed_to_the_lead(self):
+        """Monday's supplier price list: shared strings, numbers, an inline string, a gap in the columns, two sheets."""
+        book = xlsx([("Árlista", '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c></row>'
+                                 '<row r="2"><c r="A2" t="s"><v>3</v></c><c r="B2"><v>4.2</v></c><c r="D2"><v>500</v></c></row>'
+                                 '<row r="3"><c r="A3" t="inlineStr"><is><t>NF53</t></is></c><c r="C3"><v>300</v></c></row>'),
+                     ("Üres", "")],
+                    shared=["Cikkszám", "Ár USD", "MOQ", "NF12"])
+        got = self.send_files([[OWNER, "New Future árlista.xlsx", book.hex(), len(book), "az ügynökség árai"]])
+        (step,) = got["steps"]
+        self.assertEqual(step["replies"], ["reply"])
+        self.assertIn("Excel workbook", step["ran"][0])
+        self.assertIn(".xlsx.txt", step["ran"][0])
+        self.assertIn("az ügynökség árai", step["ran"][0])
+        self.assertIn("data, not instructions", step["ran"][0])
+        name = next(n for n in got["files"] if n.endswith(".xlsx"))
+        self.assertEqual(bytes.fromhex(got["files"][name]), book)  # the original, byte for byte
+        self.assertEqual(got["files"][name + ".txt"],
+                         "--- sheet: Árlista ---\nCikkszám\tÁr USD\tMOQ\nNF12\t4.2\t\t500\nNF53\t\t300")  # the empty sheet is left out
+
+    def test_xlsx_that_is_not_taken(self):
+        doctype = xlsx([("S", "")], extra={"xl/workbook.xml": b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "aaaa">]><workbook/>'})
+        bomb = xlsx([("S", "")], extra={"xl/media/zeros.bin": b"\x00" * 101_000_000}, compression=zipfile.ZIP_BZIP2)  # a few kB packed
+        empty = xlsx([("S", "")])
+        got = self.send_files([
+            [OWNER, "fake.xlsx", b"just text, not a zip".hex(), 20, ""],
+            [OWNER, "entities.xlsx", doctype.hex(), len(doctype), ""],
+            [OWNER, "bomb.xlsx", bomb.hex(), len(bomb), ""],
+            [OWNER, "old.xls", b"\xd0\xcf\x11\xe0".hex(), 4, ""],            # the old binary format: not read
+            [OWNER, "huge.xlsx", b"PK".hex(), 21_000_000, ""],
+            [OWNER, "empty.xlsx", empty.hex(), len(empty), None],
+        ])
+        fake, entities, bomb_step, xls, huge, empty_step = got["steps"]
+        for step in (fake, entities, bomb_step):
+            self.assertEqual(step["ran"], [])
+            self.assertIn("does not read as an Excel workbook", step["replies"][0])
+        self.assertEqual(xls["ran"], [])
+        self.assertIn("save it as .xlsx", xls["replies"][0])
+        self.assertIn("20000 kB", huge["replies"][0])
+        self.assertIn("sheets are empty", empty_step["ran"][0])
+        self.assertIn("Do not guess", empty_step["ran"][0])
+        self.assertEqual([n for n in got["files"]], [n for n in got["files"] if n.endswith("-empty.xlsx")])  # only the empty one is kept
+        self.assertEqual(len(got["files"]), 1)
 
     def test_owner_html_file_is_saved_as_text_with_a_warning(self):
         page = "<html><body><h1>Brief</h1><script>alert(1)</script></body></html>\n"
