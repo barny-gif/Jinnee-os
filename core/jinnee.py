@@ -231,7 +231,7 @@ TEXT_FILES = (".txt", ".md", ".csv", ".html", ".htm")  # .csv: exports (GLS, Bil
 HTML_FILES = (".html", ".htm")  # kept as text: the agent reads the markup, nothing in it is opened, fetched or run
 MAX_FILE = 1_000_000  # bytes; a brief or an export is far smaller, and the whole file goes into one agent run
 PDF_FILES = (".pdf",)  # contracts, GLS settlements, supplier offers: the file is kept as it came, its text layer next to it
-MAX_PDF = 10_000_000  # bytes; a scanned contract is a few MB, and only the extracted text goes to the agent
+MAX_PDF = 20_000_000  # bytes: Telegram's own ceiling for a bot download (cloud Bot API, 20 MB); a supplier catalogue is bigger than 10 MB
 MAX_PDF_TEXT = 200_000  # characters of extracted text kept; more is cut, and the lead is told
 
 def is_pdf(name: str) -> bool:

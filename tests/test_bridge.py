@@ -177,7 +177,7 @@ class Bridge(base.RepoCopy):
             [OWNER, "big.txt", b"x".hex(), 2_000_000, ""],          # over the limit by Telegram's size
             [OWNER, "fake.txt", b"\x00\x01\x02".hex(), 3, ""],      # binary behind a .txt name
             [OWNER, "fake.pdf", b"MZ\x90\x00 not a pdf".hex(), 15, ""],  # something else behind a .pdf name
-            [OWNER, "huge.pdf", b"%PDF-".hex(), 11_000_000, ""],    # a PDF over its own, larger limit
+            [OWNER, "huge.pdf", b"%PDF-".hex(), 21_000_000, ""],    # a PDF over its own, larger limit (Telegram's 20 MB)
         ])
         stranger, docx, sh, big, fake, fake_pdf, huge_pdf = got["steps"]
         self.assertEqual(stranger, {"ran": [], "replies": []})
@@ -188,7 +188,7 @@ class Bridge(base.RepoCopy):
         self.assertIn(".txt, .md, .csv, .html", docx["replies"][0])
         self.assertIn(".pdf", docx["replies"][0])
         self.assertIn("does not read as a PDF", fake_pdf["replies"][0])
-        self.assertIn("10000 kB", huge_pdf["replies"][0])
+        self.assertIn("20000 kB", huge_pdf["replies"][0])
         self.assertEqual(got["files"], {})
 
     def test_pdf_without_a_text_layer_is_kept_and_the_lead_is_told_not_to_guess(self):
