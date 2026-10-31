@@ -41,7 +41,9 @@ WATCH = alerts.Watch(BRAIN)
 TOOLS = [f"Bash({py} core/{prog}.py *)" for prog in ("approvals", "autonomy", "heartbeat") for py in ("python3", "python")]
 # Lovable: reading is free. send_message/get_message let Forge build, which spends the owner's credits, so the
 # agent files require the owner's yes on the exact prompt first. respond_to_approval stays with the owner.
-TOOLS += [f"mcp__claude_ai_Lovable__{t}" for t in ("list_workspaces", "list_projects", "get_project", "list_files", "read_file", "list_edits", "get_diff", "send_message", "get_message")]
+# get_file_upload_url: the attachments of an approved prompt (catalogue images, 6972); the file itself goes up through
+# connectors/lovable_upload.py, which only takes files from handoffs/.
+TOOLS += [f"mcp__claude_ai_Lovable__{t}" for t in ("list_workspaces", "list_projects", "get_project", "list_files", "read_file", "list_edits", "get_diff", "send_message", "get_message", "get_file_upload_url")]
 # Shopify through the owner's claude.ai connector: the shop's catalogue, stock and sales numbers only. Orders and customers
 # (names, addresses, e-mails) are deliberately NOT here: they stay behind connectors/shopify, which shows order numbers only.
 TOOLS += [f"mcp__claude_ai_Shopify__{t}" for t in ("get-shop-info", "search_products", "get-product", "get-inventory-levels", "run-analytics-query", "search_collections", "get-collection")]
@@ -53,7 +55,7 @@ GUARDED = [f"Edit(brain/{name})" for name in ("approvals.json", "autonomy_config
 # A scheduled run (core/scheduler.py) has nobody watching it. It gets less: no building (Lovable, git, tests), writing only
 # in brain/ and handoffs/ (dontAsk refuses everything not allowed here), and JINNEE_UNATTENDED=1, with which the connectors
 # refuse every outgoing step and approvals.py refuses to hand out a decision.
-SCHEDULED_TOOLS = [t for t in TOOLS if not any(x in t for x in ("forge_git", "-m unittest", "Lovable__send_message", "Lovable__get_message"))]
+SCHEDULED_TOOLS = [t for t in TOOLS if not any(x in t for x in ("forge_git", "-m unittest", "Lovable__send_message", "Lovable__get_message", "Lovable__get_file_upload_url"))]
 SCHEDULED_TOOLS += ["Edit(brain/**)", "Edit(handoffs/**)"]
 SCHEDULED_DENY = GUARDED + [f"Edit(brain/{name})" for name in ("schedule_state.json", "schedule_outbox.json", "heartbeat.json")]
 SCHEDULED_DENY += [f"Bash({py} core/{cmd} *)" for py in ("python3", "python") for cmd in ("approvals.py consume", "autonomy.py apply")]
