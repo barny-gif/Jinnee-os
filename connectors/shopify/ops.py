@@ -1,11 +1,14 @@
-"""Shopify connector. Reads orders, products, the app's scopes and the store's sessions; the one write is `fulfill` (mark an order
-fulfilled with the GLS tracking number, never e-mailing the customer), a dry run unless --confirm yes. Op names follow connectors/README.md.
+"""Shopify connector. Reads orders, products, the app's scopes and the store's sessions. Writes, each a dry run unless --confirm yes:
+`fulfill` (mark an order fulfilled with the GLS tracking number, never e-mailing the customer), `set_house_number` and `mark_paid`
+(the owner's two narrow order edits, 2026-10-29; never price, product or customer). Op names follow connectors/README.md.
 CLI: python3 connectors/shopify/ops.py list_orders --days 7
      python3 connectors/shopify/ops.py scopes                 (which scopes the token has, and which REQUIRED ones are missing)
      python3 connectors/shopify/ops.py sessions --days 7      (sessions and online store visitors per day; totals only)
      python3 connectors/shopify/ops.py open_count [--since 1792044000]   (counts only: open unfulfilled, new since)
-     python3 connectors/shopify/ops.py fulfill --order-id 123 --tracking 1234567890 [--confirm yes]"""
-import os, sys, json, time, pathlib, datetime as dt
+     python3 connectors/shopify/ops.py fulfill --order-id 123 --tracking 1234567890 [--confirm yes]
+     python3 connectors/shopify/ops.py set_house_number --order-id 123 --house-number 12/B [--confirm yes]   (GO: edit_shopify_order)
+     python3 connectors/shopify/ops.py mark_paid --order-id 123 [--confirm yes]   (COD after the GLS transfer; GO: edit_shopify_order)"""
+import os, re, sys, json, time, pathlib, importlib.util, datetime as dt
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import requests
 from cbase import ConnectorError, need, run_cli
@@ -13,7 +16,8 @@ from cbase import ConnectorError, need, run_cli
 VERSION = os.getenv("SHOPIFY_API_VERSION", "2026-07")
 # What the team's work needs (owner, 2026-10-15). write_products is deliberately NOT here: the owner dropped it.
 REQUIRED_SCOPES = ("read_orders", "read_products", "read_inventory", "read_all_orders", "read_reports",
-                   "read_merchant_managed_fulfillment_orders", "write_merchant_managed_fulfillment_orders")
+                   "read_merchant_managed_fulfillment_orders", "write_merchant_managed_fulfillment_orders",
+                   "write_orders")  # write_orders: set_house_number and mark_paid (2026-10-30)
 
 _TOKEN = {"value": "", "until": 0.0}
 
@@ -185,6 +189,88 @@ def fulfill(order_id, tracking, company="GLS", confirm="no"):
     return {"order_id": str(order_id), "already": False, "created": True, "fulfillment_id": str(f.get("id") or ""), "status": f.get("status"),
             "tracking": tracking, "notify_customer": False}
 
+def _graphql(query, variables, what):
+    host = _shop_host()
+    try:
+        r = requests.post(f"https://{host}/admin/api/{VERSION}/graphql.json", timeout=30, headers={"X-Shopify-Access-Token": _token(host)},
+                          json={"query": query, "variables": variables})
+    except requests.RequestException as e:
+        raise ConnectorError(f"[{what}] Shopify did not answer: {type(e).__name__}")
+    body = _check(r, what)
+    if body.get("errors"): raise ConnectorError(f"[{what}] Shopify refused it: {json.dumps(body['errors'], ensure_ascii=False)[:300]}")
+    return body.get("data") or {}
+
+def _user_errors(payload, what):
+    errs = (payload or {}).get("userErrors") or []
+    if errs: raise ConnectorError(f"[{what}] Shopify refused it: " + "; ".join(str(e.get("message")) for e in errs)[:300])
+
+def _split_street(address):
+    """The same street / house number split the label and the checks use (order_flow.split_street), loaded lazily."""
+    spec = importlib.util.spec_from_file_location("shopify_order_flow", pathlib.Path(__file__).resolve().parent.parent / "order_flow.py")
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    return m.split_street(address)
+
+HOUSE = re.compile(r"\d[\w/.\-]*(?:\s*(?:em|fsz|ép|lh)\.?\s*\S*)?", re.I)
+ORDER_UPDATE = "mutation($input: OrderInput!) { orderUpdate(input: $input) { order { id } userErrors { field message } } }"
+# MailingAddressInput (Admin GraphQL): shippingAddress REPLACES the address, so every field that is there now is sent back
+ADDRESS_FIELDS = (("first_name", "firstName"), ("last_name", "lastName"), ("company", "company"), ("address1", "address1"),
+                  ("address2", "address2"), ("city", "city"), ("zip", "zip"), ("country_code", "countryCode"),
+                  ("province_code", "provinceCode"), ("phone", "phone"))
+
+def set_house_number(order_id, house_number, confirm="no"):
+    """Owner's rule (lessons 2026-10-29): add the missing house number to the order's SHIPPING address in Shopify, only with the number
+    the owner gave, only after a GO. The street stays as it is; the number goes at the end of address1. Refused when the order is
+    cancelled, has no shipping address, or already has a house number. The billing address cannot be changed through the API
+    (OrderInput has no billingAddress). The output names the order and the number only, never the address. Dry run unless --confirm yes."""
+    if not str(order_id).strip().isdigit(): raise ConnectorError("[house number] order_id must be the Shopify order id (digits)")
+    house = re.sub(r"\s+", " ", str(house_number or "")).strip()
+    if not HOUSE.fullmatch(house) or len(house) > 20:
+        raise ConnectorError("[house number] give the house number only, starting with a digit (e.g. 12, 12/B, 3. 2. em)")
+    o = _get(f"orders/{int(order_id)}.json")["order"]
+    name = o.get("name")
+    if o.get("cancelled_at"): raise ConnectorError(f"[house number] {name} is cancelled: nothing is written")
+    sh = o.get("shipping_address")
+    if not sh: raise ConnectorError(f"[house number] {name} has no shipping address in Shopify")
+    a1, a2 = (sh.get("address1") or "").strip(), (sh.get("address2") or "").strip()
+    if _split_street(" ".join(x for x in (a1, a2) if x))[1]:
+        return {"order": name, "already": True, "written": False, "next": "the shipping address already has a house number: nothing to do"}
+    new_a1 = f"{a1} {house}".strip()
+    street, got = _split_street(" ".join(x for x in (new_a1, a2) if x))
+    if got != house or not street:
+        raise ConnectorError(f"[house number] {name}: after adding it the address would still not split into street + '{house}'; fix it in Shopify by hand")
+    out = {"order": name, "house_number": house, "field": "shipping address1", "billing_changed": False}
+    if confirm != "yes": return {**out, "dry_run": True, "next": "run again with --confirm yes to write it to Shopify"}
+    addr = {gq: sh.get(rest) for rest, gq in ADDRESS_FIELDS if sh.get(rest) not in (None, "")}
+    addr["address1"] = new_a1
+    data = _graphql(ORDER_UPDATE, {"input": {"id": f"gid://shopify/Order/{int(order_id)}", "shippingAddress": addr}}, "house number")
+    _user_errors(data.get("orderUpdate"), "house number")
+    back = (_get(f"orders/{int(order_id)}.json")["order"].get("shipping_address") or {})
+    ok = _split_street(" ".join(x for x in ((back.get("address1") or "").strip(), (back.get("address2") or "").strip()) if x))[1] == house
+    if not ok: raise ConnectorError(f"[house number] {name}: Shopify accepted it, but reading it back shows no house number; check the order by hand")
+    return {**out, "written": True}
+
+MARK_PAID = "mutation($input: OrderMarkAsPaidInput!) { orderMarkAsPaid(input: $input) { order { id displayFinancialStatus } userErrors { field message } } }"
+COD_GATEWAYS = ("cash on delivery", "cod", "utánvét", "utanvet")
+
+def mark_paid(order_id, confirm="no"):
+    """Owner's rule (lessons 2026-10-29): a cash-on-delivery order is set to paid in Shopify when GLS has transferred the money,
+    not at delivery, only after a GO. Refused unless the order is open, cash on delivery and still 'pending'. Dry run unless --confirm yes."""
+    if not str(order_id).strip().isdigit(): raise ConnectorError("[mark paid] order_id must be the Shopify order id (digits)")
+    o = _get(f"orders/{int(order_id)}.json")["order"]
+    name, status = o.get("name"), o.get("financial_status")
+    if o.get("cancelled_at"): raise ConnectorError(f"[mark paid] {name} is cancelled: nothing is written")
+    if not any(c in " ".join(o.get("payment_gateway_names") or []).lower() for c in COD_GATEWAYS):
+        raise ConnectorError(f"[mark paid] {name} is not cash on delivery: only COD orders are set to paid from here")
+    if status == "paid": return {"order": name, "already": True, "written": False, "status": status}
+    if status != "pending": raise ConnectorError(f"[mark paid] {name} is '{status}', not pending: nothing is written")
+    out = {"order": name, "total": o.get("total_price"), "currency": o.get("currency"), "status": status}
+    if confirm != "yes": return {**out, "dry_run": True, "next": "run again with --confirm yes to mark it paid in Shopify"}
+    data = _graphql(MARK_PAID, {"input": {"id": f"gid://shopify/Order/{int(order_id)}"}}, "mark paid")
+    p = data.get("orderMarkAsPaid") or {}
+    _user_errors(p, "mark paid")
+    return {**out, "written": True, "status": ((p.get("order") or {}).get("displayFinancialStatus") or "").lower()}
+
 OPS = {"list_orders": list_orders, "get_order": get_order, "list_products": list_products, "get_product": get_product,
-       "scopes": scopes, "sessions": sessions, "open_count": open_count, "fulfill": fulfill}
+       "scopes": scopes, "sessions": sessions, "open_count": open_count, "fulfill": fulfill,
+       "set_house_number": set_house_number, "mark_paid": mark_paid}
 if __name__ == "__main__": sys.exit(run_cli(OPS))

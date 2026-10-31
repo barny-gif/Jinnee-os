@@ -24,6 +24,7 @@
     "issue_refund": { "level": 0, "max_level": 0, "locked": true, "label": "Refund a customer" },
     "change_live_shop": { "level": 1, "max_level": 1, "locked": true, "label": "Change the live shop (theme, pages)" },
     "upload_parcel_label": { "level": 1, "max_level": 2, "locked": true, "label": "Upload a parcel label to the carrier (prepared, not printed)" },
+    "edit_shopify_order": { "level": 1, "max_level": 1, "locked": true, "label": "Edit a Shopify order (add the owner's house number, set a COD order paid after the GLS transfer)" },
     "draft_anything": { "level": 3, "label": "Write drafts" },
     "read_anything": { "level": 3, "label": "Read connected systems" }
   },

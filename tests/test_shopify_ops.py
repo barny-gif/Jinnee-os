@@ -93,4 +93,75 @@ class Fulfill(Base):
              mock.patch.object(self.m.requests, "post", return_value=Resp({"errors": {"base": ["Fulfillment order is not open"]}}, 422)):
             with self.assertRaisesRegex(ConnectorError, r"\[fulfillments\].*422.*not open"): self.m.fulfill("6001", "1", confirm="yes")
 
+# Order 1036 (2026-10-28): the street name itself has a number ("48as utca" shape), the house number was missing in Shopify and was
+# only added on the GLS label by hand, so the check kept saying "label: házszám" after the parcel was already uploaded.
+SHIP = {"first_name": "Teszt", "last_name": "Elek", "address1": "Negyvennyolcas 48as utca", "address2": "", "city": "Budapest",
+        "zip": "1111", "country_code": "HU", "phone": "+36301234567", "province_code": None}
+def order(**kw):
+    o = {"id": 7001, "name": "#5036", "cancelled_at": None, "financial_status": "pending", "total_price": "21650.00", "currency": "HUF",
+         "payment_gateway_names": ["Cash on Delivery (COD)"], "shipping_address": dict(SHIP)}
+    o.update(kw); return {"order": o}
+
+class HouseNumber(Base):
+    def test_dry_run_reads_only_and_never_prints_the_address(self):
+        with mock.patch.object(self.m.requests, "get", return_value=Resp(order())), mock.patch.object(self.m.requests, "post") as post:
+            out = self.m.set_house_number("7001", "12/B")
+        post.assert_not_called()
+        self.assertEqual((out["dry_run"], out["order"], out["house_number"], out["billing_changed"]), (True, "#5036", "12/B", False))
+        self.assertNotIn("utca", str(out)); self.assertNotIn("Elek", str(out))
+    def test_confirm_sends_the_whole_address_with_the_number_appended(self):
+        after = order(shipping_address={**SHIP, "address1": "Negyvennyolcas 48as utca 12/B"})
+        with mock.patch.object(self.m.requests, "get", side_effect=[Resp(order()), Resp(after)]), \
+             mock.patch.object(self.m.requests, "post", return_value=Resp({"data": {"orderUpdate": {"order": {"id": "x"}, "userErrors": []}}})) as post:
+            out = self.m.set_house_number("7001", "12/B", confirm="yes")
+        self.assertTrue(post.call_args.args[0].endswith("/admin/api/2026-07/graphql.json"))
+        inp = post.call_args.kwargs["json"]["variables"]["input"]
+        self.assertEqual(inp["id"], "gid://shopify/Order/7001")
+        self.assertEqual(inp["shippingAddress"], {"firstName": "Teszt", "lastName": "Elek", "address1": "Negyvennyolcas 48as utca 12/B",
+                                                  "city": "Budapest", "zip": "1111", "countryCode": "HU", "phone": "+36301234567"})
+        self.assertTrue(out["written"])
+    def test_already_has_a_number_writes_nothing(self):
+        with mock.patch.object(self.m.requests, "get", return_value=Resp(order(shipping_address={**SHIP, "address1": "Fő u. 3"}))), \
+             mock.patch.object(self.m.requests, "post") as post:
+            out = self.m.set_house_number("7001", "12", confirm="yes")
+        post.assert_not_called(); self.assertTrue(out["already"]); self.assertFalse(out["written"])
+    def test_cancelled_or_bad_number_writes_nothing(self):
+        with mock.patch.object(self.m.requests, "get", return_value=Resp(order(cancelled_at="2026-10-30T10:00:00Z"))), \
+             mock.patch.object(self.m.requests, "post") as post:
+            with self.assertRaisesRegex(ConnectorError, "cancelled"): self.m.set_house_number("7001", "12", confirm="yes")
+            for bad in ("", "B", "utca 12", "1" * 21):
+                with self.assertRaisesRegex(ConnectorError, "house number only"): self.m.set_house_number("7001", bad, confirm="yes")
+        post.assert_not_called()
+    def test_shopify_user_error_is_named(self):
+        with mock.patch.object(self.m.requests, "get", return_value=Resp(order())), \
+             mock.patch.object(self.m.requests, "post", return_value=Resp({"data": {"orderUpdate": {"order": None, "userErrors": [{"field": ["zip"], "message": "Zip is invalid"}]}}})):
+            with self.assertRaisesRegex(ConnectorError, r"\[house number\].*Zip is invalid"): self.m.set_house_number("7001", "12", confirm="yes")
+    def test_read_back_without_the_number_is_an_error(self):
+        with mock.patch.object(self.m.requests, "get", side_effect=[Resp(order()), Resp(order())]), \
+             mock.patch.object(self.m.requests, "post", return_value=Resp({"data": {"orderUpdate": {"order": {"id": "x"}, "userErrors": []}}})):
+            with self.assertRaisesRegex(ConnectorError, "reading it back"): self.m.set_house_number("7001", "12", confirm="yes")
+
+class MarkPaid(Base):
+    def test_dry_run_reads_only(self):
+        with mock.patch.object(self.m.requests, "get", return_value=Resp(order())), mock.patch.object(self.m.requests, "post") as post:
+            out = self.m.mark_paid("7001")
+        post.assert_not_called(); self.assertEqual((out["dry_run"], out["total"], out["status"]), (True, "21650.00", "pending"))
+    def test_confirm_marks_paid(self):
+        with mock.patch.object(self.m.requests, "get", return_value=Resp(order())), \
+             mock.patch.object(self.m.requests, "post", return_value=Resp({"data": {"orderMarkAsPaid": {"order": {"id": "x", "displayFinancialStatus": "PAID"}, "userErrors": []}}})) as post:
+            out = self.m.mark_paid("7001", confirm="yes")
+        self.assertEqual(post.call_args.kwargs["json"]["variables"], {"input": {"id": "gid://shopify/Order/7001"}})
+        self.assertEqual((out["written"], out["status"]), (True, "paid"))
+    def test_the_right_answer_is_no(self):
+        cases = [(order(cancelled_at="2026-10-30"), "cancelled"), (order(payment_gateway_names=["SimplePay"]), "not cash on delivery"),
+                 (order(financial_status="refunded"), "not pending")]
+        for o, why in cases:
+            with mock.patch.object(self.m.requests, "get", return_value=Resp(o)), mock.patch.object(self.m.requests, "post") as post:
+                with self.assertRaisesRegex(ConnectorError, why): self.m.mark_paid("7001", confirm="yes")
+            post.assert_not_called()
+    def test_already_paid_writes_nothing(self):
+        with mock.patch.object(self.m.requests, "get", return_value=Resp(order(financial_status="paid"))), mock.patch.object(self.m.requests, "post") as post:
+            out = self.m.mark_paid("7001", confirm="yes")
+        post.assert_not_called(); self.assertTrue(out["already"])
+
 if __name__ == "__main__": unittest.main()
