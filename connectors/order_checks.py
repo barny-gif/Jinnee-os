@@ -40,7 +40,7 @@ def check(o):
     if not sh:
         out.append(_p("label", "address", "stop", "nincs szállítási cím"))
     else:
-        street, house = flow.split_street(" ".join(x for x in (sh.get("address1"), sh.get("address2")) if x))
+        street, house = flow.split_street(flow.street_line(sh))
         for field, ok in (("name", sh.get("name")), ("zip", re.fullmatch(r"\d{4}", (sh.get("zip") or "").strip())),
                           ("city", sh.get("city")), ("street", street), ("house_number", house)):
             if not ok: out.append(_p("label", field, "stop", "hiányzik vagy hibás"))

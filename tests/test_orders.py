@@ -154,6 +154,18 @@ class Gls(unittest.TestCase):
         self.assertEqual(order_flow.split_street("Kossuth Lajos utca 12/B"), ("Kossuth Lajos utca", "12/B"))
         self.assertEqual(order_flow.split_street("Fő u. 1"), ("Fő u.", "1"))
         self.assertEqual(order_flow.phone("06 20 123 4567"), "+36201234567")
+    def test_placeholder_address2_keeps_house_number(self):
+        # #1038: address1 'Utca neve 5', address2 '-' -> the number was not found and the label waited
+        import order_flow
+        g = mock.Mock(client_number=lambda: 1)
+        for filler in ("-", " - ", ".", "/"):
+            o = self.order(); o["shipping"].update(address1="Kossuth Lajos utca 5", address2=filler)
+            d = order_flow.gls_parcel(o, g)["DeliveryAddress"]
+            self.assertEqual((d["Street"], d["HouseNumber"]), ("Kossuth Lajos utca", "5"), filler)
+        o = self.order(); o["shipping"].update(address1="Kossuth Lajos utca", address2="-")  # really no number: still flagged
+        self.assertEqual(order_flow.gls_parcel(o, g)["DeliveryAddress"]["HouseNumber"], "")
+        o = self.order(); o["shipping"].update(address1="Kossuth Lajos utca", address2="5")  # a real address2 still counts
+        self.assertEqual(order_flow.gls_parcel(o, g)["DeliveryAddress"]["HouseNumber"], "5")
         self.assertEqual(order_flow.phone("+43 660 1234"), "+436601234")
     def test_dry_run_sends_nothing_and_cod(self):
         import order_flow
