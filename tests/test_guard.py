@@ -9,8 +9,8 @@ AT = "@"
 PHONE = "+36 30 " + "987 6543"
 MAIL = "info" + AT + "real-shop.hu"
 HANDLE = "abcd" + "-ef" + ".myshopify.com"
-ORDER = "#" + "1031"
-MONEY = "16 370" + " Ft"
+ORDER = "#" + "1234"
+MONEY = "12 345" + " Ft"
 
 
 class Patterns(unittest.TestCase):
@@ -60,10 +60,14 @@ class Patterns(unittest.TestCase):
         files = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split()
         if not files: self.skipTest("not a git checkout")
         probs = []
+        # With the owner's own words too, where this clone has them (config/private_patterns.txt is gitignored: none in CI).
+        # LICENSE is left out: its copyright line names the legal holder, which is the owner's decision, not a leak to fix here.
+        private = guard.private_patterns(ROOT / "config" / "private_patterns.txt")
         for f in files:
+            if f == "LICENSE": continue
             try: text = (ROOT / f).read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError): continue
-            probs += guard.check_lines([(f, i, l) for i, l in enumerate(text.splitlines(), 1)])
+            probs += guard.check_lines([(f, i, l) for i, l in enumerate(text.splitlines(), 1)], private)
         self.assertEqual(probs, [])
 
 

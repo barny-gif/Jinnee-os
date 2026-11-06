@@ -8,8 +8,8 @@ order is not among them gets no e-mail key, so the site keeps what it has.
 Status: the one Echo recorded (reply_sent, exchange_in_progress, closed) wins; otherwise it follows the approval:
 pending -> reply_waiting_approval, approved -> reply_ready, sent back or dropped -> new. No approval -> new.
 The CLI never prints the reply text or an e-mail address.
-CLI: python3 connectors/complaints.py record --id 2026-10-27-1032 --order "#1032" --received_at 2026-10-26T18:00:00+01:00
-                 --products "1× Zsiráf Kalandkönyv, 1× Farmer Kalandkönyv" --summary "…" --subject "…"
+CLI: python3 connectors/complaints.py record --id 2026-01-15-1001 --order "#1001" --received_at 2026-01-14T18:00:00+01:00
+                 --products "1× Wooden puzzle, 1× Toy train" --summary "…" --subject "…"
                  --reply_file handoffs/echo/….md --approval surp [--status reply_sent]
      python3 connectors/complaints.py show"""
 import sys, json, hashlib, pathlib, datetime as dt

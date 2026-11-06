@@ -16,7 +16,7 @@ class Reading(unittest.TestCase):
     def test_example_file_is_complete_and_made_up(self):
         with mock.patch.dict(os.environ, {"JINNEE_BUSINESS_FILE": str(ROOT / "config" / "business.example.yaml")}):
             self.assertEqual(business.check(["general", "ecom"]), [])
-            self.assertEqual(business.label_note("#1001", "1× Wooden puzzle", 9890), "example-shop.hu #1001, 1× Wooden puzzle, COD 9890 Ft")
+            self.assertEqual(business.label_note("#1001", "1× Wooden puzzle", 7350), "example-shop.hu #1001, 1× Wooden puzzle, COD 7350 Ft")
 
     def test_missing_file_names_the_path_and_the_fix(self):
         with mock.patch.dict(os.environ, {"JINNEE_BUSINESS_FILE": "/nonexistent/business.yaml"}):
@@ -59,11 +59,11 @@ class LabelNote(unittest.TestCase):
 
     def test_paid_cod_and_no_goods(self):
         self.assertEqual(business.label_note("#1001", "2× Fa kirakó", 0), "example-shop.hu #1001, 2× Fa kirakó, PAID")
-        self.assertEqual(business.label_note("#1001", "2× Fa kirakó", 10380.0), "example-shop.hu #1001, 2× Fa kirakó, COD 10380 Ft")
+        self.assertEqual(business.label_note("#1001", "2× Fa kirakó", 8240.0), "example-shop.hu #1001, 2× Fa kirakó, COD 8240 Ft")
         self.assertEqual(business.label_note("#1001", "", 0), "example-shop.hu #1001, PAID")  # the empty part goes with its comma
 
     def test_long_note_is_cut_to_the_label_limit(self):
-        out = business.label_note("#1001", "1× " + "Hosszú termék " * 30, 9890)
+        out = business.label_note("#1001", "1× " + "Hosszú termék " * 30, 7350)
         self.assertEqual(len(out), business.LABEL_MAX); self.assertTrue(out.endswith("…"))
 
     def test_own_wording(self):
@@ -174,8 +174,8 @@ class Writing(unittest.TestCase):
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 self.assertEqual(business.main(["check"]), 0)
-                self.assertEqual(business.main(["label", "--order", "#1001", "--goods", "1× Fa kirakó", "--cod", "9890"]), 0)
-            self.assertEqual(out.getvalue().splitlines()[-1], "example-shop.hu #1001, 1× Fa kirakó, COD 9890 Ft")
+                self.assertEqual(business.main(["label", "--order", "#1001", "--goods", "1× Fa kirakó", "--cod", "7350"]), 0)
+            self.assertEqual(out.getvalue().splitlines()[-1], "example-shop.hu #1001, 1× Fa kirakó, COD 7350 Ft")
         err = io.StringIO()
         with contextlib.redirect_stderr(err): self.assertEqual(business.main(["label"]), 1)
         self.assertIn("does not exist", err.getvalue())

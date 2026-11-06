@@ -181,7 +181,7 @@ class Bridge(base.RepoCopy):
         return json.loads(r.stdout.split("RESULT ", 1)[1])
 
     def test_owner_text_file_is_saved_and_handed_to_the_lead(self):
-        brief = "# Brief\nÁrak: 2244 Ft\n"
+        brief = "# Brief\nÁrak: 1234 Ft\n"
         got = self.send_files([[OWNER, "brief.md", brief.encode("utf-8").hex(), 30, "the rest of the costs brief"],
                                [OWNER, "gls.csv", "Időszak;Díj\n".encode("cp1250").hex(), 12, None]])
         (md, csv) = got["steps"]
@@ -231,7 +231,7 @@ class Bridge(base.RepoCopy):
 
     @unittest.skipUnless(importlib.util.find_spec("pypdf"), "pypdf is not installed here (it is in requirements.txt)")
     def test_pdf_text_is_saved_next_to_the_pdf_and_handed_to_the_lead(self):
-        pdf = text_pdf("GLS dij 2244 Ft csomagonkent")
+        pdf = text_pdf("GLS dij 1234 Ft csomagonkent")
         got = self.send_files([[OWNER, "gls.pdf", pdf.hex(), len(pdf), None]])
         (step,) = got["steps"]
         self.assertEqual(step["replies"], ["reply"])
@@ -240,17 +240,17 @@ class Bridge(base.RepoCopy):
         self.assertIn("No message came with it", step["ran"][0])
         pdf_name = next(n for n in got["files"] if n.endswith(".pdf"))
         self.assertEqual(bytes.fromhex(got["files"][pdf_name]), pdf)
-        self.assertIn("GLS dij 2244 Ft csomagonkent", got["files"][pdf_name + ".txt"])
+        self.assertIn("GLS dij 1234 Ft csomagonkent", got["files"][pdf_name + ".txt"])
         self.assertIn("--- page 1 ---", got["files"][pdf_name + ".txt"])
 
     def test_xlsx_price_list_is_kept_and_its_cells_handed_to_the_lead(self):
         """Monday's supplier price list: shared strings, numbers, an inline string, a gap in the columns, two sheets."""
         book = xlsx([("Árlista", '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c></row>'
                                  '<row r="2"><c r="A2" t="s"><v>3</v></c><c r="B2"><v>4.2</v></c><c r="D2"><v>500</v></c></row>'
-                                 '<row r="3"><c r="A3" t="inlineStr"><is><t>NF53</t></is></c><c r="C3"><v>300</v></c></row>'),
+                                 '<row r="3"><c r="A3" t="inlineStr"><is><t>AB53</t></is></c><c r="C3"><v>300</v></c></row>'),
                      ("Üres", "")],
-                    shared=["Cikkszám", "Ár USD", "MOQ", "NF12"])
-        got = self.send_files([[OWNER, "New Future árlista.xlsx", book.hex(), len(book), "az ügynökség árai"]])
+                    shared=["Cikkszám", "Ár USD", "MOQ", "AB12"])
+        got = self.send_files([[OWNER, "Beszallito arlista.xlsx", book.hex(), len(book), "az ügynökség árai"]])
         (step,) = got["steps"]
         self.assertEqual(step["replies"], ["reply"])
         self.assertIn("Excel workbook", step["ran"][0])
@@ -260,7 +260,7 @@ class Bridge(base.RepoCopy):
         name = next(n for n in got["files"] if n.endswith(".xlsx"))
         self.assertEqual(bytes.fromhex(got["files"][name]), book)  # the original, byte for byte
         self.assertEqual(got["files"][name + ".txt"],
-                         "--- sheet: Árlista ---\nCikkszám\tÁr USD\tMOQ\nNF12\t4.2\t\t500\nNF53\t\t300")  # the empty sheet is left out
+                         "--- sheet: Árlista ---\nCikkszám\tÁr USD\tMOQ\nAB12\t4.2\t\t500\nAB53\t\t300")  # the empty sheet is left out
 
     def test_xlsx_that_is_not_taken(self):
         doctype = xlsx([("S", "")], extra={"xl/workbook.xml": b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "aaaa">]><workbook/>'})

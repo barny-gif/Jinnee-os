@@ -33,8 +33,8 @@ class Resp:
     def json(self): return self.data
 
 
-GOODS = [[], [{"title": "Fa kirakó", "qty": 1, "price": "8490", "discount": "0"}],
-         [{"title": "Fa kirakó", "qty": 1, "price": "8490", "discount": "873.62"}, {"title": "Építőkocka", "qty": 2, "price": "3000", "discount": "0"}],
+GOODS = [[], [{"title": "Fa kirakó", "qty": 1, "price": "6500", "discount": "0"}],
+         [{"title": "Fa kirakó", "qty": 1, "price": "6500", "discount": "873.62"}, {"title": "Építőkocka", "qty": 2, "price": "3000", "discount": "0"}],
          [{"title": "", "qty": 1, "price": "100", "discount": "0"}, {"title": "Plüss maci", "qty": 0, "price": "2990", "discount": "0"}],
          [{"title": "Nagyon hosszú nevű fa játék " * 4, "qty": 3, "price": "1990", "discount": "0"}] * 3]
 
@@ -79,7 +79,7 @@ class OldAndNewAgree(unittest.TestCase):
     def tearDownClass(cls):
         cls.env.stop(); shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def order(self, lines, cod, ship="1490"):
+    def order(self, lines, cod, ship="1200"):
         total = sum(float(l["price"]) * max(int(l["qty"]), 1) - float(l["discount"]) for l in lines) + float(ship)
         return {"name": "#5042", "id": 7, "currency": "HUF", "email": "s@x.hu", "phone": "06 20 123 4567", "taxes_included": True,
                 "gateways": ["Cash on Delivery (COD)"] if cod else ["SimplePay"],
@@ -90,7 +90,7 @@ class OldAndNewAgree(unittest.TestCase):
     def test_label_note(self):
         n = 0
         for lines in GOODS:
-            for cod in (0, 10380, 9890.0, 15980.4):
+            for cod in (0, 8240, 7350.0, 13700.4):
                 o = self.order(lines, bool(cod))
                 with self.subTest(lines=len(lines), cod=cod):
                     self.assertEqual(self.new["flow"].gls_content(o, cod), self.old["flow"].gls_content(o, cod)); n += 1
@@ -108,7 +108,7 @@ class OldAndNewAgree(unittest.TestCase):
         data = dict(channel="eMAG", ref="1000000001", name="Secret Name", zip="9998", city="Mintafalu", street="Fő tér", house="1",
                     phone="06701234567", email="s@x.hu")
         for goods in ("1× Plüss maci", "2× Fa kirakó, 1× Építőkocka", "1× " + "Hosszú név " * 30):
-            for cod in ("9890", "0", ""):
+            for cod in ("7350", "0", ""):
                 with self.subTest(goods=goods[:12], cod=cod):
                     args = {**data, "goods": goods, "cod": cod}
                     self.assertEqual(self.new["manual"].prepare(**args), self.old["manual"].prepare(**args))

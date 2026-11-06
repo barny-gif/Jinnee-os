@@ -3,7 +3,7 @@ Dry run by default; --send yes uploads (prepared, not printed). The recipient da
 the COD amount, the label note and warnings. One reference, one parcel (brain/gls_uploaded.json, key "<channel>-<ref>").
 Label note: the same template as Shopify orders (config/business.yaml labels.*), with the channel's reference as the order:
 "<shop> <ref>, <goods>, COD <amount> Ft" or "..., PAID".
-CLI: python3 connectors/parcel_manual.py prepare --channel eMAG --ref 1000000001 --goods "1× Wooden puzzle" --cod 9890
+CLI: python3 connectors/parcel_manual.py prepare --channel eMAG --ref 1000000001 --goods "1× Wooden puzzle" --cod 7350
      --name … --zip … --city … --street … --house … --phone … --email … [--send yes]
 A barter / influencer / gift / test parcel: --cod 0 --kind barter, and the note ends with BARTER instead of PAID."""
 import sys, json, pathlib, importlib.util, datetime as dt

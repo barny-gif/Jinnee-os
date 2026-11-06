@@ -1,6 +1,6 @@
-# Forge playbook – what we learned wiring this shop (read before building a connector)
+# Forge playbook – what we learned wiring a shop (read before building a connector)
 
-Facts below were confirmed against the real systems on 2026-10-11. New lessons go into `brain/forge_notes.md` (one dated line each: what happened, what fixed it); that file is read on every run.
+Facts below were confirmed against the real provider systems. They are about the providers (Shopify, Billingo, MyGLS), not about any one shop. New lessons go into `brain/forge_notes.md` (one dated line each: what happened, what fixed it); that file is read on every run, and it is the place for anything specific to this installation (order numbers, products, suppliers, project ids). This file stays generic: nothing business-specific here, nor in code, comments, tests, commit messages or PR bodies (`forge.md`, "Nothing business-specific in the repo").
 
 ## How a connector gets built here
 1. Read the provider's API docs first (WebFetch). Never invent endpoint or field names; when docs are unreachable, say so and use a dry run.
@@ -8,7 +8,8 @@ Facts below were confirmed against the real systems on 2026-10-11. New lessons g
 3. First real call is read-only or a dry run. Anything that writes outside the owner's systems goes through `core/approvals.py`.
 4. Customer personal data (name, address, e-mail, phone) stays inside the connector code. Output, logs, handoffs and Telegram show the order number only.
 5. State that must survive a rebuild lives in `brain/` (mounted), never in the image.
-6. Ship as a pull request. The owner merges, then on the VPS: `cd /opt/jinnee-os && git pull --ff-only && docker compose build && docker compose up -d` (`up --build` is not accepted on this VPS).
+6. Tests, comments, the commit message and the PR body use made-up values (`example-shop.hu`, `#1001`, `1 234 Ft`) and describe an incident by its shape, never by its real order number or amount. `core/forge_git.py` runs the guard on all of them and refuses otherwise.
+7. Ship as a pull request. The owner merges, then on the VPS: `cd /opt/jinnee-os && git pull --ff-only && docker compose build && docker compose up -d` (`up --build` is not accepted on this VPS).
 
 ## Shopify (the store in SHOPIFY_STORE, .env)
 - Login is a Dev Dashboard app (Jinnee-ecom): SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET are exchanged for a 24 h token. `app_not_installed` = the app is released but not installed on the store. The Installs counter in the dashboard lags behind the real state.

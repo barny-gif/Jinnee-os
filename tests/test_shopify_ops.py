@@ -93,12 +93,12 @@ class Fulfill(Base):
              mock.patch.object(self.m.requests, "post", return_value=Resp({"errors": {"base": ["Fulfillment order is not open"]}}, 422)):
             with self.assertRaisesRegex(ConnectorError, r"\[fulfillments\].*422.*not open"): self.m.fulfill("6001", "1", confirm="yes")
 
-# Order 1036 (2026-10-28): the street name itself has a number ("48as utca" shape), the house number was missing in Shopify and was
+# A real-world shape: the street name itself has a number ("48as utca" shape), the house number was missing in Shopify and was
 # only added on the GLS label by hand, so the check kept saying "label: házszám" after the parcel was already uploaded.
 SHIP = {"first_name": "Teszt", "last_name": "Elek", "address1": "Negyvennyolcas 48as utca", "address2": "", "city": "Budapest",
         "zip": "1111", "country_code": "HU", "phone": "+36301234567", "province_code": None}
 def order(**kw):
-    o = {"id": 7001, "name": "#5036", "cancelled_at": None, "financial_status": "pending", "total_price": "21650.00", "currency": "HUF",
+    o = {"id": 7001, "name": "#5036", "cancelled_at": None, "financial_status": "pending", "total_price": "12340.00", "currency": "HUF",
          "payment_gateway_names": ["Cash on Delivery (COD)"], "shipping_address": dict(SHIP)}
     o.update(kw); return {"order": o}
 
@@ -145,7 +145,7 @@ class MarkPaid(Base):
     def test_dry_run_reads_only(self):
         with mock.patch.object(self.m.requests, "get", return_value=Resp(order())), mock.patch.object(self.m.requests, "post") as post:
             out = self.m.mark_paid("7001")
-        post.assert_not_called(); self.assertEqual((out["dry_run"], out["total"], out["status"]), (True, "21650.00", "pending"))
+        post.assert_not_called(); self.assertEqual((out["dry_run"], out["total"], out["status"]), (True, "12340.00", "pending"))
     def test_confirm_marks_paid(self):
         with mock.patch.object(self.m.requests, "get", return_value=Resp(order())), \
              mock.patch.object(self.m.requests, "post", return_value=Resp({"data": {"orderMarkAsPaid": {"order": {"id": "x", "displayFinancialStatus": "PAID"}, "userErrors": []}}})) as post:

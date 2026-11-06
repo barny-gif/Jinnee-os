@@ -14,7 +14,7 @@ SHOP = fake_business.SHOP
 class Note(unittest.TestCase):
     def test_paid_and_cod_unchanged(self):
         self.assertEqual(pm.note("1000000001", "1× Fa kirakó", 0), f"{SHOP} 1000000001, 1× Fa kirakó, PAID")
-        self.assertEqual(pm.note("1000000001", "1× Fa kirakó", 9890), f"{SHOP} 1000000001, 1× Fa kirakó, COD 9890 Ft")
+        self.assertEqual(pm.note("1000000001", "1× Fa kirakó", 7350), f"{SHOP} 1000000001, 1× Fa kirakó, COD 7350 Ft")
 
     def test_kind_replaces_paid(self):
         self.assertEqual(pm.note("Influencer-1", "1× Fa kirakó", 0, "barter"), f"{SHOP} Influencer-1, 1× Fa kirakó, BARTER")
