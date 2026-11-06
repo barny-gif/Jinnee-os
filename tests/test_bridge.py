@@ -27,10 +27,9 @@ def send(handler, user_id, text):
 
 out = {"owner": jinnee.OWNER, "steps": []}
 for handler, user_id, text in json.loads(sys.argv[1]):
-    jinnee.FRESH["next"] = False
-    before = len(ran)
+    before, conv = len(ran), jinnee.conversation().get("id")
     replies = send(getattr(jinnee, handler), user_id, text)
-    out["steps"].append({"ran": ran[before:], "replies": replies, "fresh": jinnee.FRESH["next"]})
+    out["steps"].append({"ran": ran[before:], "replies": replies, "fresh": jinnee.conversation().get("id") != conv})
 print("RESULT " + json.dumps(out))
 """
 

@@ -154,7 +154,7 @@ class NothingInTheBackground(Bridge):
         (self.root / "d.py").write_text(
             'import json, re, sys\nsys.path.insert(0, "core")\nimport jinnee\n'
             'keys = ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "CLAUDE_AUTO_BACKGROUND_TASKS")\n'
-            'envs = {k: {n: e.get(n) for n in keys} for k, e in (("owner", jinnee.command("x")[2]), ("scheduled", jinnee.command("x", unattended=True)[2]))}\n'
+            'envs = {k: {n: e.get(n) for n in keys} for k, e in (("owner", jinnee.command("x")[1]), ("scheduled", jinnee.command("x", unattended=True)[1]))}\n'
             'handled = re.search(r"\\(([a-z|]+)\\)", jinnee.COMMAND.pattern).group(1).split("|")\n'
             'print("RESULT " + json.dumps({"env": envs, "p": jinnee.system_prompt(), "help": jinnee.owner_command("/nonsense"),\n'
             '      "cmds": [c for c, _ in jinnee.OWNER_COMMANDS], "handled": handled}))\n')

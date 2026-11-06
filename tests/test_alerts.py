@@ -311,7 +311,7 @@ sys.path.insert(0, "core")
 import jinnee
 
 ran, sent, tasks = [], [], []
-if sys.argv[2] == "record": jinnee.run_agent = lambda message: (ran.append(message), "agent reply")[1]
+if sys.argv[2] == "record": jinnee.run_agent = lambda message, *a, **k: (ran.append(message), "agent reply")[1]
 jinnee.TIMEOUT = 2
 
 class Message:
@@ -642,7 +642,8 @@ class ScheduledRuns(Bridge):
         self.assertEqual(got[0]["sent"], [[OWNER, "Milo: stock alert (scheduled):\nStock is fine for the week."]])
         args = self.read("args.txt")
         self.assertIn("--permission-mode\ndontAsk\n", args); self.assertIn("--no-session-persistence", args)
-        self.assertNotIn("--continue", args); self.assertNotIn("acceptEdits", args)
+        for flag in ("--continue", "--resume", "--session-id"): self.assertNotIn(flag, args)  # not the owner's conversation
+        self.assertNotIn("acceptEdits", args); self.assertFalse((self.brain / "conversation.json").exists())
         allowed = args.split("--allowedTools\n", 1)[1].split("--disallowedTools\n", 1)[0].splitlines()
         denied = args.split("--disallowedTools\n", 1)[1].split("--append-system-prompt\n", 1)[0].splitlines()
         for tool in ("Edit(brain/**)", "Edit(handoffs/**)", "Bash(python3 core/approvals.py *)", "Bash(python3 connectors/*)"):
@@ -663,7 +664,9 @@ class ScheduledRuns(Bridge):
         got = self.drive([["msg", OWNER, "hello"], ["job", 0, "jinnee.brief"]], agent="real", extra=self.spy(reply="1. All quiet."))
         self.assertEqual(got[1]["sent"], [[OWNER, "1. All quiet."]])
         args = self.read("args.txt")
-        self.assertIn("--continue", args); self.assertNotIn("--no-session-persistence", args)  # the owner can answer the brief
+        own = json.loads((self.brain / "conversation.json").read_text())["id"]  # started by "hello"
+        self.assertIn(f"--resume\n{own}\n", args); self.assertNotIn("--no-session-persistence", args)  # the owner can answer the brief
+        self.assertNotIn("--continue", args)
         self.assertIn("--permission-mode\ndontAsk\n", args); self.assertIn(scheduler_brief(), args)
         got = self.drive([["msg", OWNER, "thanks"]], agent="real", extra=self.spy(reply="ok"))
         self.assertIn("--permission-mode\nacceptEdits\n", self.read("args.txt"))

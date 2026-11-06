@@ -102,6 +102,9 @@ STUBS = {  # stand-ins so jinnee.py starts without the Telegram library, the net
         "MessageHandler = CommandHandler = CallbackQueryHandler = _Any\n"
         "filters = _Any()\n"
         "class ContextTypes: DEFAULT_TYPE = object\n"
+        "class BaseUpdateProcessor:\n"
+        "    def __init__(self, max_concurrent_updates): self.max_concurrent_updates = max_concurrent_updates\n"
+        "    async def process_update(self, update, coroutine): await self.do_process_update(update, coroutine)\n"
         "class _Jobs:\n"
         "    def run_daily(self, callback, time): print('STUB_DAILY ' + callback.__name__ + ' ' + str(time))\n"
         "    def run_repeating(self, callback, interval, first=None): print('STUB_REPEAT ' + callback.__name__ + ' ' + str(interval))\n"
@@ -111,6 +114,7 @@ STUBS = {  # stand-ins so jinnee.py starts without the Telegram library, the net
         "    def run_polling(self): pass\n"
         "class ApplicationBuilder:\n"
         "    def token(self, t): print('STUB_TOKEN ' + json.dumps(t)); return self\n"
+        "    def concurrent_updates(self, p): print('STUB_CONCURRENT ' + type(p).__name__ + ' ' + str(p.max_concurrent_updates)); return self\n"
         "    def build(self): return _App()\n"),
     "requests.py": "def get(*a, **k): raise RuntimeError('no network in tests')\n",
 }

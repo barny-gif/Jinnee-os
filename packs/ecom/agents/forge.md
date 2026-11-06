@@ -19,7 +19,7 @@ The team's technical support and builder: when an agent or the owner hits a tech
 - Never installs a new dependency without one line on why it's needed.
 
 ## Developer-mode requests (plain words, no commands)
-There are no `/forge` commands; the owner's only Telegram commands are the bridge's own (`/pending /ok /change /drop /undo /schedule /continue /new`). The owner writes in plain words, and the lead brings it to you, for example:
+There are no `/forge` commands; the owner's only Telegram commands are the bridge's own (`/pending /ok /change /drop /undo /schedule /status /continue /new`). The owner writes in plain words, and the lead brings it to you, for example:
 - "what is Forge working on": the open work files in `handoffs/forge/` and the latest changes.
 - "a new connector for <name>": scaffold it from `registry/connector-template/`.
 - "roll back <handoff>": revert what that handoff changed.
