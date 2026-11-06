@@ -110,6 +110,11 @@ def split_street(address):
     m = re.match(r"^(.*?)[\s,]+(\d[\w/.\-]*(?:\s*(?:em|fsz|ép|lh)\.?\s*\S*)?)$", address.strip(), re.I)
     return (m.group(1).strip(), m.group(2).strip()) if m else (address.strip(), "")
 
+def street_line(addr):
+    """address1 + address2 as one line. An address2 with no letter or digit ('-', '.', '/') is a placeholder and is left out:
+    joined, it hid the house number at the end (#1038)."""
+    return " ".join(x for x in (addr.get("address1"), addr.get("address2")) if x and re.search(r"\w", x))
+
 def phone(p, country="HU"):
     d = re.sub(r"[^\d+]", "", p or "")
     if d.startswith("00"): d = "+" + d[2:]
@@ -133,7 +138,7 @@ def gls_content(o, cod_amount=0):
 def gls_parcel(o, gls, house="", info=""):
     """The MyGLS Parcel for an order. Pickup data (your address) comes from GLS_PICKUP_* in .env."""
     sh = o["shipping"] or o["billing"]
-    street, found = split_street(" ".join(x for x in (sh.get("address1"), sh.get("address2")) if x))
+    street, found = split_street(street_line(sh))
     house = house or found  # a house number given by hand wins
     missing = [k for k, v in (("name", sh.get("name")), ("zip", sh.get("zip")), ("city", sh.get("city")), ("street", street)) if not v]
     if missing: raise ConnectorError(f"{o['name']}: shipping address incomplete ({', '.join(missing)})")
