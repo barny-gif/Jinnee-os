@@ -9,6 +9,8 @@ Windows: `irm https://raw.githubusercontent.com/barny-gif/Jinnee-os/main/install
 
 ## What you get
 - **Jinnee** – the team lead. You talk to it on Telegram in your own language; it delegates, reviews and reports. Rename it to anything you like.
+  You can send it photos (a delivery note, a damaged parcel, a screenshot), PDFs, Excel and text files; your conversation
+  continues where it left off, also after a restart, until you send `/new`. `/status` tells you at once what it is doing.
 - **General pack** – included in every install: invoice monitoring, email triage, competitor watch, weekly report.
 - **Vertical packs** (optional): `ecom` (online shops), `photographer` (coming – bookings, client reminders).
 - **Dashboard** – one page in the browser: what happened today, what needs your approval, whether the team is alive. Attach your own domain.
