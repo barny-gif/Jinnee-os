@@ -69,6 +69,29 @@ class Split(unittest.TestCase):
         self.assertEqual(entries[0].date, dt.date(2026, 10, 1))
         self.assertIsNone(entries[1].date)
 
+    def test_the_intro_under_the_title_is_preamble_not_an_entry(self):
+        text = ("# lessons\nThe owner's corrections. Everyone reads this.\n  (kept short)\n\n"
+                "- 2026-01-05 first rule\n  with a second line\n- 2026-01-06 second rule\n")
+        pre, entries = memory.split(text)
+        self.assertEqual("".join(pre), "# lessons\nThe owner's corrections. Everyone reads this.\n  (kept short)\n\n")
+        self.assertEqual([e.text for e in entries], ["- 2026-01-05 first rule\n  with a second line\n", "- 2026-01-06 second rule\n"])
+        self.assertEqual("".join(pre) + "".join("".join(e.raw) for e in entries), text)
+
+    def test_the_intro_ends_at_the_first_list_item_or_dated_line(self):
+        for first in ("- a rule\n", "* a rule\n", "1. a rule\n", "2026-01-05 a dated rule\n"):
+            with self.subTest(first=first):
+                pre, entries = memory.split("# t\nintro\n## sub title\n" + first + "- next\n")
+                self.assertEqual(pre, ["# t\n", "intro\n", "## sub title\n"])
+                self.assertEqual(entries[0].text, first)
+
+    def test_a_file_without_a_title_or_a_list_keeps_every_line_an_entry(self):
+        for text in ("# catalog\nstripe: payments, see the runbook\nshop: the catalogue\n",  # one line per topic, no list
+                     "an undated first line\n- then a list\n"):                                 # no title above it
+            with self.subTest(text=text[:20]):
+                pre, entries = memory.split(text)
+                self.assertFalse([ln for ln in pre if ln.strip() and not ln.startswith("#")])
+                self.assertEqual(len(entries), 2)
+
 
 class Core(Brain):
     def test_small_file_goes_in_whole_without_a_notice(self):

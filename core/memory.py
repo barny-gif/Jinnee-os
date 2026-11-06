@@ -6,7 +6,7 @@
   python core/memory.py log-search "<topic>" [--limit 10]
   python core/memory.py stats                     # sizes, and how much of each core is in the prompt
   python core/memory.py core lessons|notes        # exactly what the prompt gets from that file
-  python core/memory.py compact [--apply yes]     # the owner's / the bridge's: move old lines to the archives
+  python core/memory.py compact [--apply yes]     # the owner's, by hand: move old lines to the archives (lists the lessons ones)
 
 Why: the prompt used to carry brain/lessons.md and brain/forge_notes.md whole, on every run. They only grow, so every run
 got slower, dearer and noisier, and nothing in them could be searched. Now the prompt gets a CORE of each, with a hard cap
@@ -18,6 +18,9 @@ Only `compact` writes, and only these four files: lessons.md, forge_notes.md and
 line, a heading or a line dated in the last 14 days (an owner's /undo takes a fresh drop reason back out of lessons.md, so
 it must still be there), keeps a copy of the file it rewrites in brain/backups/memory/, and checks afterwards that every
 line is either still in the file or in the archive. The agents get the reading commands only; `compact` is denied to them.
+The bridge's hourly tidy (core/memory_guard.py) compacts forge_notes.md by itself, but lessons.md holds the owner's own
+rules: its old lines move only after the owner said /ok to an approval item that lists them, and only those lines.
+The title and the intro under it ("The owner's corrections. Every agent reads this.") are the preamble, never an entry.
 
 Search is BM25 (the ranking search engines use: rare words count more, long entries do not win by length) over entries:
 one line plus any indented lines under it. Accents are folded and a word also matches its longer forms (order ~ orders).
@@ -51,6 +54,7 @@ K1, B = 1.5, 0.75
 PREFIX_FACTOR = 0.6
 _TOKEN = re.compile(r"[a-z0-9]{2,}")
 _DATE = re.compile(r"^\s*(?:[-*+]\s+)?(\d{4}-\d{2}-\d{2})")
+_ITEM = re.compile(r"(?:[-*+]|\d+[.)])\s")  # a list item at the left margin: "- ", "* ", "+ ", "1. ", "1) "
 
 
 # ---------------------------------------------------------------- reading a memory file
@@ -78,11 +82,16 @@ class Entry:
 
 def split(text):
     """→ (preamble lines, entries). Lossless: the preamble plus every entry's raw lines is the text again, byte for byte.
-    The preamble is the title: the headings and blank lines before the first real line."""
+    The preamble is the title: the headings and blank lines before the first real line, and, in a file that is a list,
+    the intro under a heading: the undated lines that are not list items, up to the first list item or dated line
+    ("The owner's corrections. Every agent reads this."). The preamble is not an entry: never moved, never counted."""
     lines = text.splitlines(keepends=True)
     pre, entries, i = [], [], 0
     while i < len(lines) and (not lines[i].strip() or lines[i].lstrip().startswith("#")):
         pre.append(lines[i]); i += 1
+    if any(ln.lstrip().startswith("#") for ln in pre) and any(_ITEM.match(ln) for ln in lines[i:]):
+        while i < len(lines) and not _ITEM.match(lines[i]) and not _DATE.match(lines[i]):
+            pre.append(lines[i]); i += 1
     for n in range(i, len(lines)):
         ln = lines[n]
         if ln.strip() and not ln[0].isspace() or not entries:
@@ -266,9 +275,10 @@ def _backup(brain, path):
     return kept
 
 
-def plan(name, text, today=None):
+def plan(name, text, today=None, allowed=None):
     """→ (entries to move, the text that stays). Moves the oldest movable entries until the file is within TARGET of the
-    cap. Movable: not a heading, not [pin], not dated in the last KEEP_DAYS days. Empty list = nothing to do."""
+    cap. Movable: not a heading, not [pin], not dated in the last KEEP_DAYS days, and, when `allowed` is given (the
+    owner's approved list for lessons.md), one of those texts exactly. Empty list = nothing to do."""
     max_b, max_l = cap(name)
     b, l = _size(text)
     if b <= max_b and l <= max_l: return [], text
@@ -280,14 +290,17 @@ def plan(name, text, today=None):
         if b <= goal_b and l <= goal_l: break
         if e.heading or e.pinned or not e.text.strip(): continue
         if e.date and (today - e.date).days < KEEP_DAYS: continue
+        if allowed is not None and e.text.strip() not in allowed: continue
         eb, el = _size("".join(e.raw))
         move.add(e.line); b -= eb; l -= el
     moved = [e for e in entries if e.line in move]
     return moved, "".join(pre) + "".join("".join(e.raw) for e in entries if e.line not in move)
 
 
-def compact(brain=None, apply=False, today=None, names=("lessons", "notes")):
+def compact(brain=None, apply=False, today=None, names=("lessons", "notes"), only=None):
     """→ one report per file: {name, file, archive, moved, bytes_before, bytes_after, backup}. Dry run unless apply.
+    only: {name: entry texts}: for that file, nothing outside the list moves (core/memory_guard.py passes the lines the
+    owner approved for lessons.md). The bridge never calls this for lessons.md without it.
     Under the brain/ lock (approvals.py appends drop reasons to lessons.md under the same lock), so no line is written in
     between. Order: copy of the file, archive written whole (atomically) with the moved lines appended, the file
     rewritten (atomically) without them, then both read back and compared. A crash between the two writes leaves a line in
@@ -302,7 +315,7 @@ def compact(brain=None, apply=False, today=None, names=("lessons", "notes")):
             assert src.name not in NEVER and arc.name not in NEVER and src.parent == brain == arc.parent
             if not src.exists(): continue
             text = read(src)
-            moved, rest = plan(name, text, today)
+            moved, rest = plan(name, text, today, (only or {}).get(name))
             rep = {"name": name, "file": src.name, "archive": arc.name, "moved": [e.text.strip() for e in moved],
                    "bytes_before": _size(text)[0], "bytes_after": _size(rest)[0], "backup": ""}
             out.append(rep)
@@ -319,6 +332,29 @@ def compact(brain=None, apply=False, today=None, names=("lessons", "notes")):
                 shutil.copy2(backup, src)
                 raise RuntimeError(f"compact {src.name}: the check after moving failed; the file is back from {backup.name}")
     return out
+
+
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_NUMBER = re.compile(r"#\s?\d+|\+?\d[\d ()/.-]{3,}\d")
+
+
+def excerpt(entries, limit=10, width=90):
+    """Short lines for a message to the owner: the date and the start of each entry. E-mail addresses and longer numbers
+    (order numbers, phone numbers, amounts) are left out, so a message never carries a customer's data."""
+    entries = [Entry(0, e.splitlines(keepends=True) or [""]) if isinstance(e, str) else e for e in entries]
+    rows = []
+    for e in entries[:limit]:
+        first = e.text.strip().splitlines()[0]
+        body = _DATE.sub("", first, count=1) if e.date else first
+        body = body.lstrip("-*+ \t").lstrip(":–— ")
+        body = _NUMBER.sub("[number]", _EMAIL.sub("[email]", body))
+        rows.append(short(f"{e.date}: {body}" if e.date else body, width))
+    if len(entries) > limit: rows.append(f"… and {len(entries) - limit} more")
+    return rows
+
+
+PIN_ADVICE = (f"A rule that must always apply: put {PIN} at the end of its line in brain/lessons.md; {PIN} lines are always "
+              "in the prompt and never moved. Room for more: raise JINNEE_MEMORY_LESSONS_BYTES in .env")
 
 
 # ---------------------------------------------------------------- command line
@@ -370,10 +406,16 @@ def main(argv=None, brain=None):
             if not path.exists(): print(f"brain/{fname:<24} missing"); continue
             _, entries = split(read(path))
             print(f"brain/{fname:<24} {path.stat().st_size:>8} bytes  {sum(1 for e in entries if e.text.strip()):>5} entries")
+        advice = False
         for name in CORES:
             _, f = core(name, brain)
-            state = f"{f['hidden']} entries not shown; searchable, the bridge moves them to the archive" if f["hidden"] else "all shown"
+            if not f["hidden"]: state = "all shown"
+            elif name == "lessons":
+                state = f"{f['hidden']} older entries not shown; searchable, and moved to the archive only with the owner's /ok"
+                advice = True
+            else: state = f"{f['hidden']} entries not shown; searchable, the bridge moves them to the archive"
             print(f"core {name:<8} {f['bytes']}/{f['cap_bytes']} bytes, {f['lines']}/{f['cap_lines']} lines in the prompt ({state})")
+        if advice: print(PIN_ADVICE + f" (now {cap('lessons')[0]} bytes).")
         return 0
     if a.cmd == "core":
         print(core(a.name, brain)[0], end=""); return 0
@@ -383,6 +425,9 @@ def main(argv=None, brain=None):
             verb = "moved" if a.apply == "yes" else "would move"
             print(f"brain/{rep['file']}: {verb} {len(rep['moved'])} entries to brain/{rep['archive']} "
                   f"({rep['bytes_before']} → {rep['bytes_after']} bytes)" + (f", copy in brain/{rep['backup']}" if rep["backup"] else ""))
+            if rep["name"] == "lessons":  # the owner's own rules: show which ones, and how to keep one
+                for row in excerpt(rep["moved"]): print(f"  {row}")
+                print("  " + PIN_ADVICE + f" (now {cap('lessons')[0]} bytes).")
         if a.apply != "yes": print("dry run: nothing was written. Add --apply yes to move.")
         return 0
     return 2

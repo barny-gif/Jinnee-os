@@ -23,7 +23,10 @@ NAMES = {0: "forbidden", 1: "approval required", 2: "act, report afterwards", 3:
 RAISE = "raise_autonomy"
 FORMAT = 2  # "_format" in the file; a file without it is the old flat one
 # Not a pack's business: changing a level always goes to the owner, and that rule cannot be relaxed from the file.
-CORE = {RAISE: {"level": 1, "max_level": 1, "locked": True, "label": "Change an autonomy level"}}
+CORE = {RAISE: {"level": 1, "max_level": 1, "locked": True, "label": "Change an autonomy level"},
+        # The owner's own rules leave brain/lessons.md only with the owner's yes (core/memory_guard.py). Locked here too:
+        # no request can raise it; the owner can, by hand in the file.
+        "archive_lessons": {"level": 1, "max_level": 1, "locked": True, "label": "Move old lessons to the archive"}}
 
 
 class Gate(NamedTuple):

@@ -143,6 +143,8 @@ class Watch:
                 rows.append("• " + line(self.book, i))
                 warning = self.book.view(i)["warning"]
                 if warning: rows.append(f"   not sendable as it is: {warning}")
+                said = i["payload"].get("notice") if isinstance(i.get("payload"), dict) else None
+                if isinstance(said, list): rows += [f"   {approvals.one_line(n)}" for n in said[:20]]  # e.g. core/memory_guard.py
                 s["asked"][i["id"]] = int(now)
             one = new[0]["id"]
             ask = [i["id"] for i in new][:5]  # the bridge puts tap buttons under this message
