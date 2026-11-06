@@ -149,6 +149,19 @@ class Gls(unittest.TestCase):
     def order(self, **kw):
         o = Flow().order(); o["shipping"] = {"name": "Teszt Elek", "zip": "1011", "city": "Budapest", "address1": "Kossuth Lajos utca 12/B", "country_code": "HU"}
         o["phone"] = "06 20 123 4567"; o.update(kw); return o
+    def test_hand_made_pending_order_is_cod(self):
+        # #1040: the owner re-made a COD order from a draft; no gateway, financial_status pending. It printed 'PAID' and COD 0.
+        import order_flow
+        g = mock.Mock(client_number=lambda: 1)
+        for gw in ([], [""], ["manual"]):
+            o = self.order(gateways=gw, financial_status="pending", total="10490.00")
+            p = order_flow.gls_parcel(o, g)
+            self.assertEqual(p["CODAmount"], 10490, gw); self.assertIn("COD", p["Content"]); self.assertNotIn("PAID", p["Content"])
+        # the right answer is 'not COD': paid with no gateway, or a pending card order
+        self.assertEqual(order_flow.gls_parcel(self.order(gateways=[], financial_status="paid"), g)["CODAmount"], 0)
+        self.assertEqual(order_flow.payment_method(["shopify_payments"], "pending"), "bankcard")
+        self.assertEqual(order_flow.payment_method([], None), "bankcard")  # status unknown: unchanged behaviour
+        self.assertEqual(order_flow.payment_method(["Cash on Delivery (COD)"], "pending"), "cash_on_delivery")
     def test_street_split_and_phone(self):
         import order_flow
         self.assertEqual(order_flow.split_street("Kossuth Lajos utca 12/B"), ("Kossuth Lajos utca", "12/B"))
