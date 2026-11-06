@@ -19,7 +19,7 @@ An item lives once:  pending → decided (ok / edit / drop: who, when, note) →
 import contextlib, hashlib, os, pathlib, re, secrets, sys, time
 from typing import NamedTuple
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import store, autonomy
+import store, autonomy, texts
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DECISIONS = ("ok", "edit", "drop")
@@ -101,7 +101,7 @@ class Book:
         """→ (items, problem), without writing. A broken file reads as empty: nothing in it can be acted on."""
         try: return self._normal(store.read_json(self.path, list)), ""
         except store.Unreadable as e:
-            return [], f"{e}. Nothing can be approved or carried out until it is fixed or replaced."
+            return [], texts.t("approvals.unreadable", error=e)
 
     def get(self, item_id):
         return next((it for it in self.read()[0] if it["id"] == item_id), None)
@@ -129,7 +129,7 @@ class Book:
         warning = item["blocked"] if item["decision"] == "ok" else ""
         if item["state"] == "pending": warning = problem or (unsendable(text) if item["outbound"] and text is not None else "")
         return {**item, "text": None, "preview": (text or "")[:PREVIEW], "cut": len(text or "") > PREVIEW, "warning": warning,
-                "label": self.gate.read()[0].get(item["action"], {}).get("label", "")}
+                "label": autonomy.label(item["action"], self.gate.read()[0].get(item["action"], {}))}
 
     def open_items(self):
         """What still needs someone: (pending, decided but not picked up, picked up but no result yet)."""
@@ -167,7 +167,7 @@ class Book:
     @staticmethod
     def _find(items, item_id):
         it = next((i for i in items if i["id"] == item_id), None)
-        if it is None: raise Missing(f"no approval item '{item_id}'")
+        if it is None: raise Missing(texts.t("approvals.no_item", id=item_id))
         return it
 
     def add(self, agent, action, title, summary="", text=None, file=None, reference=False, payload=None, replaces=None):
@@ -195,15 +195,15 @@ class Book:
     def decide(self, item_id, decision, note="", by="dashboard"):
         """The owner's decision. Only a pending item can be decided; a decided one has to be undone first."""
         note = one_line(note)
-        if decision not in DECISIONS: raise Refused("the decision is ok, edit or drop")
+        if decision not in DECISIONS: raise Refused(texts.t("approvals.bad_decision"))
         with self._open() as items:
             it = self._find(items, item_id)
             if it["state"] != "pending":
-                raise Conflict(f"'{item_id}' is already {self.status(it)}")
+                raise Conflict(texts.t("approvals.already", id=item_id, status=self.status(it)))
             if decision == "drop" and not note:
-                raise Refused("dropping needs a reason: one sentence the team can learn from")
+                raise Refused(texts.t("approvals.drop_needs_reason"))
             if decision == "edit" and not note:
-                raise Refused("say what should change")
+                raise Refused(texts.t("approvals.edit_needs_note"))
             it.update(state="decided", decision=decision, note=note, decided_by=by, decided_at=int(time.time()))
             if decision == "ok":
                 sha, blocked = self._pin(it)
@@ -222,8 +222,8 @@ class Book:
         """Back to pending, as long as nobody has acted on the decision."""
         with self._open() as items:
             it = self._find(items, item_id)
-            if it["state"] == "pending": raise Conflict(f"'{item_id}' has no decision to undo")
-            if it["state"] == "consumed": raise Conflict(f"'{item_id}' is already {self.status(it)}; it can no longer be undone")
+            if it["state"] == "pending": raise Conflict(texts.t("approvals.nothing_to_undo", id=item_id))
+            if it["state"] == "consumed": raise Conflict(texts.t("approvals.too_late", id=item_id, status=self.status(it)))
             if it["decision"] == "drop":  # the reason was a slip: take it back out of what the team learns from
                 lessons = self.brain / "lessons.md"
                 if lessons.exists():
@@ -286,7 +286,7 @@ class Book:
         with self._open() as items:
             it = self._find(items, item_id)
             if it["state"] != "consumed" or it["outcome"] != "executing":
-                raise Conflict(f"'{item_id}' is {self.status(it)}; a result follows a GO, once")
+                raise Conflict(f"'{item_id}' is {self.status(it, 'en')}; a result follows a GO, once")
             it.update(outcome="failed" if failed else "done", result=one_line(text), finished_at=int(time.time()))
             self.log(it["agent"] or "agent", f"{item_id} → {it['outcome']}: {it['result']}".rstrip(": "))
             return dict(it)
@@ -295,22 +295,23 @@ class Book:
         """The team takes its own request back (no longer relevant, replaced by something else)."""
         with self._open() as items:
             it = self._find(items, item_id)
-            if it["state"] == "consumed": raise Conflict(f"'{item_id}' is already {self.status(it)}")
+            if it["state"] == "consumed": raise Conflict(f"'{item_id}' is already {self.status(it, 'en')}")
             now = int(time.time())
             it.update(state="consumed", consumed_at=now, finished_at=now, outcome="withdrawn", result=one_line(why))
             self.log(it["agent"] or "agent", f"{item_id} → withdrawn {it['result']}".rstrip())
             return dict(it)
 
+    OUTCOMES = ("executing", "done", "failed", "returned", "dropped", "superseded", "withdrawn", "closed")
+
     @staticmethod
-    def status(it):
-        """One phrase for people: where the item stands."""
-        if it["state"] == "pending": return "waiting for the owner"
+    def status(it, lang=None):
+        """One phrase for people: where the item stands. In the owner's language; lang="en" for the agents' prompt."""
+        if it["state"] == "pending": return texts.t("approvals.status_pending", lang)
         if it["state"] == "decided":
-            if it["decision"] == "ok" and not it["sendable"]: return f"approved, but not sendable: {it['blocked']}"
-            return {"ok": "approved", "edit": "sent back for a change", "drop": "dropped"}[it["decision"]] + ", not picked up yet"
-        return {"executing": "being carried out", "done": "done", "failed": "failed", "returned": "sent back for a change",
-                "dropped": "dropped", "superseded": "replaced by a newer version", "withdrawn": "withdrawn",
-                "closed": "closed"}.get(it["outcome"], "closed")
+            if it["decision"] == "ok" and not it["sendable"]: return texts.t("approvals.status_blocked", lang, blocked=it["blocked"])
+            return texts.t("approvals.status_" + it["decision"], lang)
+        outcome = it["outcome"] if it["outcome"] in Book.OUTCOMES else "closed"
+        return texts.t("approvals.status_" + outcome, lang)
 
     def brief(self):
         """For the lead's prompt: what is waiting for the team, and what is waiting for the owner."""
@@ -318,7 +319,7 @@ class Book:
         problem = self.read()[1]
         lines = [f"WARNING: {problem}"] if problem else []
         for it in decided:
-            lines.append(f"DECIDED, take it now with `consume {it['id']}`: [{it['id']}] {it['title']} ({it['agent']}, {it['action']}) – {self.status(it)}")
+            lines.append(f"DECIDED, take it now with `consume {it['id']}`: [{it['id']}] {it['title']} ({it['agent']}, {it['action']}) – {self.status(it, 'en')}")
         for it in running:
             lines.append(f"TAKEN, result missing, report with `result {it['id']} \"…\"`: [{it['id']}] {it['title']} ({it['agent']})")
         for it in pending:
@@ -351,14 +352,14 @@ def main(argv):
             if warning: print(f"WARNING {warning}. The owner will see it as not sendable.")
         elif a.cmd == "list":
             if a.all:
-                for it in book.read()[0]: print(f"[{it['id']}] {it['title']} ({it['agent']}, {it['action']}) – {book.status(it)}")
+                for it in book.read()[0]: print(f"[{it['id']}] {it['title']} ({it['agent']}, {it['action']}) – {book.status(it, 'en')}")
             else: print(book.brief())
         elif a.cmd == "show":
             it = book.get(a.id)
             if it is None: raise Missing(f"no approval item '{a.id}'")
             for k, v in book.view(it).items():
                 if v not in (None, "", False) or k == "state": print(f"{k}: {v}")
-            print(f"status: {book.status(it)}")
+            print(f"status: {book.status(it, 'en')}")
         elif a.cmd == "consume":
             v = book.consume(a.id)
             print(f"{v.word} {a.id}: {v.text}")

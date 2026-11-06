@@ -15,7 +15,7 @@ from telegram.ext import ApplicationBuilder, BaseUpdateProcessor, MessageHandler
 from pack_loader import agent_files, resolve
 from heartbeat import beat, trouble
 from registry_client import check as registry_check
-import alerts, approvals, business, logs, memory, memory_guard, scheduler, store, workfile
+import alerts, approvals, business, logs, memory, memory_guard, scheduler, store, texts, workfile
 
 log = logging.getLogger("jinnee")
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -95,35 +95,12 @@ OWNER_COMMANDS = (("/pending", "what is waiting for a decision"), ("/ok", "appro
                   ("/undo", "take a decision back"), ("/schedule", "the scheduled runs"),
                   ("/status", "what is going on right now"),
                   ("/continue", "go on with unfinished work"), ("/new", "start a clean conversation"))
-COMMAND_LINE = "Commands: " + " · ".join(c for c, _ in OWNER_COMMANDS)
+def command_line() -> str:
+    return T("bridge.commands", commands=" · ".join(c for c, _ in OWNER_COMMANDS))
 
-# What the bridge itself says to the owner, added with step 6 (photos, the own conversation, /status), in one place, so
-# step 5 (the Hungarian surface) can translate them together. {name}-style fields are filled in with str.format.
-OWNER_TEXT = {
-    "conversation_lost": "(The earlier conversation could not be found any more, so this answer starts a new one.)",
-    "status_working_owner": "Working now: your message, for {for_} (since {since}).",
-    "status_working_hand_over": "Working now: carrying out what you approved, for {for_} (since {since}).",
-    "status_working_job": "Working now: a scheduled run ({job}), for {for_} (since {since}).",
-    "status_working": "Working now.",
-    "status_idle": "Not working on anything right now.",
-    "status_under_a_minute": "less than a minute",
-    "status_minutes": "{m} min",
-    "status_hours": "{h} h {m} min",
-    "status_pending": "Waiting for your decision: {n}. /pending shows them.",
-    "status_no_pending": "Nothing is waiting for your decision.",
-    "status_pending_unknown": "Waiting for your decision: could not be read just now. /pending tries again.",
-    "status_unfinished": "Unfinished work: {n}. /continue goes on with it.",
-    "status_no_unfinished": "No unfinished work.",
-    "status_unfinished_unknown": "Unfinished work: could not be read just now.",
-    "status_next": "Next scheduled: {job}, {when}.",
-    "status_no_next": "Nothing scheduled.",
-    "status_next_unknown": "Next scheduled: could not be read just now. /schedule tries again.",
-    "photo_heic": ("This is a HEIC photo (the iPhone format), which the agent cannot look at. Nothing was saved. Send it as a "
-                   "photo instead of a file (Telegram turns it into JPEG), or export it as JPEG first."),
-    "photo_too_big": "This image is {kb} kB; the limit is {limit} kB. Nothing was saved. Send it as a photo, or a smaller copy.",
-    "photo_not_image": "This does not read as an image, so nothing was saved. Send it again as a photo.",
-    "photo_download": "I could not download the image from Telegram, so nothing was saved. Send it again.",
-}
+# What the bridge itself says to the owner lives in core/locale/<lang>.json, in the owner's language (core/texts.py).
+# The commands, the marks the machine reads and the agents' prompt stay as they are in every language.
+T = texts.t
 
 FOREGROUND_RULE = """FINISH IN THIS RUN. This run ends when your answer is sent, and nothing keeps working after it: no agent, no command.
 - Never start a subagent (Forge or any other agent) or a long command in the background. Run it in the foreground and wait for its result in this same run. (Background running is switched off for these runs anyway.)
@@ -161,8 +138,6 @@ def holding(kind, job=""):
         NOW.clear(); NOW.update(since=time.time(), kind=kind, job=job)
         try: yield
         finally: NOW.clear()
-HELP = ("What you can do: send it again. If it keeps happening, send /new to start a clean conversation. "
-        "/pending shows what is waiting.")
 
 # Nothing runs in the background. `claude -p` ends with its answer, and a subagent or shell command left running in the
 # background ends with it: no permission prompts reach it, nothing it would do happens, and the owner was told "Forge is
@@ -248,19 +223,15 @@ def call_claude(message: str, unattended=False, conversation=True):
             cmd, run_env = command(message, unattended, conversation, session)
             r = run_claude(cmd, run_env, session)
     except FileNotFoundError:
-        return False, ("I could not start: the `claude` program is not installed on this machine, or not found. Nothing was done. "
-                       "What you can do: install Claude Code and run `claude login` on the machine, then send your message again."), "claude not found"
+        return False, T("bridge.claude_missing"), "claude not found"
     except subprocess.TimeoutExpired:
-        return False, (f"I worked on this for {MINUTES} minutes without finishing, so I stopped. Some steps may be done and others not; "
-                       "an approval that was already taken will not be used a second time. "
-                       "What you can do: ask for a smaller step, or send /pending to see what is open."), f"timed out after {MINUTES} minutes"
+        return False, T("bridge.timed_out", minutes=MINUTES), f"timed out after {MINUTES} minutes"
     if r.returncode != 0:
         detail = " ".join((r.stderr.strip() or r.stdout.strip()).split())[-300:]
-        return False, ("I could not finish this: the Claude program stopped with an error, so nothing more was done. " + HELP +
-                       " If the error below mentions signing in, run `claude login` on the machine." +
-                       (f"\n\nError: {detail}" if detail else "")), f"stopped with an error (exit {r.returncode})"
+        return False, (T("bridge.claude_error", help=T("bridge.help")) +
+                       ("\n\n" + T("bridge.error_detail", detail=detail) if detail else "")), f"stopped with an error (exit {r.returncode})"
     out = r.stdout.strip() or r.stderr.strip() or "…"
-    return True, (out + "\n\n" + OWNER_TEXT["conversation_lost"] if lost else out), "replied"
+    return True, (out + "\n\n" + T("bridge.conversation_lost") if lost else out), "replied"
 
 def run_agent(message: str, task=None, again=None, kind="owner") -> str:
     """Claude Code CLI, non-interactive. Runs on the owner's Pro/Max subscription.
@@ -308,11 +279,9 @@ def kept_work(task, started, out, note, again=False):
     if not files: return out, note
     attempt = int(before.get("attempt") or 0) + 1 if again else 1
     keep_interrupted({"task": str(task)[:4000], "files": files, "at": int(time.time()), "attempt": attempt})
-    head = (f"I worked on this for {MINUTES} minutes and was stopped before finishing. " if note.startswith("timed out")
-            else out + "\n\n")
-    return (head + "The work so far is kept, not lost:\n" + workfile.summary(ROOT, files) +
-            "\n\nSend /continue (or just \"continue\") and I go on from there; what is ticked is not done again." +
-            ("" if attempt < 3 else " It has stopped several times now: a smaller step may work better.")), \
+    head = T("bridge.kept_timed_out", minutes=MINUTES) if note.startswith("timed out") else out + "\n\n"
+    return (head + T("bridge.kept_work", summary=workfile.summary(ROOT, files)) +
+            ("" if attempt < 3 else T("bridge.kept_again"))), \
         f"{note}; work kept in {', '.join(files)}"
 
 def settled(out):
@@ -320,8 +289,7 @@ def settled(out):
     rec = interrupted()
     if not rec:
         keep_interrupted({}); return out
-    return out + ("\n\n(The work file is still marked unfinished: " + ", ".join(rec["files"]) +
-                  ". Send /continue to go on with it.)")
+    return out + "\n\n" + T("bridge.still_open_file", files=", ".join(rec["files"]))
 
 def left_over(out, started):
     """An answer that came back normally while a work file this run wrote is still marked in progress: one line at the end,
@@ -329,7 +297,7 @@ def left_over(out, started):
     and /continue found nothing)."""
     files = workfile.touched(ROOT, started)["open"]
     if not files: return out
-    return out + ("\n\n(Unfinished work was left in " + ", ".join(files) + ". Send /continue to go on with it.)")
+    return out + "\n\n" + T("bridge.left_over", files=", ".join(files))
 
 def options():
     """Everything /continue can go on with → [(when, kind, what)], newest first. kind "chat": the owner's run that was
@@ -344,11 +312,11 @@ def options():
 def option_line(n, opt):
     when, kind, what = opt
     day = dt.datetime.fromtimestamp(when).strftime("%m-%d %H:%M") if when else "?"
-    if kind == "job": return f"{n}. {what.name}: scheduled, stopped {day} (goes on unattended)"
-    if kind == "chat": return f"{n}. {', '.join(what['files'])}: stopped {day}"
+    if kind == "job": return T("bridge.option_job", n=n, name=what.name, day=day)
+    if kind == "chat": return T("bridge.option_chat", n=n, files=", ".join(what["files"]), day=day)
     done, todo = workfile.steps(ROOT / what)
-    progress = f"{len(done)} of {len(done) + len(todo)} steps done" if done or todo else "no step list"
-    return f"{n}. {what}: left unfinished, last changed {day}, {progress}"
+    progress = T("bridge.option_steps", done=len(done), total=len(done) + len(todo)) if done or todo else T("bridge.option_no_steps")
+    return T("bridge.option_file", n=n, file=what, day=day, progress=progress)
 
 async def say(send, text, markup=None):
     for i in range(0, len(text), 4000):
@@ -364,8 +332,8 @@ AWAIT_SECONDS = 600  # after that the next message is an ordinary message again
 
 def took(seconds):
     m = int(seconds // 60)
-    if m < 1: return OWNER_TEXT["status_under_a_minute"]
-    return OWNER_TEXT["status_minutes"].format(m=m) if m < 60 else OWNER_TEXT["status_hours"].format(h=m // 60, m=m % 60)
+    if m < 1: return T("status.under_a_minute")
+    return T("status.minutes", m=m) if m < 60 else T("status.hours", h=m // 60, m=m % 60)
 
 def status_text(now=None) -> str:
     """/status: plain code, no agent run, and it never waits for RUNNING. Counts and job names only: no item titles, no
@@ -374,26 +342,26 @@ def status_text(now=None) -> str:
     cur, lines = dict(NOW), []
     if cur and RUNNING.locked():
         since = dt.datetime.fromtimestamp(cur["since"], alerts.zone()).strftime("%H:%M")
-        key = {"hand-over": "status_working_hand_over", "job": "status_working_job"}.get(cur.get("kind"), "status_working_owner")
-        lines.append(OWNER_TEXT[key].format(for_=took(now - cur["since"]), since=since, job=cur.get("job", "")))
+        key = {"hand-over": "status.working_hand_over", "job": "status.working_job"}.get(cur.get("kind"), "status.working_owner")
+        lines.append(T(key, for_=took(now - cur["since"]), since=since, job=cur.get("job", "")))
     else:
-        lines.append(OWNER_TEXT["status_working" if RUNNING.locked() else "status_idle"])
+        lines.append(T("status.working" if RUNNING.locked() else "status.idle"))
     try:
         n = len(BOOK.open_items()[0])
-        lines.append(OWNER_TEXT["status_pending"].format(n=n) if n else OWNER_TEXT["status_no_pending"])
+        lines.append(T("status.pending", n=n) if n else T("status.no_pending"))
     except Exception:
-        log.exception("status: approvals"); lines.append(OWNER_TEXT["status_pending_unknown"])
+        log.exception("status: approvals"); lines.append(T("status.pending_unknown"))
     try:
         n = len(options())
-        lines.append(OWNER_TEXT["status_unfinished"].format(n=n) if n else OWNER_TEXT["status_no_unfinished"])
+        lines.append(T("status.unfinished", n=n) if n else T("status.no_unfinished"))
     except Exception:
-        log.exception("status: unfinished work"); lines.append(OWNER_TEXT["status_unfinished_unknown"])
+        log.exception("status: unfinished work"); lines.append(T("status.unfinished_unknown"))
     try:
         rows = [r for r in SCHED.rows(now) if r["on"] and r["next"]]
         first = min(rows, key=lambda r: r["next"]) if rows else None
-        lines.append(OWNER_TEXT["status_next"].format(job=first["name"], when=first["next_text"]) if first else OWNER_TEXT["status_no_next"])
+        lines.append(T("status.next", job=first["name"], when=first["next_text"]) if first else T("status.no_next"))
     except Exception:
-        log.exception("status: schedule"); lines.append(OWNER_TEXT["status_next_unknown"])
+        log.exception("status: schedule"); lines.append(T("status.next_unknown"))
     return "\n".join(lines)
 
 def decide(item_id, decision, note):
@@ -401,40 +369,41 @@ def decide(item_id, decision, note):
     what = alerts.line(BOOK, it)
     if decision == "ok":
         if not it["sendable"]:
-            return f"Approved, but it cannot go out as it is: {it['blocked']}.\n{what}\n{NAME} will fix it and ask you again."
+            return T("bridge.approved_blocked", blocked=it["blocked"], what=what, name=NAME)
         minutes = max(1, round(alerts.number("UNDO_SECONDS", 120) / 60) + 1)
-        return f"Approved: {what}\n{NAME} picks it up within about {minutes} minutes. Until then: /undo_{item_id}"
-    if decision == "edit": return f"Sent back with your note: {what}\nThe corrected version will come to you again."
-    return f"Dropped: {what}\nYour reason is saved for the team. /undo_{item_id} takes it back."
+        return T("bridge.approved", what=what, name=NAME, minutes=minutes, id=item_id)
+    if decision == "edit": return T("bridge.sent_back", what=what)
+    return T("bridge.dropped", what=what, id=item_id)
 
 def owner_command(text: str) -> str:
     """/ok k7qd · /ok_k7qd · /change k7qd shorter · /drop k7qd why · /undo k7qd · /pending · /schedule.
     The id may be left out when only one item fits."""
     m = COMMAND.fullmatch(text.strip())
-    if not m: return COMMAND_LINE
+    if not m: return command_line()
     word, first, rest = m.group(1), m.group(2) or "", (m.group(3) or "").strip()
     if word == "schedule": return SCHED.summary()
     if word == "status": return status_text()
     pending, decided, _ = BOOK.open_items()
     if word == "pending":
         rows = [f"• {alerts.line(BOOK, i)}: {BOOK.status(i)}" for i in pending + decided]
-        return "\n".join(rows) + "\n\n/ok <id> · /change <id> what to change · /drop <id> why · /undo <id>" if rows else "Nothing is waiting."
+        return "\n".join(rows) + "\n\n" + T("bridge.pending_hint") if rows else T("bridge.nothing_waiting")
     fits = decided if word == "undo" else pending
     known = {i["id"] for i in BOOK.read()[0]}
     if first in known: target, note = first, rest
-    elif first and word in ("ok", "undo"): return f"There is no item '{first}'. /pending shows what is waiting."
+    elif first and word in ("ok", "undo"): return T("bridge.no_such_item", id=first)
     elif len(fits) == 1: target, note = fits[0]["id"], " ".join(x for x in (first, rest) if x)
-    elif not fits: return "Nothing to undo." if word == "undo" else "Nothing is waiting for a decision."
-    else: return "Which one?\n" + "\n".join(f"• {alerts.line(BOOK, i)}" for i in fits) + f"\n\nSend /{word} <id>" + ("" if word in ("ok", "undo") else " <your words>")
+    elif not fits: return T("bridge.nothing_to_undo") if word == "undo" else T("bridge.nothing_to_decide")
+    else: return (T("bridge.which_one") + "\n" + "\n".join(f"• {alerts.line(BOOK, i)}" for i in fits) + "\n\n"
+                  + T("bridge.which_send" if word in ("ok", "undo") else "bridge.which_send_words", word=word))
     try:
         if word == "undo":
-            return f"Undone. It is waiting for your decision again: {alerts.line(BOOK, BOOK.undo(target, by='telegram'))}"
+            return T("bridge.undone", what=alerts.line(BOOK, BOOK.undo(target, by="telegram")))
         if word != "ok" and not note:
             it = BOOK.get(target)
-            if it["state"] != "pending": raise approvals.Conflict(f"'{target}' is already {BOOK.status(it)}")
+            if it["state"] != "pending": raise approvals.Conflict(texts.t("approvals.already", id=target, status=BOOK.status(it)))
             AWAITING.update(id=target, decision=DECISION[word], until=time.time() + AWAIT_SECONDS)
-            ask = "What should change?" if word == "change" else "Why are you dropping it? One sentence; the team learns from it."
-            return f"{alerts.line(BOOK, it)}\n{ask} Send it as your next message."
+            ask = T("bridge.ask_change") if word == "change" else T("bridge.ask_drop")
+            return T("bridge.ask_next", what=alerts.line(BOOK, it), ask=ask)
         return decide(target, DECISION[word], note)
     except approvals.Refused as e:
         return str(e)[:1].upper() + str(e)[1:]
@@ -486,13 +455,12 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return await say(update.message.reply_text, await asyncio.to_thread(decide, pending[0]["id"], "ok", ""))
         if len(pending) > 1:
             ids = [i["id"] for i in pending][:5]
-            return await say(update.message.reply_text, "Which one?\n" + "\n".join(f"• {alerts.line(BOOK, i)}" for i in pending), buttons(ids))
+            return await say(update.message.reply_text, T("bridge.which_one") + "\n" + "\n".join(f"• {alerts.line(BOOK, i)}" for i in pending), buttons(ids))
     await answer(update, text)
 
 async def answer(update, text, task=None, again=None):
     if SCHEDULING["busy"] and RUNNING.locked():  # a scheduled job started just before: say so instead of a silent wait
-        await update.message.reply_text(f"One moment: a scheduled run is finishing ({SCHEDULING['job']}). Your message is next, "
-                                        f"within {MINUTES} minutes at most.")
+        await update.message.reply_text(T("bridge.run_waiting", job=SCHEDULING["job"], minutes=MINUTES))
     reply = await asyncio.to_thread(run_agent, *((text,) if task is None else (text, task, again)))
     ids = [i["id"] for i in BOOK.open_items()[0] if i["id"] in reply][:5]  # the agent named a waiting item: put the tap buttons under it
     await say(update.message.reply_text, reply, buttons(ids))
@@ -505,44 +473,42 @@ async def go_on(update, ctx, which):
     if which.isdigit():
         n = int(which)
         if not 1 <= n <= len(opts):
-            return await update.message.reply_text(f"There is no number {n}. Send /continue on its own to see what is unfinished.")
+            return await update.message.reply_text(T("bridge.continue_no_number", n=n))
         return await go_on_option(update, opts[n - 1])
     if which and which.lower() != "chat":
         hit = [o for o in opts if o[1] == "job" and o[2].id == which]
         if not hit:
-            return await update.message.reply_text(f"'{which}' has no unfinished work to continue. Send /continue on its own for "
-                                                   "the newest, or /schedule to see the jobs.")
+            return await update.message.reply_text(T("bridge.continue_no_job", which=which))
         return await go_on_option(update, hit[0])
     if which:  # "chat": the owner's own stopped run
         hit = [o for o in opts if o[1] == "chat"]
-        if not hit: return await update.message.reply_text("Nothing was cut off, so there is nothing to continue.")
+        if not hit: return await update.message.reply_text(T("bridge.continue_nothing_cut"))
         return await go_on_option(update, hit[0])
     if not opts:
-        return await update.message.reply_text("Nothing was cut off or left unfinished, so there is nothing to continue.")
+        return await update.message.reply_text(T("bridge.continue_nothing"))
     if len(opts) == 1 or not any(o[1] == "file" for o in opts):
         return await go_on_option(update, opts[0])
     rows = [option_line(i, o) for i, o in enumerate(opts, 1)]
-    await say(update.message.reply_text, "Unfinished work, newest first:\n" + "\n".join(rows) +
-              "\n\nWhich one? Send " + ", ".join(f"/continue_{i}" for i in range(1, min(len(opts), 5) + 1)) +
-              (" …" if len(opts) > 5 else "") + ".")
+    choices = ", ".join(f"/continue_{i}" for i in range(1, min(len(opts), 5) + 1)) + (" …" if len(opts) > 5 else "")
+    await say(update.message.reply_text, T("bridge.continue_list", rows="\n".join(rows), choices=choices))
 
 async def go_on_option(update, opt):
     when, kind, what = opt
     if kind == "job": return await go_on_job(update, what)
     if kind == "chat":
-        await update.message.reply_text("Going on from " + ", ".join(what["files"]) + ".")
+        await update.message.reply_text(T("bridge.going_on_chat", files=", ".join(what["files"])))
         return await answer(update, workfile.resume_prompt(what["files"], what.get("task"), MINUTES, int(what.get("attempt") or 1)),
                             what.get("task"))
-    await update.message.reply_text(f"Going on from {what} (left unfinished).")
-    await answer(update, workfile.resume_prompt([what], None, MINUTES, stopped=False), f"Go on with the unfinished work in {what}",
+    await update.message.reply_text(T("bridge.going_on_file", file=what))
+    await answer(update, workfile.resume_prompt([what], None, MINUTES, stopped=False), T("bridge.going_on_file_task", file=what),
                  again=False)
 
 async def go_on_job(update, job):
     if SCHEDULING["busy"]:
-        return await update.message.reply_text(f"A scheduled run is going right now ({SCHEDULING['job']}). Send /continue {job.id} again in a few minutes.")
+        return await update.message.reply_text(T("bridge.job_busy", job=SCHEDULING["job"], id=job.id))
     SCHEDULING.update(busy=True, job=job.name)
     try:
-        await update.message.reply_text(f"Going on with {job.name}, unattended as scheduled: nothing goes out from it.")
+        await update.message.reply_text(T("bridge.going_on_job", name=job.name))
         out = await asyncio.to_thread(SCHED.resume, job.id, RUNNER)
     finally:
         SCHEDULING["busy"] = False
@@ -640,11 +606,10 @@ def decode(data: bytes) -> str:
 def file_refusal(name: str, size) -> str:
     """'' when the file may be taken; otherwise the reason, in words the owner can act on."""
     if pathlib.PurePath(name or "").suffix.lower() not in TEXT_FILES and not is_pdf(name) and not is_xlsx(name):
-        return (f"I can only take text files, PDFs, Excel workbooks and photos ({', '.join(TEXT_FILES + PDF_FILES + XLSX_FILES + IMAGE_FILES[:4])}). Nothing was saved. "
-                "Send it as one of these (an old .xls: save it as .xlsx first), or paste the text.")
+        return T("bridge.file_kinds", kinds=", ".join(TEXT_FILES + PDF_FILES + XLSX_FILES + IMAGE_FILES[:4]))
     limit = MAX_PDF if is_pdf(name) or is_xlsx(name) else MAX_FILE
     if size and size > limit:
-        return f"This file is {size // 1000} kB; the limit is {limit // 1000} kB. Nothing was saved. Split it, or send the part that matters."
+        return T("bridge.file_too_big", kb=size // 1000, limit=limit // 1000)
     return ""
 
 # --- photos from the owner (a delivery note, a damaged parcel, a screenshot): saved under handoffs/inbox/, then the lead opens
@@ -685,19 +650,19 @@ async def take_image(update, media, name):
     """A Telegram photo or an image sent as a file: checked, saved under handoffs/inbox/, handed to the lead."""
     size = getattr(media, "file_size", 0) or 0
     if size > MAX_IMAGE:
-        return await update.message.reply_text(OWNER_TEXT["photo_too_big"].format(kb=size // 1000, limit=MAX_IMAGE // 1000))
+        return await update.message.reply_text(T("bridge.photo_too_big", kb=size // 1000, limit=MAX_IMAGE // 1000))
     if pathlib.PurePath(name).suffix.lower() in (".heic", ".heif"):
-        return await update.message.reply_text(OWNER_TEXT["photo_heic"])
+        return await update.message.reply_text(T("bridge.photo_heic"))
     try:
         data = bytes(await (await media.get_file()).download_as_bytearray())
     except Exception as e:
         log.warning("image download failed: %s", type(e).__name__)  # the type only: never the caption or the content
-        return await update.message.reply_text(OWNER_TEXT["photo_download"])
+        return await update.message.reply_text(T("bridge.photo_download"))
     if len(data) > MAX_IMAGE:
-        return await update.message.reply_text(OWNER_TEXT["photo_too_big"].format(kb=len(data) // 1000, limit=MAX_IMAGE // 1000))
+        return await update.message.reply_text(T("bridge.photo_too_big", kb=len(data) // 1000, limit=MAX_IMAGE // 1000))
     kind = image_kind(data)
-    if kind == "heic": return await update.message.reply_text(OWNER_TEXT["photo_heic"])
-    if not kind: return await update.message.reply_text(OWNER_TEXT["photo_not_image"])
+    if kind == "heic": return await update.message.reply_text(T("bridge.photo_heic"))
+    if not kind: return await update.message.reply_text(T("bridge.photo_not_image"))
     INBOX.mkdir(parents=True, exist_ok=True)
     stem = safe_name(pathlib.PurePath(name).stem or "photo")
     path = INBOX / f"{dt.datetime.now(alerts.zone()):%Y-%m-%d_%H%M%S}-{stem}{kind}"  # the extension of what it really is
@@ -726,11 +691,10 @@ async def on_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if pdf and not data.lstrip()[:5] == b"%PDF-": raise ValueError("not a pdf")
         text = pdf_text(data) if pdf else xlsx_text(data) if xlsx else decode(data)
     except ValueError:
-        kind = "a PDF" if pdf else "an Excel workbook (.xlsx)" if xlsx else "a text file"
-        return await update.message.reply_text(f"This does not read as {kind}, so nothing was saved. Send it again, or paste the text instead.")
+        return await update.message.reply_text(T("bridge.file_not_pdf" if pdf else "bridge.file_not_xlsx" if xlsx else "bridge.file_not_text"))
     except Exception as e:
         log.warning("file download failed: %s", type(e).__name__)
-        return await update.message.reply_text("I could not download the file from Telegram, so nothing was saved. Send it again.")
+        return await update.message.reply_text(T("bridge.file_download"))
     INBOX.mkdir(parents=True, exist_ok=True)
     path = INBOX / f"{dt.datetime.now(alerts.zone()):%Y-%m-%d_%H%M%S}-{safe_name(name)}"
     caption = (update.message.caption or "").strip()
@@ -772,9 +736,9 @@ async def on_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 def buttons(ids):
     """Tap instead of typing: one row per waiting item. The tap goes through the same owner_command as /ok, /change, /drop."""
     if not ids: return None
-    return InlineKeyboardMarkup([[InlineKeyboardButton("✅ OK " + i, callback_data=f"ok:{i}"),
-                                  InlineKeyboardButton("✏️ Change", callback_data=f"change:{i}"),
-                                  InlineKeyboardButton("🗑 Drop", callback_data=f"drop:{i}")] for i in ids])
+    return InlineKeyboardMarkup([[InlineKeyboardButton(T("bridge.button_ok", id=i), callback_data=f"ok:{i}"),
+                                  InlineKeyboardButton(T("bridge.button_change"), callback_data=f"change:{i}"),
+                                  InlineKeyboardButton(T("bridge.button_drop"), callback_data=f"drop:{i}")] for i in ids])
 
 async def on_tap(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -791,7 +755,7 @@ async def alert_tick(ctx: ContextTypes.DEFAULT_TYPE):
         plan = await asyncio.to_thread(WATCH.due)
         for message in plan["messages"]:
             await ctx.bot.send_message(chat_id=OWNER, text=message[:4000],
-                                       reply_markup=buttons(plan.get("ask", [])) if message.startswith("Waiting for your decision") else None)
+                                       reply_markup=buttons(plan.get("ask", [])) if message == plan.get("ask_text") else None)
         await asyncio.to_thread(WATCH.done, plan)  # only now: a message that could not be sent is tried again
     except Exception:
         log.exception("alert check failed; it runs again in a minute")
@@ -879,7 +843,7 @@ async def cmd_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not from_owner(update) or update.message is None: return
     AWAITING.clear()
     await asyncio.to_thread(new_conversation)
-    await update.message.reply_text("New day, clean slate. What are we doing?")
+    await update.message.reply_text(T("bridge.new"))
 
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()

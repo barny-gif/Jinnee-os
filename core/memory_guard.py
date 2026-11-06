@@ -19,7 +19,7 @@ that, by hand in brain/autonomy_config.json; level 0 means nothing ever moves fr
 """
 import datetime as dt, pathlib, sys, time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import approvals, memory, store
+import approvals, memory, store, texts
 
 ACTION = "archive_lessons"
 AGENT = "memory"
@@ -40,13 +40,10 @@ def _lessons(brain):
 def notice(moved, size_before):
     """The lines under the item in the owner's Telegram message."""
     cap_b = memory.cap("lessons")[0]
-    return ([f"brain/lessons.md is {size_before} bytes, the cap is {cap_b}. /ok moves these {len(moved)} oldest lines to "
-             "brain/lessons.archive.md: they leave the prompt, search still finds them."]
+    return ([texts.t("memory.notice_size", size=size_before, cap=cap_b, n=len(moved))]
             + [f"· {row}" for row in memory.excerpt(moved)]
-            + [f"Keep a rule always: put {memory.PIN} at the end of its line in brain/lessons.md (it then stays, also after /ok).",
-               f"Room for all: raise JINNEE_MEMORY_LESSONS_BYTES in .env (now {cap_b}) and restart; this request then closes itself.",
-               f"Fine as it is: /ok. Not now: /drop with a reason, and I ask again in {ASK_AGAIN_DAYS} days at the earliest.",
-               "The full list is on the dashboard."])
+            + [texts.t("memory.notice_pin", pin=memory.PIN), texts.t("memory.notice_raise", cap=cap_b),
+               texts.t("memory.notice_ok", days=ASK_AGAIN_DAYS), texts.t("memory.notice_dashboard")])
 
 
 def tidy(brain, book=None, today=None, now=None):
@@ -80,11 +77,10 @@ def tidy(brain, book=None, today=None, now=None):
             rep = memory.compact(brain, apply=True, today=today, names=("lessons",))[0]
             book.log(AGENT, f"{len(rep['moved'])} old lines of lessons.md moved to lessons.archive.md ({gate.reason})")
             return out + [f"memory: {len(rep['moved'])} old entries of lessons.md moved ({gate.reason})"]
-        texts = [e.text.strip() for e in moved]
-        item, _ = book.add(AGENT, ACTION, f"Move {len(moved)} old lines of brain/lessons.md to the archive",
-                           summary="brain/lessons.md is over its cap. Nothing moves without your /ok.",
-                           text="\n".join(texts) + "\n", reference=True,
-                           payload={"kind": KIND, "entries": texts, "notice": notice(moved, memory._size(text)[0])})
+        lines = [e.text.strip() for e in moved]
+        item, _ = book.add(AGENT, ACTION, texts.t("memory.title", n=len(moved)), summary=texts.t("memory.summary"),
+                           text="\n".join(lines) + "\n", reference=True,
+                           payload={"kind": KIND, "entries": lines, "notice": notice(moved, memory._size(text)[0])})
         out.append(f"memory: lessons.md over its cap, asked the owner ({item['id']}, {len(moved)} lines)")
     return out
 
@@ -97,17 +93,15 @@ def carry_out(brain, item_id, book=None, today=None):
     if item is None or not ours(item): return ""
     verdict = book.consume(item_id)
     if verdict.word == "CHANGE":
-        return (f"[{item_id}] Nothing moved from brain/lessons.md. I take a change as \"not now\": I ask again in "
-                f"{ASK_AGAIN_DAYS} days at the earliest. To keep a rule always, put {memory.PIN} at the end of its line.")
+        return texts.t("memory.changed", id=item_id, days=ASK_AGAIN_DAYS, pin=memory.PIN)
     if verdict.word != "GO": return ""  # dropped (closed by the bridge already) or refused: nothing to do, nothing moved
     approved = set(item["payload"].get("entries") or [])
     try:
         reps = memory.compact(brain, apply=True, today=today, names=("lessons",), only={"lessons": approved})
     except Exception as e:
         book.result(item_id, f"nothing moved: {type(e).__name__}: {e}", failed=True)
-        return f"[{item_id}] I could not move the lines, so brain/lessons.md is as it was. It is noted as failed."
+        return texts.t("memory.failed", id=item_id)
     moved = reps[0]["moved"] if reps else []
     book.result(item_id, f"moved {len(moved)} of {len(approved)} approved lines to brain/lessons.archive.md")
     kept = len(approved) - len(moved)
-    return (f"[{item_id}] Done: {len(moved)} old lines of brain/lessons.md are in brain/lessons.archive.md, where search "
-            "still finds them." + (f" {kept} stayed (pinned, changed or no longer needed)." if kept else ""))
+    return texts.t("memory.done", id=item_id, n=len(moved)) + (texts.t("memory.done_kept", kept=kept) if kept else "")

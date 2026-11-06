@@ -21,7 +21,9 @@ Why handoffs/ and not brain/: brain/ is the memory that goes into every prompt a
 job is not memory. handoffs/<agent>/ is where the team already works (core/jinnee.md, Delegation), both the owner's runs
 and the scheduled runs may write there, and in Docker it is a volume that survives a rebuild.
 """
-import pathlib, re, time
+import pathlib, re, sys, time
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import texts
 
 IN_PROGRESS, DONE = "in-progress", "done"
 MARK = re.compile(r"<!--\s*work:\s*(in-progress|done)\s*-->", re.I)
@@ -142,13 +144,13 @@ def summary(root, paths):
     for rel in paths:
         done, todo = steps(pathlib.Path(root) / rel)
         if done or todo:
-            row = f"• {rel}: {len(done)} of {len(done) + len(todo)} steps done"
+            row = texts.t("workfile.steps", file=rel, done=len(done), total=len(done) + len(todo))
             if done:
                 names = [clean(n) for n in done[-SHOWN_STEPS:]]
-                row += ("" if len(done) <= SHOWN_STEPS else f" (the last {SHOWN_STEPS})") + ": " + "; ".join(names)
-            if todo: row += f". Next: {clean(todo[0])}"
+                row += ("" if len(done) <= SHOWN_STEPS else texts.t("workfile.last_steps", n=SHOWN_STEPS)) + ": " + "; ".join(names)
+            if todo: row += texts.t("workfile.next", step=clean(todo[0]))
         else:
-            row = f"• {rel}: started, no step list in it"
+            row = texts.t("workfile.no_steps", file=rel)
         rows.append(row)
     return "\n".join(rows)
 

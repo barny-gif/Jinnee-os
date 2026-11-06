@@ -50,7 +50,7 @@ CLI (none of these starts a run):
 import contextlib, datetime as dt, hashlib, importlib.util, json, os, pathlib, re, sys, time
 from typing import NamedTuple
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import store, alerts, heartbeat, workfile
+import store, alerts, heartbeat, texts, workfile
 from pack_loader import resolve
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -207,17 +207,25 @@ def slots(rule, start, end, tz):
     return sorted(out.items())
 
 
-def when_text(t, now=None, tz=None):
+def when_text(t, now=None, tz=None, lang=None):
     """A moment for people: 'today 08:00', 'tomorrow 08:00', 'Fri 14:00', '2026-11-02 09:30'."""
-    if not t: return "never"
+    if not t: return texts.t("sched.never", lang)
     lt, ln = _local(t, tz), _local(now or time.time(), tz)
     days = (lt.date() - ln.date()).days
     hm = lt.strftime("%H:%M")
-    if days == 0: return f"today {hm}"
-    if days == 1: return f"tomorrow {hm}"
-    if days == -1: return f"yesterday {hm}"
-    if -6 <= days <= 6: return f"{SHORT[lt.weekday()].capitalize()} {hm}"
+    if days == 0: return texts.t("sched.today", lang, hm=hm)
+    if days == 1: return texts.t("sched.tomorrow", lang, hm=hm)
+    if days == -1: return texts.t("sched.yesterday", lang, hm=hm)
+    if -6 <= days <= 6: return texts.t("sched.weekday", lang, day=texts.t(f"sched.day_{lt.weekday()}", lang), hm=hm)
     return lt.strftime("%Y-%m-%d %H:%M")
+
+
+def result_text(result, when=""):
+    """A run's result for people. The record keeps the plain word (ok, failed, missed…); only what is shown is translated."""
+    if result == "missed": return texts.t("sched.result_missed", when=when)
+    if result == "": return ""
+    key = {"never ran": "never"}.get(result, result)
+    return texts.t(f"sched.result_{key}") if f"sched.result_{key}" in texts.table(texts.BASE) else result
 
 
 # --- what a job needs
@@ -365,26 +373,26 @@ class Scheduler:
             off, rule = "", None
             try: rule = parse(when)
             except SpecError as e:
-                off = (f"your setting in config/business.yaml is not understood ({e})" if source == "owner"
-                       else f"the pack's time is not understood ({e})")
+                off = texts.t("sched.off_owner_bad" if source == "owner" else "sched.off_pack_bad", error=e)
             if rule is None and not off:
-                off = "switched off in config/business.yaml" if source == "owner" else "switched off"
+                off = texts.t("sched.off_owner" if source == "owner" else "sched.off")
             needs = tuple(d.get("needs") or ())
-            if not off and everything_off: off = "all scheduled runs are switched off (schedule.enabled: false in config/business.yaml)"
-            if not off and d.get("agent") not in agents: off = f"its agent '{d.get('agent')}' is not installed"
-            if not off and d.get("precheck") and d["precheck"] not in PRECHECKS: off = f"unknown precheck '{d['precheck']}'"
+            if not off and everything_off: off = texts.t("sched.off_all")
+            if not off and d.get("agent") not in agents: off = texts.t("sched.off_no_agent", agent=d.get("agent"))
+            if not off and d.get("precheck") and d["precheck"] not in PRECHECKS: off = texts.t("sched.off_precheck", precheck=d["precheck"])
             if not off:
                 for n in needs:
                     ok, why = need_ready(n, self.brain)
-                    if not ok: off = f"needs {n}: {why}"; break
-            out.append(Job(jid, d.get("agent", ""), d.get("name") or jid, when if isinstance(when, str) else ("off" if when is False else str(when)),
+                    if not ok: off = texts.t("sched.off_needs", need=n, why=why); break
+            name = texts.t(f"sched.job.{jid}") if d.get("pack") == "core" and jid in CORE_JOBS else d.get("name") or jid
+            out.append(Job(jid, d.get("agent", ""), name, when if isinstance(when, str) else ("off" if when is False else str(when)),
                            rule, needs, d.get("precheck") or "", d.get("task", ""), bool(d.get("lead")), d.get("pack", ""), source, off,
                            _globs(d.get("expects")), bool(d.get("silent_ok"))))
         on = {j.id for j in out if not j.off}
         for i, j in enumerate(out):  # a job that only sums up others: off when none of them runs
             sources = declared[j.id].get("after_any") or []
             if sources and not j.off and not on.intersection(sources):
-                out[i] = j._replace(off="none of the jobs it sums up runs (" + ", ".join(sources) + ")")
+                out[i] = j._replace(off=texts.t("sched.off_sources", jobs=", ".join(sources)))
         return out
 
     def check(self):
@@ -580,15 +588,14 @@ class Scheduler:
         """/continue <job>: go on with the work a stopped run of this job left, now, in the same unattended mode as a
         scheduled run, without taking a slot. → Outcome; its message is always for the owner (they asked)."""
         job = next((j for j in self.jobs() if j.id == jid), None)
-        if job is None: return Outcome("skipped", f"There is no scheduled job '{jid}'. /schedule lists them.", "unknown job")
-        if job.off: return Outcome("skipped", f"'{job.name}' is off: {job.off}. Nothing was started.", "off")
+        if job is None: return Outcome("skipped", texts.t("sched.resume_no_job", id=jid), "unknown job")
+        if job.off: return Outcome("skipped", texts.t("sched.resume_off", name=job.name, off=job.off), "off")
         with self.exclusive() as got:
             if not got or runner.busy():
-                return Outcome("busy", "Another run is going right now. Send /continue again in a minute.", "busy")
+                return Outcome("busy", texts.t("sched.resume_busy"), "busy")
             files = self.carried(job)
             if not files:
-                return Outcome("skipped", f"'{job.name}' has no unfinished work to continue: its last run did not stop half-way, "
-                                          "or the work file was finished since.", "nothing to continue")
+                return Outcome("skipped", texts.t("sched.resume_nothing", name=job.name), "nothing to continue")
             now = now or time.time()
             rec = self.state().get(job.id, {})
             attempt = int(rec.get("attempt") or 0) + 1
@@ -603,9 +610,8 @@ class Scheduler:
                 files, "the scheduled task above", timeout_minutes(), attempt)
             out = self._execute(job, prompt, runner, now)
             if out.message or job.lead: return out
-            said = {"ok": "done", "silent": "done, nothing for you", "problem": f"finished, but {out.note}",
-                    "failed": f"stopped again: {out.note}"}.get(out.result, out.note)
-            return out._replace(message=f"{job.name}: {said}")
+            key = {"ok": "done", "silent": "silent", "problem": "problem", "failed": "failed"}.get(out.result, "other")
+            return out._replace(message=texts.t(f"sched.resume_{key}", name=job.name, note=out.note))
 
     def _execute(self, job, prompt, runner, now):
         """The agent run and what is checked after it: the program files, the work kept when it stopped, and whether the
@@ -625,18 +631,17 @@ class Scheduler:
             if work:
                 note = f"{note}; the work so far is kept in {', '.join(work)}"
                 if job.lead:
-                    text = (text + "\n\nThe work so far is kept:\n" + workfile.summary(self.root, work) +
-                            f"\nSend /continue {job.id} to go on from there now; otherwise the next run continues it.")
+                    text = text + "\n\n" + texts.t("sched.kept", summary=workfile.summary(self.root, work), id=job.id)
             return self._end(job, "failed", text if job.lead else "", note, now)
         self._carry(job, self.carried(job))  # what this run finished is no longer carried
         silent = text.strip(" .").upper() == SILENT
         wrong = self.missing(job, wall, silent)
         if text in ("", "…"): wrong.insert(0, "the run ended without a word")
         if wrong:
-            shown = "" if silent or text in ("", "…") else (text if job.lead else f"{job.name} (scheduled):\n{text}")
+            shown = "" if silent or text in ("", "…") else (text if job.lead else texts.t("sched.scheduled_reply", name=job.name, text=text))
             return self._end(job, "problem", shown, "the run said it was done, but " + "; ".join(wrong), now)
         if silent: return self._end(job, "silent", "", "nothing for the owner", now)
-        return self._end(job, "ok", text if job.lead else f"{job.name} (scheduled):\n{text}", note or "done", now)
+        return self._end(job, "ok", text if job.lead else texts.t("sched.scheduled_reply", name=job.name, text=text), note or "done", now)
 
     def missing(self, job, wall, silent=False):
         """What the job promised (expects) and did not leave: [] when all is there. A file counts when it was written during
@@ -707,33 +712,37 @@ class Scheduler:
         for j in self.jobs():
             rec = s.get(j.id, {})
             nxt = self.next_runs(j, now, tz=tz)
-            off = j.off or ("" if nxt else f"its time is inside the quiet hours ({alerts.quiet_spec()}), so it never runs")
+            off = j.off or ("" if nxt else texts.t("sched.off_quiet", quiet=alerts.quiet_spec()))
             last = rec.get("started")
             result = rec.get("result") or ("" if last else "never ran")
+            shown = result_text(result)
             if result != "running":  # a slot whose time has passed without a run
                 cur = [x for x in slots(j.rule, now - LOOKBACK, now + 1, tz) if not alerts.quiet(x[0])] if j.rule and not j.off else []
                 if cur and cur[-1][0] > rec.get("slot_t", 0) and cur[-1][0] >= rec.get("first_seen", now) and now - cur[-1][0] > GRACE[j.rule.kind]:
-                    result = f"missed {when_text(cur[-1][0], now, tz)}"
+                    result = f"missed {when_text(cur[-1][0], now, tz, 'en')}"
+                    shown = result_text("missed", when_text(cur[-1][0], now, tz))
             out.append({"id": j.id, "agent": j.agent, "name": j.name, "when": j.rule.text if j.rule and not j.off else j.when,
                         "source": j.source, "on": not off, "off": off, "next": nxt[0] if nxt else None,
                         "next_text": when_text(nxt[0], now, tz) if nxt else "", "last": last,
-                        "last_text": when_text(last, now, tz) if last else "", "result": result, "note": rec.get("note", "")})
+                        "last_text": when_text(last, now, tz) if last else "", "result": result, "result_text": shown,
+                        "note": rec.get("note", "")})
         return out
 
     def summary(self, now=None):
         """The /schedule answer on Telegram."""
         now = now or time.time()
-        head = f"Schedule ({alerts.zone_name() or 'machine clock'}, quiet hours {alerts.quiet_spec()}):"
+        head = texts.t("sched.summary_head", zone=alerts.zone_name() or texts.t("sched.machine_clock"), quiet=alerts.quiet_spec())
         lines = [head]
         for r in self.rows(now):
             if r["on"]:
-                last = f"last {r['last_text']}: {r['result']}" + (f" ({r['note']})" if r["note"] else "") if r["last"] else r["result"]
-                lines.append(f"• {r['name']}: {r['when']}. Next {r['next_text']}; {last}")
+                last = (texts.t("sched.row_last", when=r["last_text"], result=r["result_text"]) + (f" ({r['note']})" if r["note"] else "")
+                        if r["last"] else r["result_text"])
+                lines.append(texts.t("sched.row_on", name=r["name"], when=r["when"], next=r["next_text"], last=last))
             else:
-                lines.append(f"• {r['name']}: off, {r['off']}")
+                lines.append(texts.t("sched.row_off", name=r["name"], off=r["off"]))
         probs = self.check()
-        if probs: lines += ["", "Settings to fix:"] + [f"• {p}" for p in probs]
-        lines += ["", "Change a time or switch one off in config/business.yaml (schedule.jobs); see config/business.example.yaml."]
+        if probs: lines += ["", texts.t("sched.settings_head")] + [f"• {p}" for p in probs]
+        lines += ["", texts.t("sched.change_hint")]
         return "\n".join(lines)
 
     def plan(self, now=None, days=7):
@@ -788,15 +797,12 @@ class Scheduler:
             if rec.get("result") == "failed" and not j.lead:
                 work = workfile.still_open(self.root, rec.get("work") or [])
                 if work:  # the note already names the files; here: how far it got, and how to go on
-                    out.append(f"The scheduled run '{j.name}' stopped before it finished: {rec.get('note') or 'no reason given'}.\n"
-                               + workfile.summary(self.root, work) +
-                               f"\nThe next run continues it. To continue it now: /continue {j.id}")
+                    out.append(texts.t("sched.problem_stopped", name=j.name, note=rec.get("note") or texts.t("sched.no_reason"),
+                                       summary=workfile.summary(self.root, work), id=j.id))
                 else:
-                    out.append(f"The scheduled run '{j.name}' failed: {rec.get('note') or 'no reason given'}. It tries again at its "
-                               "next time; /schedule shows the details.")
+                    out.append(texts.t("sched.problem_failed", name=j.name, note=rec.get("note") or texts.t("sched.no_reason")))
             elif rec.get("result") == "problem":  # the lead's own runs too: their message went out, but what they left did not
-                out.append(f"The scheduled run '{j.name}' did not leave what it should: {rec.get('note') or 'no reason given'}. "
-                           "It tries again at its next time; /schedule shows the details.")
+                out.append(texts.t("sched.problem_left_nothing", name=j.name, note=rec.get("note") or texts.t("sched.no_reason")))
         loud = ("is not understood", "there is no job", "not a time", "cannot be loaded")
         return out + [p for p in self.check() if any(w in p for w in loud)]
 
