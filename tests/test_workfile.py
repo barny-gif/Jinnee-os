@@ -306,7 +306,7 @@ class BridgeKeepsWork(Bridge):
         self.assertNotIn("Edit(brain/company.md)", args)  # the owner's own run may still edit it, as before
         self.assertFalse((self.brain / "interrupted.json").exists())  # finished: nothing left to continue
         got = self.drive([["msg", OWNER, "/continue"]], agent="real", extra=self.fake_claude(FINISH))
-        self.assertEqual(got[0]["replies"], ["Nothing was cut off, so there is nothing to continue."])
+        self.assertEqual(got[0]["replies"], ["Nothing was cut off or left unfinished, so there is nothing to continue."])
 
     def test_a_bare_continue_word_continues_only_when_something_is_cut_off(self):
         got = self.drive([["msg", OWNER, "folytasd"]])

@@ -17,6 +17,8 @@ Speaks the owner's language (`business.language` in `config/business.yaml`; `JIN
 2. The agent works in `handoffs/<agent>/<date>-<topic>.md`. For anything longer than a quick answer that file is a work file (below), opened before the first real step.
 3. Review: factual? on-brand? allowed at its autonomy level? If not, send back with one concrete fix – max 2 rounds, then escalate to the owner.
 4. Show the owner only finished, reviewed work, in one line: what it is, what is asked (OK / change / drop). If it needs approval, it goes into the approval queue first (below).
+5. **Delegate in the foreground, never in the background.** A run ends with its answer, and nothing keeps working after it: an agent started in the background gets no permissions, writes nothing and is gone when the answer is sent (the bridge switches background running off, too). So start the agent in the foreground, wait for its result in the same run, review it, and only then answer. Work too long for one run is cut into steps through its work file (below), and the owner goes on with `/continue`.
+6. **Report only what is done.** Never tell the owner that an agent "is working on it" or "will report back": say what was finished, with its proof (the result, the pull request address, the test result), and what is still open. Offer only the bridge's real commands (`/pending /ok /change /drop /undo /schedule /continue /new`; the prompt carries the list); there is no `/forge` or any other agent command, the owner simply writes.
 
 ## The team (who does what)
 | Name | Role | Takes | Never |
@@ -38,6 +40,7 @@ A run is stopped after a fixed time (`JINNEE_TIMEOUT`, 10 minutes by default) wi
 - **Every result goes in as soon as it is there**, and its step is ticked: `- [x] step`. Not collected for the end; the file is added to, not rewritten.
 - **Only when everything asked is in it**, the first line becomes `<!-- work: done -->`. A file is never marked done to look finished.
 - Step names name the work, not the customer: the owner sees them in a summary on Telegram.
+- **When a run ends with a work file still in progress** (it was not stopped, but the work is not finished either), the answer ends with one line saying so, and `/continue` finds the file. With several unfinished files `/continue` lists them, newest first, and the owner picks one (`/continue_2`). Files untouched for more than 7 days are no longer offered: a work file is written at every step, so a week without a change means it was left behind.
 - **When a run stops anyway**, the bridge finds the in-progress files it wrote, tells the owner how far it got (step names and counts, never the results) and keeps them. The owner sends `/continue` (or just "continue") and the next run starts from that file: read it first, never redo or resend what is ticked, go on from the first open step.
 - **Scheduled runs** keep the same rule. A stopped job's work file is continued by its next run, or at once with `/continue <job>`. And the schedule does not take "done" on trust: a job whose reply is empty, or whose promised file (`expects` in the pack) was not written, is marked **problem** in `/schedule` and the owner is told once, outside the quiet hours.
 

@@ -21,7 +21,7 @@ Why handoffs/ and not brain/: brain/ is the memory that goes into every prompt a
 job is not memory. handoffs/<agent>/ is where the team already works (core/jinnee.md, Delegation), both the owner's runs
 and the scheduled runs may write there, and in Docker it is a volume that survives a rebuild.
 """
-import pathlib, re
+import pathlib, re, time
 
 IN_PROGRESS, DONE = "in-progress", "done"
 MARK = re.compile(r"<!--\s*work:\s*(in-progress|done)\s*-->", re.I)
@@ -85,6 +85,26 @@ def touched(root, since):
     return out
 
 
+MAX_AGE_DAYS = 7  # see left_open()
+
+
+def left_open(root, max_age_days=MAX_AGE_DAYS, now=None):
+    """Work files still marked in progress that nobody is continuing → [(rel path, mtime)], newest first.
+    For /continue when no stopped run was recorded: a run that ended normally (or whose subagent never got going) can
+    still leave its file half-done. A file untouched for longer than `max_age_days` is left alone: work files are written
+    at every step, so a week without a change means abandoned, and the slowest scheduled rhythm is weekly, so a job's own
+    next run has taken over by then. The file stays on disk; it is only no longer offered."""
+    root = pathlib.Path(root)
+    limit = (time.time() if now is None else now) - max_age_days * 86400
+    found = []
+    for p in _files(root):
+        try: m = p.stat().st_mtime
+        except OSError: continue
+        if m >= limit and status(p) == IN_PROGRESS:
+            found.append((str(p.relative_to(root)).replace("\\", "/"), m))
+    return sorted(found, key=lambda x: x[1], reverse=True)
+
+
 def still_open(root, paths):
     """The ones of `paths` that are still marked in progress (a file deleted or marked done since drops out)."""
     return [p for p in paths if status(pathlib.Path(root) / p) == IN_PROGRESS]
@@ -133,11 +153,14 @@ def summary(root, paths):
     return "\n".join(rows)
 
 
-def resume_prompt(paths, task, minutes, attempt=1):
-    """The message that continues cut-off work from its file(s)."""
+def resume_prompt(paths, task, minutes, attempt=1, stopped=True):
+    """The message that continues cut-off work from its file(s). stopped=False: a file found still in progress after a run
+    that ended normally (no record of the task; the file's title and steps say what it is)."""
     files = ", ".join(paths)
-    return (f"CONTINUE. An earlier run on this task was stopped after {minutes} minutes before it finished "
-            f"(this is continuation {attempt}). The work so far is in: {files} (marked <!-- work: in-progress -->).\n"
+    why = (f"An earlier run on this task was stopped after {minutes} minutes before it finished (this is continuation {attempt})."
+           if stopped else "An earlier run ended and left this work unfinished.")
+    if not stopped and not task: task = "(not kept: the title and the step list in the file say what it is)"
+    return (f"CONTINUE. {why} The work so far is in: {files} (marked <!-- work: in-progress -->).\n"
             "Read that file first. What is ticked is done: do not redo it, and never send, queue or consume anything a second "
             "time (an approval already used will be refused anyway). Go on from the first open step, writing into the same file "
             "as you go, and set its first line to <!-- work: done --> when everything asked is in it. Then answer as the "

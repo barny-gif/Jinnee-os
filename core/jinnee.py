@@ -85,9 +85,27 @@ MEMORY. brain/lessons.md and brain/forge_notes.md are in this prompt only up to 
 - A rule that must always be in the prompt gets [pin] at the end of its line; keep [pin] lines few and short.
 - Never delete a line from lessons.md or forge_notes.md to make room: the bridge moves old lines to the archive itself, where search still finds them.""".replace("{PY}", store.PY)
 
+# The owner's Telegram commands, one list: the help line and the agents' prompt are both made from it, so the lead
+# never offers a command the bridge does not have (it once suggested "/forge", which never existed).
+OWNER_COMMANDS = (("/pending", "what is waiting for a decision"), ("/ok", "approve an item"),
+                  ("/change", "send an item back with what to change"), ("/drop", "drop an item, with the reason"),
+                  ("/undo", "take a decision back"), ("/schedule", "the scheduled runs"),
+                  ("/continue", "go on with unfinished work"), ("/new", "start a clean conversation"))
+COMMAND_LINE = "Commands: " + " · ".join(c for c, _ in OWNER_COMMANDS)
+
+FOREGROUND_RULE = """FINISH IN THIS RUN. This run ends when your answer is sent, and nothing keeps working after it: no agent, no command.
+- Never start a subagent (Forge or any other agent) or a long command in the background. Run it in the foreground and wait for its result in this same run. (Background running is switched off for these runs anyway.)
+- Too long for one run ({MINUTES} minutes)? Cut it into steps: do what fits now, writing into the work file (WORK IN PROGRESS below), and tell the owner what is done and that /continue goes on from the file.
+- Tell the owner only about work that is done, with its proof: the result itself, the pull request address, the test result. Never say that someone "is working on it", "has started" or "will report back": after your answer nobody is.
+- The owner's Telegram commands are exactly these, and no others exist: {COMMANDS}. Never suggest any other command (there is no /forge or /status); for everything else the owner simply writes in plain words."""
+
+def foreground_rule() -> str:
+    return (FOREGROUND_RULE.replace("{MINUTES}", str(MINUTES))
+            .replace("{COMMANDS}", "; ".join(f"{c} ({what})" for c, what in OWNER_COMMANDS)))
+
 def system_prompt() -> str:
     parts = [f"Your name is {NAME}. You speak with the owner in language '{business.language()}'. Working directory: {ROOT}.\n" + RULES
-             + "\n\n" + workfile.RULE.replace("{MINUTES}", str(MINUTES))]
+             + "\n\n" + foreground_rule() + "\n\n" + workfile.RULE.replace("{MINUTES}", str(MINUTES))]
     # who the business is (config/business.yaml, the owner's own settings; never in git)
     parts.append("\n\n===== the business (config/business.yaml) =====\n" + business.prompt_block())
     for f in agent_files(PACKS):
@@ -106,6 +124,18 @@ RUNNING = threading.Lock()  # one agent run at a time: the owner's message and a
 HELP = ("What you can do: send it again. If it keeps happening, send /new to start a clean conversation. "
         "/pending shows what is waiting.")
 
+# Nothing runs in the background. `claude -p` ends with its answer, and a subagent or shell command left running in the
+# background ends with it: no permission prompts reach it, nothing it would do happens, and the owner was told "Forge is
+# on it" (2026-11-06). CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 is Claude Code's own switch (code.claude.com/docs/en/env-vars):
+# it removes run_in_background from the Bash and subagent tools and stops subagents being moved to the background
+# automatically. CLAUDE_AUTO_BACKGROUND_TASKS (that automatic move, forced on) is removed if the machine sets it.
+# The rule in FOREGROUND_RULE says the same in words, and covers what a switch cannot: announcing work not done.
+NO_BACKGROUND = {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}
+DROP_ENV = ("CLAUDE_AUTO_BACKGROUND_TASKS",)
+
+def foreground(run_env):
+    return {**{k: v for k, v in run_env.items() if k not in DROP_ENV}, **NO_BACKGROUND}
+
 def command(message: str, unattended=False, conversation=True):
     """→ (the command, the same without --continue, the environment). unattended: started by the schedule.
     conversation=False: a session of its own that is not kept, so the owner's next message does not continue it."""
@@ -115,6 +145,7 @@ def command(message: str, unattended=False, conversation=True):
     else:
         mode, tools, deny = "acceptEdits", TOOLS, GUARDED
         run_env = {k: v for k, v in os.environ.items() if k != "JINNEE_UNATTENDED"}
+    run_env = foreground(run_env)
     base = ["claude", "-p", message, "--permission-mode", mode, "--allowedTools", *tools, "--disallowedTools", *deny,
             "--append-system-prompt", system_prompt(), "--output-format", "text"] + (["--model", MODEL] if MODEL else [])
     if not conversation: return base + ["--no-session-persistence"], None, run_env
@@ -142,18 +173,22 @@ def call_claude(message: str, unattended=False, conversation=True):
     if conversation: FRESH["next"] = False
     return True, r.stdout.strip() or r.stderr.strip() or "…", "replied"
 
-def run_agent(message: str, task=None) -> str:
+def run_agent(message: str, task=None, again=None) -> str:
     """Claude Code CLI, non-interactive. Runs on the owner's Pro/Max subscription.
     --continue keeps one running conversation; acceptEdits lets agents write brain/ and handoffs/.
     A run that fails or times out comes back as a message the owner can act on, and the heartbeat records it.
     If it stopped half-way and left work files (core/workfile.py), they are kept for /continue and the owner is told how
-    far it got. task: the original request when this run continues one (the message is then the continuation prompt)."""
+    far it got. task: the original request when this run continues one (the message is then the continuation prompt).
+    again: it continues the recorded stopped run (the default when there is a task); False for a work file found left open.
+    A run that ended normally but left a work file in progress says so in one line at the end of its answer."""
+    again = task is not None if again is None else again
     with RUNNING:
         beat("jinnee", "working", "working")
         started = time.time()
         ok, out, note = call_claude(message)
-        if not ok: out, note = kept_work(task or message, started, out, note, again=task is not None)
-        elif task is not None: out = settled(out)
+        if not ok: out, note = kept_work(task or message, started, out, note, again=again)
+        elif again: out = settled(out)
+        else: out = left_over(out, started)
         beat("jinnee", note, "ok" if ok else "failed")
     if not ok: log.warning("agent run failed: %s", note)
     return out
@@ -198,6 +233,33 @@ def settled(out):
     return out + ("\n\n(The work file is still marked unfinished: " + ", ".join(rec["files"]) +
                   ". Send /continue to go on with it.)")
 
+def left_over(out, started):
+    """An answer that came back normally while a work file this run wrote is still marked in progress: one line at the end,
+    so the owner knows half-done work is there and how to go on (2026-11-06: the lead said "Forge is on it", the run ended,
+    and /continue found nothing)."""
+    files = workfile.touched(ROOT, started)["open"]
+    if not files: return out
+    return out + ("\n\n(Unfinished work was left in " + ", ".join(files) + ". Send /continue to go on with it.)")
+
+def options():
+    """Everything /continue can go on with → [(when, kind, what)], newest first. kind "chat": the owner's run that was
+    stopped (what = its record); "job": a scheduled job that was stopped (what = the job); "file": a work file still in
+    progress that no stopped run accounts for, at most workfile.MAX_AGE_DAYS old (what = its path)."""
+    mine, jobs = interrupted(), SCHED.interrupted()
+    covered = set(mine.get("files", [])) | {f for _, files, _ in jobs for f in files}
+    opts = ([(mine.get("at", 0), "chat", mine)] if mine else []) + [(at, "job", j) for j, _, at in jobs]
+    opts += [(m, "file", rel) for rel, m in workfile.left_open(ROOT) if rel not in covered]
+    return sorted(opts, key=lambda x: x[0], reverse=True)  # stable: on a tie the owner's own run stays first, as before
+
+def option_line(n, opt):
+    when, kind, what = opt
+    day = dt.datetime.fromtimestamp(when).strftime("%m-%d %H:%M") if when else "?"
+    if kind == "job": return f"{n}. {what.name}: scheduled, stopped {day} (goes on unattended)"
+    if kind == "chat": return f"{n}. {', '.join(what['files'])}: stopped {day}"
+    done, todo = workfile.steps(ROOT / what)
+    progress = f"{len(done)} of {len(done) + len(todo)} steps done" if done or todo else "no step list"
+    return f"{n}. {what}: left unfinished, last changed {day}, {progress}"
+
 async def say(send, text, markup=None):
     for i in range(0, len(text), 4000):
         last = i + 4000 >= len(text)
@@ -225,7 +287,7 @@ def owner_command(text: str) -> str:
     """/ok k7qd · /ok_k7qd · /change k7qd shorter · /drop k7qd why · /undo k7qd · /pending · /schedule.
     The id may be left out when only one item fits."""
     m = COMMAND.fullmatch(text.strip())
-    if not m: return "Commands: /pending · /ok · /change · /drop · /undo · /schedule · /continue · /new"
+    if not m: return COMMAND_LINE
     word, first, rest = m.group(1), m.group(2) or "", (m.group(3) or "").strip()
     if word == "schedule": return SCHED.summary()
     pending, decided, _ = BOOK.open_items()
@@ -271,8 +333,8 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try: reply = await asyncio.to_thread(decide, item_id, decision, text)
         except approvals.Refused as e: reply = str(e)[:1].upper() + str(e)[1:]
         return await say(update.message.reply_text, reply)
-    if text.strip().strip(".!").lower() in CONTINUE_WORDS and await asyncio.to_thread(lambda: bool(interrupted() or SCHED.interrupted())):
-        return await go_on(update, ctx, "")  # a bare "continue" while something is cut off; otherwise it is an ordinary message
+    if text.strip().strip(".!").lower() in CONTINUE_WORDS and await asyncio.to_thread(lambda: bool(options())):
+        return await go_on(update, ctx, "")  # a bare "continue" while something is unfinished; otherwise an ordinary message
     if text.strip().strip(".!").lower() in PLAIN_OK:  # a bare "ok" from the owner: one waiting item is approved, several are asked about
         pending = BOOK.open_items()[0]
         if len(pending) == 1:
@@ -282,31 +344,53 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return await say(update.message.reply_text, "Which one?\n" + "\n".join(f"• {alerts.line(BOOK, i)}" for i in pending), buttons(ids))
     await answer(update, text)
 
-async def answer(update, text, task=None):
+async def answer(update, text, task=None, again=None):
     if SCHEDULING["busy"] and RUNNING.locked():  # a scheduled job started just before: say so instead of a silent wait
         await update.message.reply_text(f"One moment: a scheduled run is finishing ({SCHEDULING['job']}). Your message is next, "
                                         f"within {MINUTES} minutes at most.")
-    reply = await asyncio.to_thread(run_agent, *((text,) if task is None else (text, task)))
+    reply = await asyncio.to_thread(run_agent, *((text,) if task is None else (text, task, again)))
     ids = [i["id"] for i in BOOK.open_items()[0] if i["id"] in reply][:5]  # the agent named a waiting item: put the tap buttons under it
     await say(update.message.reply_text, reply, buttons(ids))
 
 async def go_on(update, ctx, which):
-    """/continue [job id | chat]: go on with work that stopped half-way, from its work file. Without a name, the newest:
-    the owner's own run, or a scheduled job (which continues unattended, as it was started)."""
-    mine = await asyncio.to_thread(interrupted)
-    jobs = await asyncio.to_thread(SCHED.interrupted)
+    """/continue [number | job id | chat]: go on with unfinished work, from its work file. Without a name: when there is
+    one thing to continue, that; when the only choices are stopped runs (the owner's or a scheduled job's), the newest,
+    as before; when work files were also left unfinished, a numbered list to choose from with /continue_<number>."""
+    opts = await asyncio.to_thread(options)
+    if which.isdigit():
+        n = int(which)
+        if not 1 <= n <= len(opts):
+            return await update.message.reply_text(f"There is no number {n}. Send /continue on its own to see what is unfinished.")
+        return await go_on_option(update, opts[n - 1])
     if which and which.lower() != "chat":
-        hit = [x for x in jobs if x[0].id == which]
+        hit = [o for o in opts if o[1] == "job" and o[2].id == which]
         if not hit:
             return await update.message.reply_text(f"'{which}' has no unfinished work to continue. Send /continue on its own for "
                                                    "the newest, or /schedule to see the jobs.")
-        return await go_on_job(update, hit[0][0])
-    if not mine and (which or not jobs):
-        return await update.message.reply_text("Nothing was cut off, so there is nothing to continue.")
-    if jobs and not which and (not mine or jobs[0][2] > mine.get("at", 0)):
-        return await go_on_job(update, jobs[0][0])
-    await update.message.reply_text("Going on from " + ", ".join(mine["files"]) + ".")
-    await answer(update, workfile.resume_prompt(mine["files"], mine.get("task"), MINUTES, int(mine.get("attempt") or 1)), mine.get("task"))
+        return await go_on_option(update, hit[0])
+    if which:  # "chat": the owner's own stopped run
+        hit = [o for o in opts if o[1] == "chat"]
+        if not hit: return await update.message.reply_text("Nothing was cut off, so there is nothing to continue.")
+        return await go_on_option(update, hit[0])
+    if not opts:
+        return await update.message.reply_text("Nothing was cut off or left unfinished, so there is nothing to continue.")
+    if len(opts) == 1 or not any(o[1] == "file" for o in opts):
+        return await go_on_option(update, opts[0])
+    rows = [option_line(i, o) for i, o in enumerate(opts, 1)]
+    await say(update.message.reply_text, "Unfinished work, newest first:\n" + "\n".join(rows) +
+              "\n\nWhich one? Send " + ", ".join(f"/continue_{i}" for i in range(1, min(len(opts), 5) + 1)) +
+              (" …" if len(opts) > 5 else "") + ".")
+
+async def go_on_option(update, opt):
+    when, kind, what = opt
+    if kind == "job": return await go_on_job(update, what)
+    if kind == "chat":
+        await update.message.reply_text("Going on from " + ", ".join(what["files"]) + ".")
+        return await answer(update, workfile.resume_prompt(what["files"], what.get("task"), MINUTES, int(what.get("attempt") or 1)),
+                            what.get("task"))
+    await update.message.reply_text(f"Going on from {what} (left unfinished).")
+    await answer(update, workfile.resume_prompt([what], None, MINUTES, stopped=False), f"Go on with the unfinished work in {what}",
+                 again=False)
 
 async def go_on_job(update, job):
     if SCHEDULING["busy"]:
