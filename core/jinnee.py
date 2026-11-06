@@ -6,11 +6,11 @@ agents' own rhythm), one job at a time and never while the owner's own run is go
 (.txt, .md, .csv, .html) or a PDF (kept as it came, its text next to it) is saved under handoffs/inbox/ and the lead is told where it is.
 run_agent() is the hook for the full orchestration logic (sessions, intake, delegation).
 """
-import os, re, sys, time, uuid, subprocess, pathlib, asyncio, logging, threading, datetime as dt
+import os, re, sys, time, uuid, contextlib, subprocess, pathlib, asyncio, logging, threading, datetime as dt
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import env; env.load()  # before anything below reads the environment
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram.ext import ApplicationBuilder, BaseUpdateProcessor, MessageHandler, CommandHandler, CallbackQueryHandler, ContextTypes, filters
 from pack_loader import agent_files, resolve
 from heartbeat import beat, trouble
 from registry_client import check as registry_check
@@ -92,6 +92,7 @@ MEMORY. brain/lessons.md and brain/forge_notes.md are in this prompt only up to 
 OWNER_COMMANDS = (("/pending", "what is waiting for a decision"), ("/ok", "approve an item"),
                   ("/change", "send an item back with what to change"), ("/drop", "drop an item, with the reason"),
                   ("/undo", "take a decision back"), ("/schedule", "the scheduled runs"),
+                  ("/status", "what is going on right now"),
                   ("/continue", "go on with unfinished work"), ("/new", "start a clean conversation"))
 COMMAND_LINE = "Commands: " + " · ".join(c for c, _ in OWNER_COMMANDS)
 
@@ -102,14 +103,20 @@ OWNER_TEXT = {
     "status_working_owner": "Working now: your message, for {for_} (since {since}).",
     "status_working_hand_over": "Working now: carrying out what you approved, for {for_} (since {since}).",
     "status_working_job": "Working now: a scheduled run ({job}), for {for_} (since {since}).",
+    "status_working": "Working now.",
     "status_idle": "Not working on anything right now.",
+    "status_under_a_minute": "less than a minute",
+    "status_minutes": "{m} min",
+    "status_hours": "{h} h {m} min",
     "status_pending": "Waiting for your decision: {n}. /pending shows them.",
     "status_no_pending": "Nothing is waiting for your decision.",
+    "status_pending_unknown": "Waiting for your decision: could not be read just now. /pending tries again.",
     "status_unfinished": "Unfinished work: {n}. /continue goes on with it.",
     "status_no_unfinished": "No unfinished work.",
+    "status_unfinished_unknown": "Unfinished work: could not be read just now.",
     "status_next": "Next scheduled: {job}, {when}.",
     "status_no_next": "Nothing scheduled.",
-    "status_unknown": "{what}: could not be read just now.",
+    "status_next_unknown": "Next scheduled: could not be read just now. /schedule tries again.",
     "photo_types": "I can take photos as JPEG, PNG, WebP or GIF. Nothing was saved. Send it again as one of these.",
     "photo_heic": ("This is a HEIC photo (the iPhone format), which the agent cannot look at. Nothing was saved. Send it as a "
                    "photo instead of a file (Telegram turns it into JPEG), or export it as JPEG first."),
@@ -122,7 +129,7 @@ FOREGROUND_RULE = """FINISH IN THIS RUN. This run ends when your answer is sent,
 - Never start a subagent (Forge or any other agent) or a long command in the background. Run it in the foreground and wait for its result in this same run. (Background running is switched off for these runs anyway.)
 - Too long for one run ({MINUTES} minutes)? Cut it into steps: do what fits now, writing into the work file (WORK IN PROGRESS below), and tell the owner what is done and that /continue goes on from the file.
 - Tell the owner only about work that is done, with its proof: the result itself, the pull request address, the test result. Never say that someone "is working on it", "has started" or "will report back": after your answer nobody is.
-- The owner's Telegram commands are exactly these, and no others exist: {COMMANDS}. Never suggest any other command (there is no /forge or /status); for everything else the owner simply writes in plain words."""
+- The owner's Telegram commands are exactly these, and no others exist: {COMMANDS}. Never suggest any other command (there is no /forge); for everything else the owner simply writes in plain words. /status answers at once even while you are working: the bridge itself says what is running, how many items wait for a decision, what is unfinished and what is scheduled next."""
 
 def foreground_rule() -> str:
     return (FOREGROUND_RULE.replace("{MINUTES}", str(MINUTES))
@@ -145,6 +152,15 @@ TIMEOUT = int(alerts.number("JINNEE_TIMEOUT", 600))  # seconds for one run; rais
 MINUTES = max(1, TIMEOUT // 60)
 MODEL = os.getenv("JINNEE_MODEL", "").strip()  # e.g. the strongest model for Forge's jobs; empty = the CLI default
 RUNNING = threading.Lock()  # one agent run at a time: the owner's message and a hand-over must not share a session mid-run
+NOW = {}  # what holds RUNNING, for /status: {"since", "kind": "owner" | "hand-over" | "job", "job": the job's name}
+
+@contextlib.contextmanager
+def holding(kind, job=""):
+    """RUNNING, and while it is held, what holds it (NOW). Only the kind and the job's name: never the owner's words."""
+    with RUNNING:
+        NOW.clear(); NOW.update(since=time.time(), kind=kind, job=job)
+        try: yield
+        finally: NOW.clear()
 HELP = ("What you can do: send it again. If it keeps happening, send /new to start a clean conversation. "
         "/pending shows what is waiting.")
 
@@ -242,16 +258,17 @@ def call_claude(message: str, unattended=False, conversation=True):
     out = r.stdout.strip() or r.stderr.strip() or "…"
     return True, (out + "\n\n" + OWNER_TEXT["conversation_lost"] if lost else out), "replied"
 
-def run_agent(message: str, task=None, again=None) -> str:
+def run_agent(message: str, task=None, again=None, kind="owner") -> str:
     """Claude Code CLI, non-interactive. Runs on the owner's Pro/Max subscription.
     The owner's own session id (brain/conversation.json) keeps one running conversation; acceptEdits lets agents write brain/ and handoffs/.
     A run that fails or times out comes back as a message the owner can act on, and the heartbeat records it.
     If it stopped half-way and left work files (core/workfile.py), they are kept for /continue and the owner is told how
     far it got. task: the original request when this run continues one (the message is then the continuation prompt).
     again: it continues the recorded stopped run (the default when there is a task); False for a work file found left open.
-    A run that ended normally but left a work file in progress says so in one line at the end of its answer."""
+    A run that ended normally but left a work file in progress says so in one line at the end of its answer.
+    kind: what /status says is running ("owner", or "hand-over" for approved items carried out)."""
     again = task is not None if again is None else again
-    with RUNNING:
+    with holding(kind):
         beat("jinnee", "working", "working")
         started = time.time()
         ok, out, note = call_claude(message)
@@ -335,11 +352,45 @@ async def say(send, text, markup=None):
         await send(text[i:i+4000], **({"reply_markup": markup} if markup is not None and last else {}))
 
 # --- the owner's decisions, recorded without the agent in between
-COMMAND = re.compile(r"/(ok|change|drop|undo|pending|schedule)(?:@\w+)?(?:[_ ]+(\S+))?(?:\s+(.*))?", re.S)
+COMMAND = re.compile(r"/(ok|change|drop|undo|pending|schedule|status)(?:@\w+)?(?:[_ ]+(\S+))?(?:\s+(.*))?", re.S)
 DECISION = {"ok": "ok", "change": "edit", "drop": "drop"}
 PLAIN_OK = {"ok", "oké", "oke", "go", "mehet"}  # said alone, they approve the one waiting item; the /undo window still applies
 AWAITING = {}  # {"id", "decision", "until"} while the bridge waits for the owner's words after a bare /change or /drop
 AWAIT_SECONDS = 600  # after that the next message is an ordinary message again
+
+def took(seconds):
+    m = int(seconds // 60)
+    if m < 1: return OWNER_TEXT["status_under_a_minute"]
+    return OWNER_TEXT["status_minutes"].format(m=m) if m < 60 else OWNER_TEXT["status_hours"].format(h=m // 60, m=m % 60)
+
+def status_text(now=None) -> str:
+    """/status: plain code, no agent run, and it never waits for RUNNING. Counts and job names only: no item titles, no
+    customer, no words of the owner's message. A part that cannot be read says so; the rest is still answered."""
+    now = now or time.time()
+    cur, lines = dict(NOW), []
+    if cur and RUNNING.locked():
+        since = dt.datetime.fromtimestamp(cur["since"], alerts.zone()).strftime("%H:%M")
+        key = {"hand-over": "status_working_hand_over", "job": "status_working_job"}.get(cur.get("kind"), "status_working_owner")
+        lines.append(OWNER_TEXT[key].format(for_=took(now - cur["since"]), since=since, job=cur.get("job", "")))
+    else:
+        lines.append(OWNER_TEXT["status_working" if RUNNING.locked() else "status_idle"])
+    try:
+        n = len(BOOK.open_items()[0])
+        lines.append(OWNER_TEXT["status_pending"].format(n=n) if n else OWNER_TEXT["status_no_pending"])
+    except Exception:
+        log.exception("status: approvals"); lines.append(OWNER_TEXT["status_pending_unknown"])
+    try:
+        n = len(options())
+        lines.append(OWNER_TEXT["status_unfinished"].format(n=n) if n else OWNER_TEXT["status_no_unfinished"])
+    except Exception:
+        log.exception("status: unfinished work"); lines.append(OWNER_TEXT["status_unfinished_unknown"])
+    try:
+        rows = [r for r in SCHED.rows(now) if r["on"] and r["next"]]
+        first = min(rows, key=lambda r: r["next"]) if rows else None
+        lines.append(OWNER_TEXT["status_next"].format(job=first["name"], when=first["next_text"]) if first else OWNER_TEXT["status_no_next"])
+    except Exception:
+        log.exception("status: schedule"); lines.append(OWNER_TEXT["status_next_unknown"])
+    return "\n".join(lines)
 
 def decide(item_id, decision, note):
     it = BOOK.decide(item_id, decision, note, by="telegram")
@@ -359,6 +410,7 @@ def owner_command(text: str) -> str:
     if not m: return COMMAND_LINE
     word, first, rest = m.group(1), m.group(2) or "", (m.group(3) or "").strip()
     if word == "schedule": return SCHED.summary()
+    if word == "status": return status_text()
     pending, decided, _ = BOOK.open_items()
     if word == "pending":
         rows = [f"• {alerts.line(BOOK, i)}: {BOOK.status(i)}" for i in pending + decided]
@@ -385,10 +437,28 @@ def owner_command(text: str) -> str:
 
 CONTINUE = re.compile(r"/continue(?:@\w+)?(?:[_ ]+(\S+))?\s*", re.I)
 NEW = re.compile(r"/new(?:@\w+)?\s*", re.I)
+STATUS = re.compile(r"/status(?:@\w+)?\s*", re.I)
+
+class OwnerLine(BaseUpdateProcessor):
+    """How Telegram updates are handled. Before: strictly one at a time, so while a run was going (minutes), nothing else was
+    even looked at. Now: still one at a time and in the order they came (an asyncio.Lock is first come, first served), but
+    /status goes past the line and is answered at once, also while a run holds RUNNING."""
+    def __init__(self):
+        super().__init__(max_concurrent_updates=256)  # how many may wait in the line; /status needs a free place too
+        self.line = None
+    async def initialize(self): self.line = asyncio.Lock()
+    async def shutdown(self): pass
+    async def do_process_update(self, update, coroutine):
+        message = getattr(update, "message", None)
+        if STATUS.fullmatch((getattr(message, "text", None) or "").strip()): return await coroutine
+        if self.line is None: self.line = asyncio.Lock()
+        async with self.line: await coroutine
 
 async def on_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not from_owner(update) or update.message is None: return
     if NEW.fullmatch((update.message.text or "").strip()): return await cmd_new(update, ctx)  # its own handler catches it first
+    if STATUS.fullmatch((update.message.text or "").strip()):  # a look only: a /change waiting for its words stays waiting
+        return await say(update.message.reply_text, await asyncio.to_thread(status_text))
     AWAITING.clear()
     m = CONTINUE.fullmatch((update.message.text or "").strip())
     if m: return await go_on(update, ctx, m.group(1) or "")
@@ -682,7 +752,7 @@ async def memory_tick(ctx: ContextTypes.DEFAULT_TYPE):
     except Exception: log.exception("memory tidy failed; the prompt stays capped, it runs again in an hour")
 
 async def hand_over(bot, items):
-    reply = await asyncio.to_thread(run_agent, alerts.hand_over_message(BOOK, items))
+    reply = await asyncio.to_thread(run_agent, alerts.hand_over_message(BOOK, items), kind="hand-over")
     await say(lambda t: bot.send_message(chat_id=OWNER, text=t), reply)
 
 # --- the schedule (core/scheduler.py decides; this runs it)
@@ -705,7 +775,7 @@ class Runner:
     def busy(self):
         return RUNNING.locked()  # the owner's conversation (or a hand-over) is running: the job waits for the next minute
     def run(self, job, prompt):
-        with RUNNING:
+        with holding("job", job.name):
             return call_claude(prompt, unattended=True, conversation=job.lead)  # the brief stays in the owner's conversation
 
 RUNNER = Runner()
@@ -756,7 +826,7 @@ def main():
     BOOK.gate.migrate()  # a file from before locks existed keeps its levels
     BOOK.tidy()          # items from before the lifecycle: decided ones are closed, never carried out twice
     for jid in SCHED.recover(): log.warning("scheduled %s was cut off by the restart; recorded as failed", jid)
-    app = ApplicationBuilder().token(token).build()
+    app = ApplicationBuilder().token(token).concurrent_updates(OwnerLine()).build()
     app.add_handler(CommandHandler("new", cmd_new))
     app.add_handler(CallbackQueryHandler(on_tap))
     app.add_handler(MessageHandler(filters.COMMAND, on_command))
