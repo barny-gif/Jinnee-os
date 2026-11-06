@@ -22,6 +22,7 @@ $packs = if ($pack -eq "2") { "general,ecom" } else { "general" }
 New-Item -ItemType Directory -Force brain,handoffs | Out-Null
 $env:PACKS = $packs; python core\pack_loader.py --init
 # Your business (name, language, tone of voice; for a shop the parcel label) -> config\business.yaml, which never goes to git.
+# The language is also the one the system's own messages and the dashboard use (hu and en are built in).
 if (Test-Path config\business.yaml) { Write-Host "config\business.yaml is already here: kept as it is." }
 else { python core\business.py setup; if ($LASTEXITCODE -ne 0) { throw "config\business.yaml could not be written." } }
 pip install -q -r requirements.txt

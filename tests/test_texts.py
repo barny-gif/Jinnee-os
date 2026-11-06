@@ -201,5 +201,34 @@ class HungarianBridge(Bridge):
         self.assertIn("Hiba: boom", reply)
 
 
+class HungarianDashboard(unittest.TestCase):
+    """The page is served with the owner's words in it; the state's labels, levels and schedule results too."""
+
+    def setUp(self):
+        import test_dashboard
+        self.base = test_dashboard.Base("run")
+        self.base.setUp(); self.addCleanup(self.base.doCleanups)
+
+    def test_page_login_and_state_in_hungarian(self):
+        with hu():
+            c = self.base.client()
+            page = c.get("/").text
+            state = c.get("/api/state").json()
+            refused = c.post("/api/approve/a1", json={"decision": "drop", "note": ""}, headers={"origin": "http://localhost:8080"})
+        self.assertIn('<html lang="hu">', page)
+        self.assertIn("<h2>Döntésedre vár</h2>", page)
+        self.assertNotRegex(page, r"\{\{(t:|TEXTS|NAME)")  # every slot filled
+        words = json.loads(page.split("const T=", 1)[1].split(";\n", 1)[0])
+        self.assertEqual(words["dash.approve"], "Jóváhagyom")
+        self.assertEqual(state["approvals"][0]["status"], "rád vár")
+        levels = {a["action"]: a for a in state["autonomy"]}
+        self.assertEqual((levels["raise_autonomy"]["label"], levels["raise_autonomy"]["name"]), ("Önállósági szint módosítása", "jóváhagyás kell"))
+        self.assertEqual(refused.status_code, 400); self.assertIn("indok kell", refused.json()["detail"])
+
+    def test_english_by_default(self):
+        page = self.base.client().get("/").text
+        self.assertIn('<html lang="en">', page); self.assertIn("<h2>Awaiting your decision</h2>", page)
+
+
 if __name__ == "__main__":
     unittest.main()
