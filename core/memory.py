@@ -51,6 +51,7 @@ K1, B = 1.5, 0.75
 PREFIX_FACTOR = 0.6
 _TOKEN = re.compile(r"[a-z0-9]{2,}")
 _DATE = re.compile(r"^\s*(?:[-*+]\s+)?(\d{4}-\d{2}-\d{2})")
+_ITEM = re.compile(r"(?:[-*+]|\d+[.)])\s")  # a list item at the left margin: "- ", "* ", "+ ", "1. ", "1) "
 
 
 # ---------------------------------------------------------------- reading a memory file
@@ -78,11 +79,16 @@ class Entry:
 
 def split(text):
     """→ (preamble lines, entries). Lossless: the preamble plus every entry's raw lines is the text again, byte for byte.
-    The preamble is the title: the headings and blank lines before the first real line."""
+    The preamble is the title: the headings and blank lines before the first real line, and, in a file that is a list,
+    the intro under a heading: the undated lines that are not list items, up to the first list item or dated line
+    ("The owner's corrections. Every agent reads this."). The preamble is not an entry: never moved, never counted."""
     lines = text.splitlines(keepends=True)
     pre, entries, i = [], [], 0
     while i < len(lines) and (not lines[i].strip() or lines[i].lstrip().startswith("#")):
         pre.append(lines[i]); i += 1
+    if any(ln.lstrip().startswith("#") for ln in pre) and any(_ITEM.match(ln) for ln in lines[i:]):
+        while i < len(lines) and not _ITEM.match(lines[i]) and not _DATE.match(lines[i]):
+            pre.append(lines[i]); i += 1
     for n in range(i, len(lines)):
         ln = lines[n]
         if ln.strip() and not ln[0].isspace() or not entries:
