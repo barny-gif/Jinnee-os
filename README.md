@@ -60,6 +60,10 @@ One run of Claude is stopped after 10 minutes (`JINNEE_TIMEOUT` in `.env`). For 
 work file under `handoffs/<agent>/`, ticking each step. If a run is stopped half-way, you get where it got to instead of "I stopped":
 which file, how many steps are done, what is next. Send `/continue` (or just "continue") and it goes on from that file, without
 redoing or resending what is already done. A scheduled job that was stopped continues at its next run, or now with `/continue <job>`.
+A run that ended normally but left a work file unfinished says so in one line at the end of its answer, and `/continue` finds that
+file too; with several, it lists them (newest first) and you pick one with `/continue_2`. Files untouched for more than 7 days are no
+longer offered. Nothing runs in the background: every agent works inside the run that answers you, so the answer reports finished
+work (a pull request address, a test result), never "someone is working on it".
 - Your time zone, quiet hours, another time or off per job: `schedule` in `config/business.yaml` (examples in
   `config/business.example.yaml`). `python3 core/scheduler.py plan` prints what would run when and starts nothing;
   `python3 core/scheduler.py check` checks your settings.

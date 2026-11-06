@@ -3,8 +3,8 @@
 | file | purpose |
 |---|---|
 | `jinnee.md` | the team lead's persona (renamable; the rules are not) |
-| `jinnee.py` | entry point: Telegram bridge + Claude Code call; records the owner's `/ok` `/change` `/drop` `/undo` itself; runs the schedule once a minute; `/schedule`; `/continue` after a run that stopped half-way |
-| `workfile.py` | work files: the `<!-- work: in-progress -->` / `<!-- work: done -->` mark on a handoff, the rule every run gets, which files a stopped run left, the owner's summary (step names and counts only) and the continue prompt |
+| `jinnee.py` | entry point: Telegram bridge + Claude Code call; records the owner's `/ok` `/change` `/drop` `/undo` itself; runs the schedule once a minute; `/schedule`; `/continue` after a run that stopped half-way or left a work file unfinished; every `claude` run with background tasks switched off |
+| `workfile.py` | work files: the `<!-- work: in-progress -->` / `<!-- work: done -->` mark on a handoff, the rule every run gets, which files a stopped run left, the unfinished files of the last 7 days (`left_open`), the owner's summary (step names and counts only) and the continue prompt |
 | `scheduler.py` | the schedule: what is due when (core jobs + the packs' `schedule`, the owner's overrides in `config/business.yaml`), quiet hours, daylight saving, once per slot (`brain/schedule_state.json`), one at a time (`brain/.schedule.lock`); checks that a run left what it promised (`expects`: else "problem"); keeps a stopped run's work files for its next run; `plan` / `status` / `check` start nothing |
 | `approvals.py` | the approval queue and the only writer of `brain/approvals.json`: pending → decided → consumed, each once |
 | `autonomy.py` | autonomy levels with locks; the one gate (`allowed(action) → level, needs_approval, reason`) |
