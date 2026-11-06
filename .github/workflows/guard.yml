@@ -1,0 +1,33 @@
+# Keeps business data out of this public repo: every pushed commit and every pull request is checked for phone numbers,
+# e-mail addresses, real Shopify store handles and tokens in the added lines, and for order numbers and money amounts in
+# the commit messages. The patterns are generic (tools/guard.py); a business's own words are checked only by the local
+# git hooks, from config/private_patterns.txt, which is never committed.
+name: guard
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  no-business-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check added lines and commit messages
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.event.after }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then base="$PR_BASE"; head="$PR_HEAD"
+          else base="$PUSH_BEFORE"; head="$PUSH_AFTER"; fi
+          # a new branch or a force push has no usable "before": check the last commit only
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null || [ "$base" = 0000000000000000000000000000000000000000 ]; then
+            base="$head^"
+          fi
+          python3 tools/guard.py range "$base" "$head"
