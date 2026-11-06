@@ -13,7 +13,8 @@
 | `env.py` | reads `.env` at startup for native installs; a variable already set in the environment wins |
 | `pack_loader.py` | loads packs from `PACKS`, merges autonomy defaults and connector lists |
 | `heartbeat.py` | agent liveness in `brain/heartbeat.json`: working / ok / failed; flags a run that never finished or failed, and a scheduled agent that should have run and did not |
-| `memory.py` | searchable memory: the capped core of `lessons.md` / `forge_notes.md` for the prompt (`[pin]` lines, then the newest), BM25 search over them, their archives, `decisions.log.md` and `catalog.md`; `compact` (the bridge's hourly job, denied to agents) moves old lines to `*.archive.md` |
+| `memory.py` | searchable memory: the capped core of `lessons.md` / `forge_notes.md` for the prompt (`[pin]` lines, then the newest), BM25 search over them, their archives, `decisions.log.md` and `catalog.md`; `compact` (denied to agents) moves old lines to `*.archive.md` |
+| `memory_guard.py` | the bridge's hourly memory tidy: old `forge_notes.md` lines move by themselves; old `lessons.md` lines (the owner's rules) only after the owner's `/ok` on an `archive_lessons` approval item that lists them (`[pin]` keeps a line, `JINNEE_MEMORY_LESSONS_BYTES` raises the cap) |
 | `registry_client.py` | checks `REGISTRY_URL` daily; only reports newer versions, never installs them on its own |
 
 The core knows nothing about any industry. Everything that is "shop" or "photographer" lives under `packs/`.

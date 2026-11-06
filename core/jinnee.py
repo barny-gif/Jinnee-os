@@ -14,7 +14,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, Cal
 from pack_loader import agent_files, resolve
 from heartbeat import beat, trouble
 from registry_client import check as registry_check
-import alerts, approvals, business, logs, memory, scheduler, store
+import alerts, approvals, business, logs, memory, memory_guard, scheduler, store
 
 log = logging.getLogger("jinnee")
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -420,18 +420,24 @@ async def alert_tick(ctx: ContextTypes.DEFAULT_TYPE):
     todo = []
     for item in plan["hand_over"]:
         if item["decision"] == "drop": await asyncio.to_thread(BOOK.consume, item["id"])  # nothing to carry out: closed here, no agent run
+        elif memory_guard.ours(item):  # moving old lessons: plain code, no agent run
+            try:
+                said = await asyncio.to_thread(memory_guard.carry_out, BRAIN, item["id"], BOOK)
+                if said: await ctx.bot.send_message(chat_id=OWNER, text=said[:4000])
+            except Exception:
+                log.exception("memory: carrying out %s failed", item["id"])
         else: todo.append(item)
     if todo:  # as its own task: a run can take minutes, and the next check should not wait for it
         ctx.application.create_task(hand_over(ctx.bot, todo))
 
 def memory_tidy():
-    """Keeps the memory cores small: lines that no longer fit move to brain/*.archive.md (core/memory.py compact), where
-    search still finds them. Writes only lessons.md, forge_notes.md and their archives, with a copy kept first."""
-    for rep in memory.compact(BRAIN, apply=True):
-        if rep["moved"]: log.info("memory: %d old entries of %s moved to %s", len(rep["moved"]), rep["file"], rep["archive"])
+    """Keeps the memory cores small (core/memory_guard.py): old lines of forge_notes.md move to its archive by themselves;
+    old lines of lessons.md, the owner's own rules, only after the owner's /ok on an approval item that lists them."""
+    for line in memory_guard.tidy(BRAIN, BOOK): log.info("%s", line)
 
 async def memory_tick(ctx: ContextTypes.DEFAULT_TYPE):
-    """Once an hour, quietly. Nothing to tell the owner: nothing is lost, and the prompt is capped either way."""
+    """Once an hour. It tells the owner nothing itself: a question about lessons.md is an approval item, which the
+    minute check (alert_tick) announces, respecting the quiet hours."""
     try: await asyncio.to_thread(memory_tidy)
     except Exception: log.exception("memory tidy failed; the prompt stays capped, it runs again in an hour")
 
