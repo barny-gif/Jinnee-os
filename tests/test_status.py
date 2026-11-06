@@ -30,7 +30,7 @@ async def slow(name):  # an ordinary update that takes long (an agent run): it w
 
 async def main():
     line = jinnee.OwnerLine(); await line.initialize()
-    threading.Thread(target=busy, daemon=True).start(); held.wait(5)
+    worker = threading.Thread(target=busy, daemon=True); worker.start(); held.wait(5)
     first = asyncio.create_task(line.process_update(update("first"), slow("first")))
     second = asyncio.create_task(line.process_update(update("second"), slow("second")))
     status = update("/status")
@@ -41,6 +41,7 @@ async def main():
     out["before_release"] = list(order)
     out["running_while_status"] = jinnee.RUNNING.locked()
     release.set(); await first; await second
+    worker.join(5)  # the scheduled run has let go of RUNNING (else the check below races it)
     out["order"] = order
     after = update("/status@testbot"); await jinnee.on_command(after, None)
     out["after"] = after.message.replies
