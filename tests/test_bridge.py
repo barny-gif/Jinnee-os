@@ -155,6 +155,7 @@ class Bridge(base.RepoCopy):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('STUB_TOKEN "123456:TEST-not-a-real-token"', r.stdout)
         self.assertIn("STUB_REPEAT schedule_tick 60", r.stdout)  # the brief comes from core/scheduler.py now
+        self.assertIn("STUB_REPEAT memory_tick 3600", r.stdout)  # old memory lines move to the archives once an hour
         self.assertIn("Scheduled: jinnee.brief", r.stdout)
         self.assertIn("Testbot is running", r.stdout)
 
