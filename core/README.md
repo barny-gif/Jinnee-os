@@ -3,8 +3,9 @@
 | file | purpose |
 |---|---|
 | `jinnee.md` | the team lead's persona (renamable; the rules are not) |
-| `jinnee.py` | entry point: Telegram bridge + Claude Code call; records the owner's `/ok` `/change` `/drop` `/undo` itself; runs the schedule once a minute; `/schedule` |
-| `scheduler.py` | the schedule: what is due when (core jobs + the packs' `schedule`, the owner's overrides in `config/business.yaml`), quiet hours, daylight saving, once per slot (`brain/schedule_state.json`), one at a time (`brain/.schedule.lock`); `plan` / `status` / `check` start nothing |
+| `jinnee.py` | entry point: Telegram bridge + Claude Code call; records the owner's `/ok` `/change` `/drop` `/undo` itself; runs the schedule once a minute; `/schedule`; `/continue` after a run that stopped half-way |
+| `workfile.py` | work files: the `<!-- work: in-progress -->` / `<!-- work: done -->` mark on a handoff, the rule every run gets, which files a stopped run left, the owner's summary (step names and counts only) and the continue prompt |
+| `scheduler.py` | the schedule: what is due when (core jobs + the packs' `schedule`, the owner's overrides in `config/business.yaml`), quiet hours, daylight saving, once per slot (`brain/schedule_state.json`), one at a time (`brain/.schedule.lock`); checks that a run left what it promised (`expects`: else "problem"); keeps a stopped run's work files for its next run; `plan` / `status` / `check` start nothing |
 | `approvals.py` | the approval queue and the only writer of `brain/approvals.json`: pending → decided → consumed, each once |
 | `autonomy.py` | autonomy levels with locks; the one gate (`allowed(action) → level, needs_approval, reason`) |
 | `alerts.py` | what the owner is told unasked: new items, reminders, stuck decisions; quiet hours; state in `brain/alerts_state.json` |
@@ -12,7 +13,7 @@
 | `logs.py` | rotating log files for a native install |
 | `env.py` | reads `.env` at startup for native installs; a variable already set in the environment wins |
 | `pack_loader.py` | loads packs from `PACKS`, merges autonomy defaults and connector lists |
-| `heartbeat.py` | agent liveness in `brain/heartbeat.json`: working / ok / failed; flags a run that never finished or failed, and a scheduled agent that should have run and did not |
+| `heartbeat.py` | agent liveness in `brain/heartbeat.json`: working / ok / failed / problem (a scheduled run that said done and left nothing usable); flags a run that never finished or failed, and a scheduled agent that should have run and did not |
 | `memory.py` | searchable memory: the capped core of `lessons.md` / `forge_notes.md` for the prompt (`[pin]` lines, then the newest), BM25 search over them, their archives, `decisions.log.md` and `catalog.md`; `compact` (denied to agents) moves old lines to `*.archive.md` |
 | `memory_guard.py` | the bridge's hourly memory tidy: old `forge_notes.md` lines move by themselves; old `lessons.md` lines (the owner's rules) only after the owner's `/ok` on an `archive_lessons` approval item that lists them (`[pin]` keeps a line, `JINNEE_MEMORY_LESSONS_BYTES` raises the cap) |
 | `registry_client.py` | checks `REGISTRY_URL` daily; only reports newer versions, never installs them on its own |
@@ -22,7 +23,8 @@ The core knows nothing about any industry. Everything that is "shop" or "photogr
 State lives in `brain/` as plain files so the owner can read them:
 `company.md` · `lessons.md` · `decisions.log.md` · `autonomy_config.json` · `approvals.json` · `alerts_state.json` · `heartbeat.json` · `brief_today.md` · `forge_notes.md` · `lessons.archive.md` / `forge_notes.archive.md` (written by `memory.py compact` only) · `catalog.md` (optional)
 
-Written by the schedule only: `schedule_state.json` (last slot, result per job) · `schedule_outbox.json` (a message that finished in the quiet hours).
+Written by the schedule only: `schedule_state.json` (last slot, result per job, a stopped run's work files) · `schedule_outbox.json` (a message that finished in the quiet hours).
+Written by the bridge only: `interrupted.json` (the owner's last run that stopped with work in progress: its task and work files, for `/continue`).
 
 ## Who may write what
 - A scheduled run (started by `scheduler.py`, not by the owner) is unattended: `JINNEE_UNATTENDED=1` makes every connector refuse

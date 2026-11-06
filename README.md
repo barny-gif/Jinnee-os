@@ -52,6 +52,14 @@ it runs next, when it last ran, and how it went.
 - Never in the quiet hours, and never twice for the same time (also after a restart and on the nights the clocks change). A scheduled
   job does not start while Jinnee is working on your message; if one is already running when you write, Jinnee says so and your
   message is next. A failed run is reported to you once.
+- **"Done" is checked, not believed.** A job that promises a file (Ledger's invoice watch, Scout's round, Muse's plan…) and did not
+  write it, or answered with nothing at all, shows as **problem** in `/schedule` and you are told once, outside the quiet hours.
+
+## Long work is not lost
+One run of Claude is stopped after 10 minutes (`JINNEE_TIMEOUT` in `.env`). For anything longer, the agents write as they go into a
+work file under `handoffs/<agent>/`, ticking each step. If a run is stopped half-way, you get where it got to instead of "I stopped":
+which file, how many steps are done, what is next. Send `/continue` (or just "continue") and it goes on from that file, without
+redoing or resending what is already done. A scheduled job that was stopped continues at its next run, or now with `/continue <job>`.
 - Your time zone, quiet hours, another time or off per job: `schedule` in `config/business.yaml` (examples in
   `config/business.example.yaml`). `python3 core/scheduler.py plan` prints what would run when and starts nothing;
   `python3 core/scheduler.py check` checks your settings.
