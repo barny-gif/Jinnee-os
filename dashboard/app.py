@@ -1,5 +1,5 @@
 """Jinnee dashboard – one page. Shows the brain/ files; the approval buttons record the owner's decision through core/approvals.py."""
-import os, sys, json, pathlib, time, hmac, hashlib, secrets, ipaddress, asyncio
+import os, re, sys, json, html, pathlib, time, hmac, hashlib, secrets, ipaddress, asyncio
 from urllib.parse import parse_qs, urlsplit
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "core"))
 import env; env.load()  # before the settings below are read
@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
-import approvals, autonomy, heartbeat, logs, scheduler
+import approvals, autonomy, heartbeat, logs, scheduler, texts
 import orders
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -63,13 +63,22 @@ def same_origin(req: Request):
 
 def guard(req: Request):
     if not authed(req):
-        if PASSWORD: raise HTTPException(401, "Sign in at /login")
-        raise HTTPException(403, "No DASHBOARD_PASSWORD set: the dashboard only answers direct requests to localhost")
+        if PASSWORD: raise HTTPException(401, texts.t("dash.err_sign_in"))
+        raise HTTPException(403, texts.t("dash.err_local_only"))
     if req.method not in ("GET", "HEAD") and not key_ok(req) and not same_origin(req):
-        raise HTTPException(403, "Cross-site request refused")
+        raise HTTPException(403, texts.t("dash.err_cross_site"))
+
+# The page's words, in the owner's language, are put into the HTML here, when it is served: {{t:key}} becomes the text
+# (HTML-escaped) and {{TEXTS}} the dash.* texts as JSON for the script. Why not a separate request from the browser: one
+# request, no English flash before the words arrive, and nothing extra that can fail on its own. A language change in
+# config/business.yaml shows at the next page load.
+SLOT = re.compile(r"\{\{t:([a-z0-9_.]+)\}\}")
 
 def page(name):
-    return (HERE / "static" / name).read_text(encoding="utf-8").replace("{{NAME}}", NAME)
+    words = texts.bundle("dash.")
+    out = (HERE / "static" / name).read_text(encoding="utf-8").replace("{{NAME}}", html.escape(NAME))
+    out = SLOT.sub(lambda m: html.escape(words.get("dash." + m.group(1), m.group(1))), out)
+    return out.replace("{{TEXTS}}", json.dumps(words, ensure_ascii=False).replace("</", "<\\/"))
 
 @app.get("/", response_class=HTMLResponse)
 def index(req: Request):
@@ -85,11 +94,11 @@ def login_form(req: Request):
 @app.post("/login")
 async def login(req: Request):
     if not PASSWORD: return RedirectResponse("/", 303)
-    if not same_origin(req): raise HTTPException(403, "Cross-site request refused")
+    if not same_origin(req): raise HTTPException(403, texts.t("dash.err_cross_site"))
     sent = parse_qs((await req.body()).decode("utf-8", "replace")).get("password", [""])[0]
     if not same(sent, PASSWORD):
         await asyncio.sleep(1)
-        return HTMLResponse(page("login.html").replace("{{ERROR}}", "Wrong password."), 401)
+        return HTMLResponse(page("login.html").replace("{{ERROR}}", html.escape(texts.t("dash.wrong_password"))), 401)
     exp = int(time.time()) + SESSION_TTL
     https = "https" in (req.url.scheme, req.headers.get("x-forwarded-proto", ""))
     r = RedirectResponse("/", 303)
@@ -98,7 +107,7 @@ async def login(req: Request):
 
 @app.post("/logout")
 def logout(req: Request):
-    if not same_origin(req): raise HTTPException(403, "Cross-site request refused")
+    if not same_origin(req): raise HTTPException(403, texts.t("dash.err_cross_site"))
     r = RedirectResponse("/login", 303)
     r.delete_cookie(COOKIE, path="/")
     return r
@@ -129,9 +138,9 @@ def state(req: Request):
             [{**bk.view(i), "status": bk.status(i), "preview": ""} for i in closed]
     cfg = autonomy.Config(BRAIN)
     table, levels_problem = cfg.read()
-    levels = [{"action": a, "label": e["label"], "level": autonomy.effective(e, a), "name": autonomy.NAMES[autonomy.effective(e, a)],
-               "locked": e["locked"], "max_level": e["max_level"]} for a, e in sorted(table.items())]
-    try: schedule = [{k: r[k] for k in ("id", "name", "when", "on", "off", "next_text", "last_text", "result", "note")}
+    levels = [{"action": a, "label": autonomy.label(a, e), "level": autonomy.effective(e, a), "name": autonomy.name(autonomy.effective(e, a)),
+               "max_name": autonomy.name(e["max_level"]), "locked": e["locked"], "max_level": e["max_level"]} for a, e in sorted(table.items())]
+    try: schedule = [{k: r[k] for k in ("id", "name", "when", "on", "off", "next_text", "last_text", "result", "result_text", "note")}
                      for r in scheduler.Scheduler(BRAIN).rows(now)]
     except Exception: schedule = None  # the box says it could not be read; the rest of the page still works
     return {"name": NAME, "auth": bool(PASSWORD), "brief": rd("brief_today.md", ""), "approvals": shown,
@@ -154,7 +163,7 @@ async def approve(item_id: str, req: Request):
     try: body = await req.json()  # {"decision": "ok"|"edit"|"drop", "note": "..."}; a note is required for edit and drop
     except ValueError: body = None
     if not isinstance(body, dict) or body.get("decision") not in DECISIONS:
-        raise HTTPException(400, 'Expected {"decision": "ok"|"edit"|"drop", "note": "..."}')
+        raise HTTPException(400, texts.t("dash.err_bad_body"))
     try: it = book().decide(item_id, body["decision"], str(body.get("note") or ""), by="dashboard")
     except approvals.Refused as e: refuse(e)
     return JSONResponse({"ok": True, "status": approvals.Book.status(it), "sendable": it["sendable"]})

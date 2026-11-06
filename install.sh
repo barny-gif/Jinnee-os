@@ -128,6 +128,7 @@ main(){
   PACK_LIST="$ANSWER"
 
   # Your business: name, language, tone of voice (and for a shop, the parcel label). It goes to config/business.yaml, never to git.
+  # The language is also the one the system's own messages and the dashboard use (hu and en are built in).
   BIZ=ask; B_NAME=""; B_LANG=""; B_VOICE=""; B_INTRO=""; B_TZ=""; B_SHOP=""; B_TAGS=""; B_PREFIX=""
   if [ -f "$DIR/config/business.yaml" ]; then BIZ=keep
   elif [ -n "${BUSINESS_FILE:-}" ]; then

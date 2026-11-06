@@ -15,7 +15,7 @@ An action nobody listed needs approval. A file that cannot be read falls back to
 import os, pathlib, sys, time
 from typing import NamedTuple
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import store
+import store, texts
 from pack_loader import resolve
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -27,6 +27,18 @@ CORE = {RAISE: {"level": 1, "max_level": 1, "locked": True, "label": "Change an 
         # The owner's own rules leave brain/lessons.md only with the owner's yes (core/memory_guard.py). Locked here too:
         # no request can raise it; the owner can, by hand in the file.
         "archive_lessons": {"level": 1, "max_level": 1, "locked": True, "label": "Move old lessons to the archive"}}
+
+
+def name(level, lang=None):
+    """The level for people, in the owner's language. NAMES stays English: the prompt and the command line use it."""
+    return texts.t(f"autonomy.level_{level}", lang)
+
+
+def label(action, e, lang=None):
+    """An action's label for people. The core actions' labels are translated; a pack's label is shown as the pack wrote it.
+    (The file keeps the English label: what is written there does not depend on the language.)"""
+    if action in CORE: return texts.t(f"autonomy.label.{action}", lang)
+    return (e or {}).get("label", "") if isinstance(e, dict) else ""
 
 
 class Gate(NamedTuple):
@@ -86,7 +98,7 @@ class Config:
         table = self.defaults()
         try: raw = store.read_json(self.path, dict)
         except store.Unreadable as e:
-            return table, f"{e}. The fresh-install levels are in use until the file is fixed."
+            return table, texts.t("autonomy.unreadable", error=e)
         old = raw.get("_format") != FORMAT
         for action, value in raw.items():
             if not action.startswith("_"): table[action] = entry(value, table.get(action), lift=old)

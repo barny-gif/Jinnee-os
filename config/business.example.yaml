@@ -10,7 +10,10 @@
 
 business:
   name: "Example Kft."                     # required: as your customers know you
-  language: "hu"                           # required: the language the team speaks with you and your customers
+  language: "hu"                           # required: the language the team speaks with you and your customers.
+                                           # The system's own messages (Telegram alerts, /status, /schedule, the dashboard)
+                                           # follow it too: "hu" and "en" are built in; any other code gets those in English
+                                           # (core/locale/<code>.json adds a language). A change shows without a restart.
   voice: "Warm and informal, short sentences, no exclamation marks."   # required: how the team sounds to customers
   intro: "A small family shop selling wooden toys."                    # optional: a sentence or two, in your words
 

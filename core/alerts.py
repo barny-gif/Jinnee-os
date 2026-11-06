@@ -16,7 +16,7 @@ quiet hours hold for these messages and for the scheduled runs (core/scheduler.p
 """
 import datetime as dt, logging, os, pathlib, re, sys, time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import store, approvals, autonomy, business
+import store, approvals, autonomy, business, texts
 
 log = logging.getLogger("jinnee.alerts")
 DEFAULT_QUIET = "21:00-07:00"
@@ -85,14 +85,15 @@ def quiet(now, spec=None):
     return start <= t < end if start < end else (t >= start or t < end)
 
 
-def line(book, it):
-    label = book.gate.read()[0].get(it["action"], {}).get("label") or it["action"]
+def line(book, it, lang=None):
+    label = autonomy.label(it["action"], book.gate.read()[0].get(it["action"], {}), lang) or it["action"]
     return f"[{it['id']}] {it['title']} ({', '.join(x for x in (it['agent'], label) if x)})"
 
 
 def ago(seconds):
     hours = int(seconds // 3600)
-    return f"{hours // 24} days" if hours >= 48 else f"{hours} h" if hours >= 1 else f"{int(seconds // 60)} min"
+    if hours >= 48: return texts.t("alerts.ago_days", n=hours // 24)
+    return texts.t("alerts.ago_hours", n=hours) if hours >= 1 else texts.t("alerts.ago_minutes", n=int(seconds // 60))
 
 
 class Watch:
@@ -115,14 +116,13 @@ class Watch:
         except Exception as e:
             log.warning("the schedule could not be checked: %s", type(e).__name__)
         for kept in sorted(self.brain.glob("approvals.json.broken-*")):
-            out.append(f"brain/approvals.json could not be read and was set aside as {kept.name}. Anything that was waiting "
-                       f"in it has to be asked again. Delete that file once you have looked at it.")
+            out.append(texts.t("alerts.approvals_set_aside", name=kept.name))
         return out
 
     def due(self, now=None):
         """→ {"messages": [...], "hand_over": [items], "state": {...}}. Writes nothing: call done() once the messages are out."""
         now = now or time.time()
-        s, messages, ask = self.state(), [], []
+        s, messages, ask, ask_text = self.state(), [], [], None
         pending, decided, running = self.book.open_items()
         alive = {i["id"] for i in pending + decided + running}
         for key in ("asked", "handed", "stuck"):
@@ -134,7 +134,7 @@ class Watch:
         for i in hand_over: s["handed"][i["id"]] = int(now)
 
         if quiet(now):
-            return {"messages": [], "hand_over": hand_over, "ask": [], "state": s}
+            return {"messages": [], "hand_over": hand_over, "ask": [], "ask_text": None, "state": s}
 
         new = [i for i in pending if i["id"] not in s["asked"]]
         if new:
@@ -142,25 +142,23 @@ class Watch:
             for i in new:
                 rows.append("• " + line(self.book, i))
                 warning = self.book.view(i)["warning"]
-                if warning: rows.append(f"   not sendable as it is: {warning}")
+                if warning: rows.append("   " + texts.t("alerts.not_sendable", warning=warning))
                 said = i["payload"].get("notice") if isinstance(i.get("payload"), dict) else None
                 if isinstance(said, list): rows += [f"   {approvals.one_line(n)}" for n in said[:20]]  # e.g. core/memory_guard.py
                 s["asked"][i["id"]] = int(now)
             one = new[0]["id"]
             ask = [i["id"] for i in new][:5]  # the bridge puts tap buttons under this message
-            messages.append("Waiting for your decision:\n" + "\n".join(rows) +
-                            f"\n\n/ok {one} · /change {one} what to change · /drop {one} why\nOr use the dashboard.")
+            ask_text = texts.t("alerts.waiting", rows="\n".join(rows), id=one)  # the bridge puts the tap buttons under this one
+            messages.append(ask_text)
 
         limit = number("STUCK_AFTER_HOURS", 6) * 3600
         late = [(i, now - (i["decided_at"] or now)) for i in decided] + [(i, now - (i["consumed_at"] or now)) for i in running]
         late = [(i, age) for i, age in late if age >= limit]
         fresh = [(i, age) for i, age in late if i["id"] not in s["stuck"]]
         if fresh:
-            rows = [f"• {line(self.book, i)}: {self.book.status(i)}, for {ago(age)}" for i, age in fresh]
+            rows = ["• " + texts.t("alerts.late_row", line=line(self.book, i), status=self.book.status(i), age=ago(age)) for i, age in fresh]
             for i, _ in fresh: s["stuck"][i["id"]] = int(now)
-            messages.append("Stuck: you decided, and nothing came of it yet.\n" + "\n".join(rows) +
-                            "\n\nWhat you can do: tell me to carry it out, or /undo <id> to take the decision back "
-                            "(if it was not started). If I do not answer at all, check that the machine is on.")
+            messages.append(texts.t("alerts.stuck", rows="\n".join(rows)))
 
         today = clock(now).strftime("%Y-%m-%d")
         if s["digest_day"] != today:
@@ -169,9 +167,9 @@ class Watch:
             day = lambda ts: clock(ts).strftime("%Y-%m-%d")  # stuck items come back from the day after their own message
             still = [(i, age) for i, age in late if day(s["stuck"][i["id"]]) != today]
             if old or still:
-                rows = [f"• {line(self.book, i)}: waiting for you for {ago(now - i['created_at'])}" for i in old]
-                rows += [f"• {line(self.book, i)}: {self.book.status(i)}, for {ago(age)}" for i, age in still]
-                messages.append("Still open:\n" + "\n".join(rows) + "\n\n/pending shows everything that is waiting.")
+                rows = ["• " + texts.t("alerts.old_row", line=line(self.book, i), age=ago(now - i["created_at"])) for i in old]
+                rows += ["• " + texts.t("alerts.late_row", line=line(self.book, i), status=self.book.status(i), age=ago(age)) for i, age in still]
+                messages.append(texts.t("alerts.still_open", rows="\n".join(rows)))
                 s["digest_day"] = today
 
         levels = {a: [autonomy.effective(e, a), e["max_level"], e["locked"]] for a, e in self.cfg.read()[0].items()}
@@ -180,17 +178,17 @@ class Watch:
             for a in sorted(set(levels) | set(s["levels"])):
                 was, now_ = s["levels"].get(a), levels.get(a)
                 if was == now_: continue
-                describe = lambda v: "not listed" if v is None else autonomy.NAMES[v[0]] + (f", locked at max {v[1]}" if v[2] else ", not locked")
+                describe = lambda v: texts.t("alerts.level_not_listed") if v is None else texts.t(
+                    "alerts.level_locked" if v[2] else "alerts.level_not_locked", name=autonomy.name(v[0]), max=v[1])
                 rows.append(f"• {a}: {describe(was)} → {describe(now_)}")
-            messages.append("The autonomy settings changed:\n" + "\n".join(rows) +
-                            "\n\nIf that was you or a request you approved, all is well. If not, look at brain/autonomy_config.json.")
+            messages.append(texts.t("alerts.levels_changed", rows="\n".join(rows)))
         if not self.cfg.read()[1]: s["levels"] = levels
 
         problems = self.problems()
         for p in problems:
-            if p not in s["problems"]: messages.append("Something needs your attention: " + p)
+            if p not in s["problems"]: messages.append(texts.t("alerts.attention", problem=p))
         s["problems"] = problems
-        return {"messages": messages, "hand_over": hand_over, "ask": ask, "state": s}
+        return {"messages": messages, "hand_over": hand_over, "ask": ask, "ask_text": ask_text, "state": s}
 
     def done(self, plan):
         with store.locked(self.brain):
@@ -199,7 +197,7 @@ class Watch:
 
 def hand_over_message(book, items):
     """What the lead is told when decisions are ready. The lead still has to take each one with consume."""
-    rows = [f"- {line(book, i)}: {book.status(i)}" + (f" – note: {i['note']}" if i["note"] else "") for i in items]
+    rows = [f"- {line(book, i, 'en')}: {book.status(i, 'en')}" + (f" – note: {i['note']}" if i["note"] else "") for i in items]
     return (f"The owner has decided the following. Handle each one now, in this order: run `{store.PY} core/approvals.py consume <id>`; "
             "act only if it prints GO; then record what happened with `result`. For CHANGE, fix it and ask again with "
             f"`add … --replaces <id>`. For a level change use `{store.PY} core/autonomy.py apply <id>` instead of consume. "

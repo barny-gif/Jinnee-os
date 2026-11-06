@@ -4,6 +4,7 @@ Run: python3 -m unittest discover tests"""
 import datetime as dt, json, os, pathlib, subprocess, sys, tempfile, textwrap, time, unittest, zoneinfo
 from unittest import mock
 REPO = pathlib.Path(__file__).resolve().parent.parent
+os.environ["JINNEE_LANG"] = "en"  # the owner's texts are checked in English here, whatever this machine is set to (test_texts checks hu)
 sys.path.insert(0, str(REPO / "core"))
 import alerts, heartbeat, scheduler
 from scheduler import parse, slots, Rule, SpecError

@@ -104,6 +104,11 @@ the parcel label, which invoice series the Payments view shows, and which order 
   VAT); `config/business.yaml` holds *who you are* and what goes on your documents. `JINNEE_LANG` in `.env` still works and
   wins over `business.language`; `BILLINGO_PAYMENTS_PREFIX` is no longer read (an old value that differs from
   `billing.invoice_prefix` stops the Payments view until you delete the `.env` line).
+- **The system's own words follow the language too.** What the bridge and the dashboard say by themselves (alerts, `/status`,
+  `/schedule`, `/pending`, the approve/undo answers, error messages, the dashboard's labels) comes from `core/locale/<lang>.json`.
+  `hu` and `en` are built in; any other language gets these in English, and adding `core/locale/de.json` (same keys as
+  `en.json`) adds one. `python3 core/texts.py check` lists what a language file is missing. The commands (`/ok`, `/pending`…)
+  stay the same in every language, and so do the logs and the agents' instructions.
 
 ## Keeping your business out of the repo
 This repo is public. Two checks keep a business's own data out of it:

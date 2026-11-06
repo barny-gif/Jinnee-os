@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{t:lang}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -21,9 +21,9 @@ input:focus-visible,button:focus-visible{outline:2px solid var(--ok);outline-off
 <body>
 <form method="post" action="/login">
   <h1>{{NAME}}</h1>
-  <label for="password">Dashboard password</label>
+  <label for="password">{{t:password}}</label>
   <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
-  <button type="submit">Sign in</button>
+  <button type="submit">{{t:sign_in}}</button>
   <p class="err" role="alert">{{ERROR}}</p>
 </form>
 </body>

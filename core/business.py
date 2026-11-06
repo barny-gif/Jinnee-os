@@ -211,7 +211,7 @@ def render(name, language, voice, intro="", label_name="", tags=(), invoice_pref
 
 business:
   name: {_q(name)}            # as your customers know you
-  language: {_q(language)}    # the language the team speaks with you and your customers (hu, en, de...)
+  language: {_q(language)}    # the language the team speaks with you and your customers (hu, en, de...); the system's own messages and the dashboard follow it (hu and en built in)
   voice: {_q(voice)}          # how the team sounds to customers
   intro: {_q(intro)}          # a sentence or two about the business, in your words
 
