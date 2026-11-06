@@ -253,19 +253,19 @@ def connector_ready(category):
         missing = [e for e in envs if not os.getenv(e, "").strip()]
         groups = auth.get("env_any") or []
         if groups and not any(all(os.getenv(e, "").strip() for e in g) for g in groups):
-            missing.append(" or ".join("+".join(g) for g in groups))
+            missing.append(texts.t("sched.need_or").join("+".join(g) for g in groups))
         code = (CONNECTORS / cid / "ops.py").exists()
         if code and not missing: return True, cid
-        why.append(f"{d.get('name') or cid}: " + ("no connector code yet" if not code else "set " + ", ".join(missing) + " in .env"))
-    return False, "; ".join(why) or f"no {category} connector is installed"
+        why.append(f"{d.get('name') or cid}: " + (texts.t("sched.need_no_code") if not code else texts.t("sched.need_set", keys=", ".join(missing))))
+    return False, "; ".join(why) or texts.t("sched.need_none", category=category)
 
 
 def competitors_ready(brain):
     p = pathlib.Path(brain) / "watch" / "competitors.md"
     try: lines = p.read_text(encoding="utf-8").splitlines()
-    except OSError: return False, "the owner has not named competitors yet (brain/watch/competitors.md, from the onboarding)"
+    except OSError: return False, texts.t("sched.need_no_competitors")
     names = [l for l in lines if l.strip() and not l.lstrip().startswith("#")]
-    return (True, f"{len(names)} named") if names else (False, "brain/watch/competitors.md lists no competitor yet")
+    return (True, f"{len(names)} named") if names else (False, texts.t("sched.need_empty_competitors"))
 
 
 NEEDS = ("email", "invoicing", "shop", "shipping", "competitors")
@@ -274,7 +274,7 @@ NEEDS = ("email", "invoicing", "shop", "shipping", "competitors")
 def need_ready(need, brain):
     if need == "competitors": return competitors_ready(brain)
     if need in NEEDS: return connector_ready(need)
-    return False, f"'{need}' is not a need this version knows"
+    return False, texts.t("sched.need_unknown", need=need)
 
 
 def precheck_new_mail(since, root):

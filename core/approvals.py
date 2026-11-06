@@ -59,9 +59,9 @@ def one_line(s):
 def unsendable(text):
     """Why this text must not go out as it is, or ''."""
     body = (text or "").strip()
-    if not body: return "the text is empty"
+    if not body: return texts.t("approvals.empty_text")
     m = MARK.match(body.splitlines()[0].lstrip("#*_>[(<`~-–— \t"))
-    return f'the text starts with a draft marker ("{m.group(0).strip()}")' if m else ""
+    return texts.t("approvals.draft_mark", mark=m.group(0).strip()) if m else ""
 
 
 def when(ts):
@@ -112,9 +112,9 @@ class Book:
         if not item.get("file"): return None, ""
         p = (self.root / str(item["file"])).resolve()
         if not any(p.is_relative_to((self.root / d).resolve()) for d in CONTENT_DIRS):
-            return None, f"{item['file']} is not inside {' or '.join(d + '/' for d in CONTENT_DIRS)}"
+            return None, texts.t("approvals.file_outside", file=item["file"], dirs=" / ".join(d + "/" for d in CONTENT_DIRS))
         try: return p.read_text(encoding="utf-8", errors="replace"), ""
-        except OSError: return None, f"the file {item['file']} cannot be read"
+        except OSError: return None, texts.t("approvals.file_unreadable", file=item["file"])
 
     def _pin(self, item):
         """→ (fingerprint of the content, why it cannot go out or '')."""

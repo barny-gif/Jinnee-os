@@ -10,6 +10,7 @@ from test_scheduler import Base, Fake, at
 from test_alerts import Bridge, OWNER
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
+os.environ["JINNEE_LANG"] = "en"  # the owner's texts are checked in English here, whatever this machine is set to (test_texts checks hu)
 sys.path.insert(0, str(REPO / "core"))
 import alerts, heartbeat, scheduler, workfile
 

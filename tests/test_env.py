@@ -136,7 +136,9 @@ class RepoCopy(unittest.TestCase):
         for name, src in STUBS.items():
             (stubs / name).parent.mkdir(parents=True, exist_ok=True)
             (stubs / name).write_text(src)
-        self.env = {k: v for k, v in os.environ.items() if k not in OURS}
+        # a fresh install: no business file either (another test module may have pointed this process at a made-up one,
+        # and its language would change what the bridge says); a test that needs one writes it into the copy
+        self.env = {k: v for k, v in os.environ.items() if k not in OURS + ("JINNEE_BUSINESS_FILE",)}
         self.env.update(PYTHONPATH=os.pathsep.join([str(stubs)] + [p for p in sys.path if p]), PYTHONDONTWRITEBYTECODE="1")
 
     def dotenv(self, text):
