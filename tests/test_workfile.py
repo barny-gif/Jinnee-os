@@ -303,6 +303,7 @@ class BridgeKeepsWork(Bridge):
         for part in ("CONTINUE.", "handoffs/jinnee/2026-11-06-suppliers.md", "The original task:\nCompare our two suppliers",
                      "--permission-mode\nacceptEdits\n", "WORK IN PROGRESS"):
             self.assertIn(part, args)
+        self.assertNotIn("Edit(brain/company.md)", args)  # the owner's own run may still edit it, as before
         self.assertFalse((self.brain / "interrupted.json").exists())  # finished: nothing left to continue
         got = self.drive([["msg", OWNER, "/continue"]], agent="real", extra=self.fake_claude(FINISH))
         self.assertEqual(got[0]["replies"], ["Nothing was cut off, so there is nothing to continue."])
@@ -336,6 +337,8 @@ class BridgeKeepsWork(Bridge):
         args = self.read("args.txt")
         self.assertIn("--permission-mode\ndontAsk\n", args); self.assertIn("--no-session-persistence", args)
         self.assertIn("handoffs/scout/2026-11-05-weekly-round.md", args)
+        denied = args.split("--disallowedTools\n", 1)[1].split("--append-system-prompt\n", 1)[0].splitlines()
+        self.assertIn("Edit(brain/company.md)", denied)  # unattended: the owner's fact sheet is read only
         state = json.loads((self.brain / "schedule_state.json").read_text())["watcher.weekly_round"]
         self.assertNotIn("work", state)
 
@@ -348,6 +351,8 @@ class BridgeKeepsWork(Bridge):
         got = json.loads(r.stdout.split("RESULT ", 1)[1])
         self.assertIn("Edit(brain/interrupted.json)", got["g"]); self.assertIn("Edit(brain/interrupted.json)", got["s"])
         self.assertIn("WORK IN PROGRESS. A run is stopped after 10 minutes", got["p"])
+        # the owner's own statements: a scheduled run may not change them, the owner's own run is as before
+        self.assertIn("Edit(brain/company.md)", got["s"]); self.assertNotIn("Edit(brain/company.md)", got["g"])
         self.assertIn("<!-- work: in-progress -->", got["p"])
 
 

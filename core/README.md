@@ -29,7 +29,7 @@ Written by the bridge only: `interrupted.json` (the owner's last run that stoppe
 ## Who may write what
 - A scheduled run (started by `scheduler.py`, not by the owner) is unattended: `JINNEE_UNATTENDED=1` makes every connector refuse
   `--confirm yes` / `--send yes` and makes `approvals.py consume` refuse; Claude Code runs in `dontAsk` mode with writing allowed only in
-  `brain/` and `handoffs/`, without Lovable building, git or test runs. If a program file changes during the run anyway, the run counts
+  `brain/` and `handoffs/` (never `brain/company.md`, the owner's own statements), without Lovable building, git or test runs. If a program file changes during the run anyway, the run counts
   as failed and the owner is told.
 - `approvals.json`, `autonomy_config.json`, `alerts_state.json`, `heartbeat.json`: only through the modules above. Agents use the command lines
   (`python3 core/approvals.py …`, `core/autonomy.py …`, `core/heartbeat.py beat …`); `jinnee.py` starts Claude Code with exactly those three
