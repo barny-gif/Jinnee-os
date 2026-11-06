@@ -1,6 +1,6 @@
 # Forge playbook – what we learned wiring this shop (read before building a connector)
 
-Facts below were confirmed against the real systems on 2026-10-11. New lessons go into `brain/forge_notes.md` (one dated line each: what happened, what fixed it); that file is read on every run.
+Facts below were confirmed against the real systems on 2026-10-11. New lessons go into `brain/forge_notes.md` (one dated line each: what happened, what fixed it); its newest lines (and any line ending in `[pin]`) are in the prompt on every run; older ones are found with `python3 core/memory.py search "<topic>" --in notes`.
 
 ## How a connector gets built here
 1. Read the provider's API docs first (WebFetch). Never invent endpoint or field names; when docs are unreachable, say so and use a dry run.

@@ -14,7 +14,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, Cal
 from pack_loader import agent_files, resolve
 from heartbeat import beat, trouble
 from registry_client import check as registry_check
-import alerts, approvals, business, logs, scheduler, store
+import alerts, approvals, business, logs, memory, scheduler, store
 
 log = logging.getLogger("jinnee")
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -52,6 +52,11 @@ TOOLS += [f"Bash({py} core/forge_git.py *)" for py in ("python3", "python")]
 # Forge needs to read API docs and run the connectors and tests it writes; still no curl, rm or free shell.
 TOOLS += ["WebFetch", "WebSearch"] + [f"Bash({py} {cmd})" for py in ("python3", "python") for cmd in ("connectors/*", "-m unittest *", "-I connectors/*")]
 GUARDED = [f"Edit(brain/{name})" for name in ("approvals.json", "autonomy_config.json", "alerts_state.json")]
+# Memory: reading only. search/get/log-tail/log-search/stats/core never write; compact (moving old lines to the archives)
+# is the bridge's own hourly job (memory_tidy) and is denied to the agents, in both modes.
+TOOLS += [f"Bash({py} core/memory.py {cmd})" for py in ("python3", "python")
+          for cmd in ("search *", "get *", "log-tail", "log-tail *", "log-search *", "stats", "core *")]
+GUARDED += [f"Bash({py} core/memory.py compact{rest})" for py in ("python3", "python") for rest in ("", " *")]
 # A scheduled run (core/scheduler.py) has nobody watching it. It gets less: no building (Lovable, git, tests), writing only
 # in brain/ and handoffs/ (dontAsk refuses everything not allowed here), and JINNEE_UNATTENDED=1, with which the connectors
 # refuse every outgoing step and approvals.py refuses to hand out a decision.
@@ -69,7 +74,12 @@ APPROVALS. The autonomy table below says what the team may do alone. Anything at
 - CHANGE: fix it and ask again with `add … --replaces ID`; the new version needs its own decision. DROPPED: do not do it; the reason is in brain/lessons.md.
 - Never write brain/approvals.json, brain/autonomy_config.json or brain/alerts_state.json yourself.
 - A level change is a request too: `{PY} core/autonomy.py propose ACTION LEVEL --why "…"`, and after the owner approves, `{PY} core/autonomy.py apply ID`. Locked actions cannot go above their maximum; only the owner can change that, by hand.
-- When an agent starts or finishes a job: `{PY} core/heartbeat.py beat AGENT "what was done"` (--working at the start, --failed if it went wrong).""".replace("{PY}", store.PY)
+- When an agent starts or finishes a job: `{PY} core/heartbeat.py beat AGENT "what was done"` (--working at the start, --failed if it went wrong).
+
+MEMORY. brain/lessons.md and brain/forge_notes.md are in this prompt only up to a cap: the lines marked [pin], then the newest. Older lines, their archives (brain/*.archive.md), brain/catalog.md and the decision log are searched, not loaded.
+- Before any real task, search the topic first: `{PY} core/memory.py search "<topic>"`. Past decisions: `{PY} core/memory.py log-search "<topic>"` or `log-tail 20`. One hit in full: `{PY} core/memory.py get ID`. These only read.
+- A rule that must always be in the prompt gets [pin] at the end of its line; keep [pin] lines few and short.
+- Never delete a line from lessons.md or forge_notes.md to make room: the bridge moves old lines to the archive itself, where search still finds them.""".replace("{PY}", store.PY)
 
 def system_prompt() -> str:
     parts = [f"Your name is {NAME}. You speak with the owner in language '{business.language()}'. Working directory: {ROOT}.\n" + RULES]
@@ -77,9 +87,8 @@ def system_prompt() -> str:
     parts.append("\n\n===== the business (config/business.yaml) =====\n" + business.prompt_block())
     for f in agent_files(PACKS):
         parts.append(f"\n\n===== {f.name} =====\n{f.read_text(encoding='utf-8')}")
-    for b in ("company.md", "lessons.md", "forge_notes.md"):
-        p = BRAIN / b
-        if p.exists(): parts.append(f"\n\n===== brain/{b} =====\n{p.read_text(encoding='utf-8')}")
+    # company.md whole; lessons.md and forge_notes.md as a capped core ([pin] lines, then the newest); the rest is searched
+    parts.append(memory.prompt_block(BRAIN))
     parts.append("\n\n===== autonomy levels (what the gate answers right now) =====\n" + BOOK.gate.describe())
     parts.append("\n\n===== approvals right now =====\n" + BOOK.brief())
     return "".join(parts)
@@ -415,6 +424,17 @@ async def alert_tick(ctx: ContextTypes.DEFAULT_TYPE):
     if todo:  # as its own task: a run can take minutes, and the next check should not wait for it
         ctx.application.create_task(hand_over(ctx.bot, todo))
 
+def memory_tidy():
+    """Keeps the memory cores small: lines that no longer fit move to brain/*.archive.md (core/memory.py compact), where
+    search still finds them. Writes only lessons.md, forge_notes.md and their archives, with a copy kept first."""
+    for rep in memory.compact(BRAIN, apply=True):
+        if rep["moved"]: log.info("memory: %d old entries of %s moved to %s", len(rep["moved"]), rep["file"], rep["archive"])
+
+async def memory_tick(ctx: ContextTypes.DEFAULT_TYPE):
+    """Once an hour, quietly. Nothing to tell the owner: nothing is lost, and the prompt is capped either way."""
+    try: await asyncio.to_thread(memory_tidy)
+    except Exception: log.exception("memory tidy failed; the prompt stays capped, it runs again in an hour")
+
 async def hand_over(bot, items):
     reply = await asyncio.to_thread(run_agent, alerts.hand_over_message(BOOK, items))
     await say(lambda t: bot.send_message(chat_id=OWNER, text=t), reply)
@@ -498,6 +518,7 @@ def main():
     if app.job_queue:  # both go to OWNER, which is always set here
         app.job_queue.run_repeating(alert_tick, interval=60, first=20)
         app.job_queue.run_repeating(schedule_tick, interval=60, first=40)
+        app.job_queue.run_repeating(memory_tick, interval=3600, first=300)
     else:
         print("The Telegram job queue is missing (pip install 'python-telegram-bot[job-queue]'): no alerts and no schedule.")
     on = [j.id for j in SCHED.jobs() if not j.off]

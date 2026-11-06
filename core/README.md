@@ -13,12 +13,13 @@
 | `env.py` | reads `.env` at startup for native installs; a variable already set in the environment wins |
 | `pack_loader.py` | loads packs from `PACKS`, merges autonomy defaults and connector lists |
 | `heartbeat.py` | agent liveness in `brain/heartbeat.json`: working / ok / failed; flags a run that never finished or failed, and a scheduled agent that should have run and did not |
+| `memory.py` | searchable memory: the capped core of `lessons.md` / `forge_notes.md` for the prompt (`[pin]` lines, then the newest), BM25 search over them, their archives, `decisions.log.md` and `catalog.md`; `compact` (the bridge's hourly job, denied to agents) moves old lines to `*.archive.md` |
 | `registry_client.py` | checks `REGISTRY_URL` daily; only reports newer versions, never installs them on its own |
 
 The core knows nothing about any industry. Everything that is "shop" or "photographer" lives under `packs/`.
 
 State lives in `brain/` as plain files so the owner can read them:
-`company.md` · `lessons.md` · `decisions.log.md` · `autonomy_config.json` · `approvals.json` · `alerts_state.json` · `heartbeat.json` · `brief_today.md`
+`company.md` · `lessons.md` · `decisions.log.md` · `autonomy_config.json` · `approvals.json` · `alerts_state.json` · `heartbeat.json` · `brief_today.md` · `forge_notes.md` · `lessons.archive.md` / `forge_notes.archive.md` (written by `memory.py compact` only) · `catalog.md` (optional)
 
 Written by the schedule only: `schedule_state.json` (last slot, result per job) · `schedule_outbox.json` (a message that finished in the quiet hours).
 
