@@ -6,7 +6,7 @@ agents' own rhythm), one job at a time and never while the owner's own run is go
 (.txt, .md, .csv, .html) or a PDF (kept as it came, its text next to it) is saved under handoffs/inbox/ and the lead is told where it is.
 run_agent() is the hook for the full orchestration logic (sessions, intake, delegation).
 """
-import os, re, sys, time, subprocess, pathlib, asyncio, logging, threading, datetime as dt
+import os, re, sys, time, uuid, subprocess, pathlib, asyncio, logging, threading, datetime as dt
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import env; env.load()  # before anything below reads the environment
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -54,6 +54,8 @@ TOOLS += ["WebFetch", "WebSearch"] + [f"Bash({py} {cmd})" for py in ("python3", 
 GUARDED = [f"Edit(brain/{name})" for name in ("approvals.json", "autonomy_config.json", "alerts_state.json")]
 INTERRUPTED = "interrupted.json"  # the owner's run that stopped half-way: its task and work files, for /continue; the bridge's own
 GUARDED += [f"Edit(brain/{INTERRUPTED})"]
+CONVERSATION = "conversation.json"  # the owner's own conversation: its session id, so nothing else is ever continued by mistake; the bridge's own
+GUARDED += [f"Edit(brain/{CONVERSATION})"]
 # Memory: reading only. search/get/log-tail/log-search/stats/core never write; compact (moving old lines to the archives)
 # is the bridge's own hourly job (memory_tidy) and is denied to the agents, in both modes.
 TOOLS += [f"Bash({py} core/memory.py {cmd})" for py in ("python3", "python")
@@ -93,6 +95,29 @@ OWNER_COMMANDS = (("/pending", "what is waiting for a decision"), ("/ok", "appro
                   ("/continue", "go on with unfinished work"), ("/new", "start a clean conversation"))
 COMMAND_LINE = "Commands: " + " · ".join(c for c, _ in OWNER_COMMANDS)
 
+# What the bridge itself says to the owner, added with step 6 (photos, the own conversation, /status), in one place, so
+# step 5 (the Hungarian surface) can translate them together. {name}-style fields are filled in with str.format.
+OWNER_TEXT = {
+    "conversation_lost": "(The earlier conversation could not be found any more, so this answer starts a new one.)",
+    "status_working_owner": "Working now: your message, for {for_} (since {since}).",
+    "status_working_hand_over": "Working now: carrying out what you approved, for {for_} (since {since}).",
+    "status_working_job": "Working now: a scheduled run ({job}), for {for_} (since {since}).",
+    "status_idle": "Not working on anything right now.",
+    "status_pending": "Waiting for your decision: {n}. /pending shows them.",
+    "status_no_pending": "Nothing is waiting for your decision.",
+    "status_unfinished": "Unfinished work: {n}. /continue goes on with it.",
+    "status_no_unfinished": "No unfinished work.",
+    "status_next": "Next scheduled: {job}, {when}.",
+    "status_no_next": "Nothing scheduled.",
+    "status_unknown": "{what}: could not be read just now.",
+    "photo_types": "I can take photos as JPEG, PNG, WebP or GIF. Nothing was saved. Send it again as one of these.",
+    "photo_heic": ("This is a HEIC photo (the iPhone format), which the agent cannot look at. Nothing was saved. Send it as a "
+                   "photo instead of a file (Telegram turns it into JPEG), or export it as JPEG first."),
+    "photo_too_big": "This image is {kb} kB; the limit is {limit} kB. Nothing was saved. Send it as a photo, or a smaller copy.",
+    "photo_not_image": "This does not read as an image, so nothing was saved. Send it again as a photo.",
+    "photo_download": "I could not download the image from Telegram, so nothing was saved. Send it again.",
+}
+
 FOREGROUND_RULE = """FINISH IN THIS RUN. This run ends when your answer is sent, and nothing keeps working after it: no agent, no command.
 - Never start a subagent (Forge or any other agent) or a long command in the background. Run it in the foreground and wait for its result in this same run. (Background running is switched off for these runs anyway.)
 - Too long for one run ({MINUTES} minutes)? Cut it into steps: do what fits now, writing into the work file (WORK IN PROGRESS below), and tell the owner what is done and that /continue goes on from the file.
@@ -116,7 +141,6 @@ def system_prompt() -> str:
     parts.append("\n\n===== approvals right now =====\n" + BOOK.brief())
     return "".join(parts)
 
-FRESH = {"next": True}  # first message after start or /new opens a new session
 TIMEOUT = int(alerts.number("JINNEE_TIMEOUT", 600))  # seconds for one run; raise it in .env for long build jobs
 MINUTES = max(1, TIMEOUT // 60)
 MODEL = os.getenv("JINNEE_MODEL", "").strip()  # e.g. the strongest model for Forge's jobs; empty = the CLI default
@@ -136,9 +160,10 @@ DROP_ENV = ("CLAUDE_AUTO_BACKGROUND_TASKS",)
 def foreground(run_env):
     return {**{k: v for k, v in run_env.items() if k not in DROP_ENV}, **NO_BACKGROUND}
 
-def command(message: str, unattended=False, conversation=True):
-    """→ (the command, the same without --continue, the environment). unattended: started by the schedule.
-    conversation=False: a session of its own that is not kept, so the owner's next message does not continue it."""
+def command(message: str, unattended=False, conversation=True, session=None):
+    """→ (the command, the environment). unattended: started by the schedule. conversation=False: a session of its own
+    that is not kept (--no-session-persistence), so the owner's next message does not continue it. session: the owner's
+    conversation as (flag, id), from owner_session(); looked up when not given."""
     if unattended:
         mode, tools, deny = "dontAsk", SCHEDULED_TOOLS, SCHEDULED_DENY
         run_env = {**os.environ, "JINNEE_UNATTENDED": "1"}
@@ -148,16 +173,60 @@ def command(message: str, unattended=False, conversation=True):
     run_env = foreground(run_env)
     base = ["claude", "-p", message, "--permission-mode", mode, "--allowedTools", *tools, "--disallowedTools", *deny,
             "--append-system-prompt", system_prompt(), "--output-format", "text"] + (["--model", MODEL] if MODEL else [])
-    if not conversation: return base + ["--no-session-persistence"], None, run_env
-    return (base if FRESH["next"] else base[:2] + ["--continue"] + base[2:]), base, run_env
+    if not conversation: return base + ["--no-session-persistence"], run_env
+    return base + list(session or owner_session()), run_env
+
+# --- the owner's own conversation (brain/conversation.json, {"id", "started", "at"})
+# Before: --continue, which takes the newest session in the folder, whoever made it; and every restart began a new one.
+# Now the owner's conversation has its own id: the first run starts it (--session-id), every later run resumes it
+# (--resume), across restarts, until /new. The lead's scheduled runs (brief, evening, Friday report) and the hand-over of
+# approved items go into it on purpose, so the owner can answer them; other scheduled runs keep --no-session-persistence.
+GONE = "no conversation found"  # what the CLI says (2.1.302) when the session to resume does not exist (deleted, other machine)
+
+def conversation() -> dict:
+    """The owner's conversation record; {} when there is none yet, or the file is not usable."""
+    try: rec = store.read_json(BRAIN / CONVERSATION, dict)
+    except store.Unreadable: return {}
+    try: uuid.UUID(str(rec.get("id", "")))
+    except ValueError: return {}
+    return rec
+
+def new_conversation() -> dict:
+    """A new id that no session has yet: the next run starts it with --session-id. Used by /new and after a lost one."""
+    rec = {"id": str(uuid.uuid4()), "started": False, "at": int(time.time())}
+    with store.locked(BRAIN): store.write_json(BRAIN / CONVERSATION, rec)
+    return rec
+
+def owner_session():
+    """→ (flag, id): --resume for a conversation already started, else --session-id for its first run."""
+    rec = conversation() or new_conversation()
+    return ("--resume" if rec.get("started") else "--session-id", rec["id"])
+
+def started(session_id):
+    """A run used the id: from now on it is resumed. Also after a failed or timed-out first run, since the CLI may
+    already have saved the session; if it did not, the resume finds nothing and a new one is started (GONE)."""
+    with store.locked(BRAIN):
+        rec = conversation()
+        if rec.get("id") == session_id and not rec.get("started"):
+            store.write_json(BRAIN / CONVERSATION, {**rec, "started": True})
+
+def run_claude(cmd, run_env, session):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=TIMEOUT, env=run_env)
+    finally:
+        if session: started(session[1])  # FileNotFoundError included: harmless, the id is only marked used
 
 def call_claude(message: str, unattended=False, conversation=True):
     """→ (worked, text for the owner, short note for the heartbeat)."""
-    cmd, base, run_env = command(message, unattended, conversation)
+    session = owner_session() if conversation else None
+    cmd, run_env = command(message, unattended, conversation, session)
+    lost = False
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=TIMEOUT, env=run_env)
-        if r.returncode != 0 and "--continue" in cmd:
-            r = subprocess.run(base, capture_output=True, text=True, cwd=ROOT, timeout=TIMEOUT, env=run_env)
+        r = run_claude(cmd, run_env, session)
+        if r.returncode != 0 and session and session[0] == "--resume" and GONE in (r.stderr + r.stdout).lower():
+            session, lost = ("--session-id", new_conversation()["id"]), True  # a clean new one, and the owner is told in one line
+            cmd, run_env = command(message, unattended, conversation, session)
+            r = run_claude(cmd, run_env, session)
     except FileNotFoundError:
         return False, ("I could not start: the `claude` program is not installed on this machine, or not found. Nothing was done. "
                        "What you can do: install Claude Code and run `claude login` on the machine, then send your message again."), "claude not found"
@@ -170,12 +239,12 @@ def call_claude(message: str, unattended=False, conversation=True):
         return False, ("I could not finish this: the Claude program stopped with an error, so nothing more was done. " + HELP +
                        " If the error below mentions signing in, run `claude login` on the machine." +
                        (f"\n\nError: {detail}" if detail else "")), f"stopped with an error (exit {r.returncode})"
-    if conversation: FRESH["next"] = False
-    return True, r.stdout.strip() or r.stderr.strip() or "…", "replied"
+    out = r.stdout.strip() or r.stderr.strip() or "…"
+    return True, (out + "\n\n" + OWNER_TEXT["conversation_lost"] if lost else out), "replied"
 
 def run_agent(message: str, task=None, again=None) -> str:
     """Claude Code CLI, non-interactive. Runs on the owner's Pro/Max subscription.
-    --continue keeps one running conversation; acceptEdits lets agents write brain/ and handoffs/.
+    The owner's own session id (brain/conversation.json) keeps one running conversation; acceptEdits lets agents write brain/ and handoffs/.
     A run that fails or times out comes back as a message the owner can act on, and the heartbeat records it.
     If it stopped half-way and left work files (core/workfile.py), they are kept for /continue and the owner is told how
     far it got. task: the original request when this run continues one (the message is then the continuation prompt).
@@ -315,9 +384,11 @@ def owner_command(text: str) -> str:
         return str(e)[:1].upper() + str(e)[1:]
 
 CONTINUE = re.compile(r"/continue(?:@\w+)?(?:[_ ]+(\S+))?\s*", re.I)
+NEW = re.compile(r"/new(?:@\w+)?\s*", re.I)
 
 async def on_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not from_owner(update) or update.message is None: return
+    if NEW.fullmatch((update.message.text or "").strip()): return await cmd_new(update, ctx)  # its own handler catches it first
     AWAITING.clear()
     m = CONTINUE.fullmatch((update.message.text or "").strip())
     if m: return await go_on(update, ctx, m.group(1) or "")
@@ -667,7 +738,8 @@ async def run_job(bot, job, t, key):
 
 async def cmd_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not from_owner(update) or update.message is None: return
-    FRESH["next"] = True; AWAITING.clear()
+    AWAITING.clear()
+    await asyncio.to_thread(new_conversation)
     await update.message.reply_text("New day, clean slate. What are we doing?")
 
 def main():
