@@ -64,7 +64,9 @@ GUARDED += [f"Bash({py} core/memory.py compact{rest})" for py in ("python3", "py
 # refuse every outgoing step and approvals.py refuses to hand out a decision.
 SCHEDULED_TOOLS = [t for t in TOOLS if not any(x in t for x in ("forge_git", "-m unittest", "Lovable__send_message", "Lovable__get_message", "Lovable__get_file_upload_url"))]
 SCHEDULED_TOOLS += ["Edit(brain/**)", "Edit(handoffs/**)"]
-SCHEDULED_DENY = GUARDED + [f"Edit(brain/{name})" for name in ("schedule_state.json", "schedule_outbox.json", "heartbeat.json")]
+# company.md holds only the owner's own statements: a run nobody watches reads it, never changes it. (An Edit rule covers every
+# file-writing tool, Write included; Write is not allowed anywhere on its own.) The owner's own runs are unchanged.
+SCHEDULED_DENY = GUARDED + [f"Edit(brain/{name})" for name in ("schedule_state.json", "schedule_outbox.json", "heartbeat.json", "company.md")]
 SCHEDULED_DENY += [f"Bash({py} core/{cmd} *)" for py in ("python3", "python") for cmd in ("approvals.py consume", "autonomy.py apply")]
 
 RULES = """The agent files are your team's rules; brain/ is the business memory. Log every decision as one line in brain/decisions.log.md.
