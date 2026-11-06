@@ -655,6 +655,16 @@ class Scheduler:
                                          else "empty"))
         return out
 
+    def interrupted(self):
+        """Jobs whose stopped run left work that is still in progress → [(job, files, when it stopped)], newest first.
+        For /continue on Telegram."""
+        s, out = self.state(), []
+        for j in self.jobs():
+            rec = s.get(j.id, {})
+            files = workfile.still_open(self.root, rec.get("work") or [])
+            if files: out.append((j, files, rec.get("ended") or 0))
+        return sorted(out, key=lambda x: x[2], reverse=True)
+
     def carried(self, job):
         """Work files a stopped run of this job left that are still in progress."""
         return workfile.still_open(self.root, self.state().get(job.id, {}).get("work") or [])

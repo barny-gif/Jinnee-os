@@ -14,7 +14,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, Cal
 from pack_loader import agent_files, resolve
 from heartbeat import beat, trouble
 from registry_client import check as registry_check
-import alerts, approvals, business, logs, memory, memory_guard, scheduler, store
+import alerts, approvals, business, logs, memory, memory_guard, scheduler, store, workfile
 
 log = logging.getLogger("jinnee")
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -52,6 +52,8 @@ TOOLS += [f"Bash({py} core/forge_git.py *)" for py in ("python3", "python")]
 # Forge needs to read API docs and run the connectors and tests it writes; still no curl, rm or free shell.
 TOOLS += ["WebFetch", "WebSearch"] + [f"Bash({py} {cmd})" for py in ("python3", "python") for cmd in ("connectors/*", "-m unittest *", "-I connectors/*")]
 GUARDED = [f"Edit(brain/{name})" for name in ("approvals.json", "autonomy_config.json", "alerts_state.json")]
+INTERRUPTED = "interrupted.json"  # the owner's run that stopped half-way: its task and work files, for /continue; the bridge's own
+GUARDED += [f"Edit(brain/{INTERRUPTED})"]
 # Memory: reading only. search/get/log-tail/log-search/stats/core never write; compact (moving old lines to the archives)
 # is the bridge's own hourly job (memory_tidy) and is denied to the agents, in both modes.
 TOOLS += [f"Bash({py} core/memory.py {cmd})" for py in ("python3", "python")
@@ -82,7 +84,8 @@ MEMORY. brain/lessons.md and brain/forge_notes.md are in this prompt only up to 
 - Never delete a line from lessons.md or forge_notes.md to make room: the bridge moves old lines to the archive itself, where search still finds them.""".replace("{PY}", store.PY)
 
 def system_prompt() -> str:
-    parts = [f"Your name is {NAME}. You speak with the owner in language '{business.language()}'. Working directory: {ROOT}.\n" + RULES]
+    parts = [f"Your name is {NAME}. You speak with the owner in language '{business.language()}'. Working directory: {ROOT}.\n" + RULES
+             + "\n\n" + workfile.RULE.replace("{MINUTES}", str(MINUTES))]
     # who the business is (config/business.yaml, the owner's own settings; never in git)
     parts.append("\n\n===== the business (config/business.yaml) =====\n" + business.prompt_block())
     for f in agent_files(PACKS):
@@ -137,16 +140,61 @@ def call_claude(message: str, unattended=False, conversation=True):
     if conversation: FRESH["next"] = False
     return True, r.stdout.strip() or r.stderr.strip() or "…", "replied"
 
-def run_agent(message: str) -> str:
+def run_agent(message: str, task=None) -> str:
     """Claude Code CLI, non-interactive. Runs on the owner's Pro/Max subscription.
     --continue keeps one running conversation; acceptEdits lets agents write brain/ and handoffs/.
-    A run that fails or times out comes back as a message the owner can act on, and the heartbeat records it."""
+    A run that fails or times out comes back as a message the owner can act on, and the heartbeat records it.
+    If it stopped half-way and left work files (core/workfile.py), they are kept for /continue and the owner is told how
+    far it got. task: the original request when this run continues one (the message is then the continuation prompt)."""
     with RUNNING:
         beat("jinnee", "working", "working")
+        started = time.time()
         ok, out, note = call_claude(message)
+        if not ok: out, note = kept_work(task or message, started, out, note, again=task is not None)
+        elif task is not None: out = settled(out)
         beat("jinnee", note, "ok" if ok else "failed")
     if not ok: log.warning("agent run failed: %s", note)
     return out
+
+# --- work that stopped half-way (core/workfile.py): kept in brain/interrupted.json for /continue
+CONTINUE_WORDS = {"continue", "folytasd", "folytatás", "folytatas"}  # said alone, while something is cut off: the same as /continue
+
+def interrupted() -> dict:
+    """The owner's last run that stopped with work in progress: {"task", "files", "at", "attempt"}; {} when there is none
+    or its files are all finished (or gone) by now."""
+    try: rec = store.read_json(BRAIN / INTERRUPTED, dict)
+    except store.Unreadable: return {}
+    files = workfile.still_open(ROOT, rec.get("files") or [])
+    return {**rec, "files": files} if files else {}
+
+def keep_interrupted(rec):
+    with store.locked(BRAIN):
+        if rec: store.write_json(BRAIN / INTERRUPTED, rec)
+        elif (BRAIN / INTERRUPTED).exists(): (BRAIN / INTERRUPTED).unlink()
+
+def kept_work(task, started, out, note, again=False):
+    """After a run that stopped: the in-progress work files it wrote (plus, for a continuation, the ones it was continuing).
+    → (the owner's message, the heartbeat note). Nothing kept: both as they were."""
+    before = interrupted() if again else {}
+    files = workfile.touched(ROOT, started)["open"]
+    files += [f for f in before.get("files", []) if f not in files]
+    if not files: return out, note
+    attempt = int(before.get("attempt") or 0) + 1 if again else 1
+    keep_interrupted({"task": str(task)[:4000], "files": files, "at": int(time.time()), "attempt": attempt})
+    head = (f"I worked on this for {MINUTES} minutes and was stopped before finishing. " if note.startswith("timed out")
+            else out + "\n\n")
+    return (head + "The work so far is kept, not lost:\n" + workfile.summary(ROOT, files) +
+            "\n\nSend /continue (or just \"continue\") and I go on from there; what is ticked is not done again." +
+            ("" if attempt < 3 else " It has stopped several times now: a smaller step may work better.")), \
+        f"{note}; work kept in {', '.join(files)}"
+
+def settled(out):
+    """A continuation that ended: forget it, or say plainly that its work file is still not finished."""
+    rec = interrupted()
+    if not rec:
+        keep_interrupted({}); return out
+    return out + ("\n\n(The work file is still marked unfinished: " + ", ".join(rec["files"]) +
+                  ". Send /continue to go on with it.)")
 
 async def say(send, text, markup=None):
     for i in range(0, len(text), 4000):
@@ -175,7 +223,7 @@ def owner_command(text: str) -> str:
     """/ok k7qd · /ok_k7qd · /change k7qd shorter · /drop k7qd why · /undo k7qd · /pending · /schedule.
     The id may be left out when only one item fits."""
     m = COMMAND.fullmatch(text.strip())
-    if not m: return "Commands: /pending · /ok · /change · /drop · /undo · /schedule · /new"
+    if not m: return "Commands: /pending · /ok · /change · /drop · /undo · /schedule · /continue · /new"
     word, first, rest = m.group(1), m.group(2) or "", (m.group(3) or "").strip()
     if word == "schedule": return SCHED.summary()
     pending, decided, _ = BOOK.open_items()
@@ -202,9 +250,13 @@ def owner_command(text: str) -> str:
     except approvals.Refused as e:
         return str(e)[:1].upper() + str(e)[1:]
 
+CONTINUE = re.compile(r"/continue(?:@\w+)?(?:[_ ]+(\S+))?\s*", re.I)
+
 async def on_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not from_owner(update) or update.message is None: return
     AWAITING.clear()
+    m = CONTINUE.fullmatch((update.message.text or "").strip())
+    if m: return await go_on(update, ctx, m.group(1) or "")
     await say(update.message.reply_text, await asyncio.to_thread(owner_command, update.message.text or ""))
 
 async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -217,6 +269,8 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try: reply = await asyncio.to_thread(decide, item_id, decision, text)
         except approvals.Refused as e: reply = str(e)[:1].upper() + str(e)[1:]
         return await say(update.message.reply_text, reply)
+    if text.strip().strip(".!").lower() in CONTINUE_WORDS and await asyncio.to_thread(lambda: bool(interrupted() or SCHED.interrupted())):
+        return await go_on(update, ctx, "")  # a bare "continue" while something is cut off; otherwise it is an ordinary message
     if text.strip().strip(".!").lower() in PLAIN_OK:  # a bare "ok" from the owner: one waiting item is approved, several are asked about
         pending = BOOK.open_items()[0]
         if len(pending) == 1:
@@ -226,13 +280,42 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return await say(update.message.reply_text, "Which one?\n" + "\n".join(f"• {alerts.line(BOOK, i)}" for i in pending), buttons(ids))
     await answer(update, text)
 
-async def answer(update, text):
+async def answer(update, text, task=None):
     if SCHEDULING["busy"] and RUNNING.locked():  # a scheduled job started just before: say so instead of a silent wait
         await update.message.reply_text(f"One moment: a scheduled run is finishing ({SCHEDULING['job']}). Your message is next, "
                                         f"within {MINUTES} minutes at most.")
-    reply = await asyncio.to_thread(run_agent, text)
+    reply = await asyncio.to_thread(run_agent, *((text,) if task is None else (text, task)))
     ids = [i["id"] for i in BOOK.open_items()[0] if i["id"] in reply][:5]  # the agent named a waiting item: put the tap buttons under it
     await say(update.message.reply_text, reply, buttons(ids))
+
+async def go_on(update, ctx, which):
+    """/continue [job id | chat]: go on with work that stopped half-way, from its work file. Without a name, the newest:
+    the owner's own run, or a scheduled job (which continues unattended, as it was started)."""
+    mine = await asyncio.to_thread(interrupted)
+    jobs = await asyncio.to_thread(SCHED.interrupted)
+    if which and which.lower() != "chat":
+        hit = [x for x in jobs if x[0].id == which]
+        if not hit:
+            return await update.message.reply_text(f"'{which}' has no unfinished work to continue. Send /continue on its own for "
+                                                   "the newest, or /schedule to see the jobs.")
+        return await go_on_job(update, hit[0][0])
+    if not mine and (which or not jobs):
+        return await update.message.reply_text("Nothing was cut off, so there is nothing to continue.")
+    if jobs and not which and (not mine or jobs[0][2] > mine.get("at", 0)):
+        return await go_on_job(update, jobs[0][0])
+    await update.message.reply_text("Going on from " + ", ".join(mine["files"]) + ".")
+    await answer(update, workfile.resume_prompt(mine["files"], mine.get("task"), MINUTES, int(mine.get("attempt") or 1)), mine.get("task"))
+
+async def go_on_job(update, job):
+    if SCHEDULING["busy"]:
+        return await update.message.reply_text(f"A scheduled run is going right now ({SCHEDULING['job']}). Send /continue {job.id} again in a few minutes.")
+    SCHEDULING.update(busy=True, job=job.name)
+    try:
+        await update.message.reply_text(f"Going on with {job.name}, unattended as scheduled: nothing goes out from it.")
+        out = await asyncio.to_thread(SCHED.resume, job.id, RUNNER)
+    finally:
+        SCHEDULING["busy"] = False
+    await say(update.message.reply_text, out.message or f"{job.name}: {out.note}")
 
 # --- text files and PDFs from the owner (a brief, an invoice export, a contract): saved under handoffs/inbox/, then the lead is told where it is.
 # Text files are stored as text; a PDF or an Excel workbook is stored as it came, with its text next to it (.pdf.txt, .xlsx.txt).
@@ -487,7 +570,7 @@ async def schedule_tick(ctx: ContextTypes.DEFAULT_TYPE):
 async def run_job(bot, job, t, key):
     try:
         out = await asyncio.to_thread(SCHED.run, job, t, key, RUNNER)
-        if out.result in ("failed", "ok", "silent"): log.info("scheduled %s: %s (%s)", job.id, out.result, out.note)
+        if out.result in ("failed", "ok", "silent", "problem"): log.info("scheduled %s: %s (%s)", job.id, out.result, out.note)
         if out.message:
             if alerts.quiet(time.time()): await asyncio.to_thread(SCHED.later, out.message)  # finished after the quiet hours began
             else: await say(lambda t: bot.send_message(chat_id=OWNER, text=t), out.message)
