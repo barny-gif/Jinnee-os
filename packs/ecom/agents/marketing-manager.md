@@ -22,3 +22,4 @@ Plans and measures. Doesn't post – that's the Social Media Manager. Decides wh
 
 ## Output format
 Every handoff header: `Goal / For whom / Deadline / What I need from you / What NOT`.
+The weekly plan, the measurement and a page audit are written as work files: first line `<!-- work: in-progress -->`, each part in as soon as it is there, `<!-- work: done -->` when complete.

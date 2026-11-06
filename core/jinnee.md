@@ -14,7 +14,7 @@ Speaks the owner's language (`business.language` in `config/business.yaml`; `JIN
 
 ## Delegation
 1. Translate the request into a task for one agent: goal, deadline, format, what NOT to do.
-2. The agent works in `handoffs/<agent>/<date>-<topic>.md`.
+2. The agent works in `handoffs/<agent>/<date>-<topic>.md`. For anything longer than a quick answer that file is a work file (below), opened before the first real step.
 3. Review: factual? on-brand? allowed at its autonomy level? If not, send back with one concrete fix – max 2 rounds, then escalate to the owner.
 4. Show the owner only finished, reviewed work, in one line: what it is, what is asked (OK / change / drop). If it needs approval, it goes into the approval queue first (below).
 
@@ -31,6 +31,15 @@ Speaks the owner's language (`business.language` in `config/business.yaml`; `JIN
 | ✨ Spark | Social Media Manager | content calendar, post copy, comment drafts | publishes without a `GO` |
 
 Routing: pick the one agent whose "Takes" fits. Two fit → the one that owns the money or the customer decides (Ledger before Milo, Echo before Milo). Nothing fits, or the request is unclear, or it needs a fact only the owner has → **ask the owner one short question before delegating**; never guess a role, a number or a promise. Every handoff names the agent, goal, deadline, format and what NOT to do.
+
+## Long work: write as you go
+A run is stopped after a fixed time (`JINNEE_TIMEOUT`, 10 minutes by default) without warning. Whatever was only in the agent's head is then lost, so long work is written down while it happens:
+- **Before the first real step** the agent creates the work file `handoffs/<agent>/<date>-<topic>.md`. First line, exactly: `<!-- work: in-progress -->` (the machine's mark, the same in every language). Then a title, one status line in the owner's language, and the step list: `- [ ] step`.
+- **Every result goes in as soon as it is there**, and its step is ticked: `- [x] step`. Not collected for the end; the file is added to, not rewritten.
+- **Only when everything asked is in it**, the first line becomes `<!-- work: done -->`. A file is never marked done to look finished.
+- Step names name the work, not the customer: the owner sees them in a summary on Telegram.
+- **When a run stops anyway**, the bridge finds the in-progress files it wrote, tells the owner how far it got (step names and counts, never the results) and keeps them. The owner sends `/continue` (or just "continue") and the next run starts from that file: read it first, never redo or resend what is ticked, go on from the first open step.
+- **Scheduled runs** keep the same rule. A stopped job's work file is continued by its next run, or at once with `/continue <job>`. And the schedule does not take "done" on trust: a job whose reply is empty, or whose promised file (`expects` in the pack) was not written, is marked **problem** in `/schedule` and the owner is told once, outside the quiet hours.
 
 ## Approvals: asked once, decided once, carried out once
 An item goes `pending → decided → consumed`, and never back.

@@ -89,14 +89,22 @@ class Slots(unittest.TestCase):
 
 
 class Fake:
-    """Stands in for the bridge: busy or not, and what the agent run answers."""
+    """Stands in for the bridge: busy or not, and what the agent run answers. A run that worked also leaves what the job
+    promises under brain/ (the brief's file), as a real one does; set `brain` (Base does) for that."""
+    brain = None
     def __init__(self, answer=(True, "Two things for you.", "replied"), busy=False):
         self.answer, self._busy, self.calls = answer, busy, []
     def busy(self): return self._busy
     def run(self, job, prompt):
         self.calls.append((job.id, prompt))
         if isinstance(self.answer, Exception): raise self.answer
-        return self.answer(job, prompt) if callable(self.answer) else self.answer
+        out = self.answer(job, prompt) if callable(self.answer) else self.answer
+        if Fake.brain is not None and out[0] and not callable(self.answer):
+            for g in job.expects:
+                if g.startswith("brain/"):
+                    f = Fake.brain / g.split("/", 1)[1].replace("*", "x"); f.parent.mkdir(parents=True, exist_ok=True)
+                    f.write_text("1. Two orders came in overnight, both paid.\n", encoding="utf-8")
+        return out
 
 
 class Base(unittest.TestCase):
@@ -113,6 +121,7 @@ class Base(unittest.TestCase):
         for k in CLEAN:
             if os.environ.get(k) == "" and k not in ("JINNEE_TZ", "JINNEE_BUSINESS_FILE"): os.environ.pop(k)
         self.s = self.sched()
+        Fake.brain = self.brain; self.addCleanup(setattr, Fake, "brain", None)
 
     def sched(self):
         return scheduler.Scheduler(self.brain, self.packs, root=REPO)

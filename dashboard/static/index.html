@@ -80,7 +80,7 @@ async function load(){
   el('closedBox').hidden=!by('consumed').length;
   el('closed').innerHTML=by('consumed').map(a=>`<div class="row"><span>${esc(a.title||a.id)}</span><span>${esc(a.status)}${a.result?' · '+esc(a.result):''}</span></div>`).join('');
   el('autonomy').innerHTML=s.autonomy.map(a=>`<div class="row"><span>${esc(a.label||a.action)}</span><span>${esc(a.name)}${a.locked?' · locked'+(a.max_level>a.level?', at most “'+esc(['forbidden','approval required','act, report afterwards','free'][a.max_level])+'”':''):''}</span></div>`).join('');
-  el('team').innerHTML=s.team.length?s.team.map(t=>`<div class="row"><span><span class="dot ${t.state==='failed'?'r':t.state==='working'?(t.ago_min<60?'y':'r'):'g'}"></span>${esc(t.agent)}</span><span>${t.ago_min<60?t.ago_min+' min ago':Math.round(t.ago_min/60)+' h ago'} · ${esc(t.note)}</span></div>`).join('')
+  el('team').innerHTML=s.team.length?s.team.map(t=>`<div class="row"><span><span class="dot ${t.state==='failed'?'r':t.state==='problem'?'y':t.state==='working'?(t.ago_min<60?'y':'r'):'g'}"></span>${esc(t.agent)}</span><span>${t.ago_min<60?t.ago_min+' min ago':Math.round(t.ago_min/60)+' h ago'} · ${esc(t.note)}</span></div>`).join('')
     :'<p class="empty">No one has checked in yet. After the first task you\'ll see who is doing what.</p>';
   el('connectors').innerHTML=s.connectors.map(c=>`<div class="row"><span><span class="dot ${c.ok===null?'n':c.ok?'g':'r'}"></span>${esc(c.name)}</span><span>${c.ok===null?'no key':c.ok?'connected':'missing key'}</span></div>`).join('');
   el('schedule').innerHTML=s.schedule===null?'<p class="empty">The schedule could not be read. Run python3 core/scheduler.py plan on the machine.</p>'

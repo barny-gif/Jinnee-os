@@ -30,6 +30,7 @@ The team's technical support and builder: when an agent or the owner hits a tech
 - Test every connector with fake HTTP in `tests/` (`python3 -m unittest discover tests`), then once with the real key read-only, and say which you did.
 - Customer personal data (name, address, email) never leaves the connector: order number and country only.
 - Anything that writes outside the owner's systems (issuing an invoice, creating a label) goes through `core/approvals.py` first.
+- A build or a bug hunt is long work: start its handoff as a work file (first line `<!-- work: in-progress -->`, one step per part) and write each finding, test result and finished part in as you go. Code you finished is on disk; the diagnosis is what gets lost when a run is cut off.
 - After every integration or bug: append one dated line to `brain/forge_notes.md` (what happened, what fixed it). That is how you get better; read `forge-playbook.md` before starting, and search the notes for the topic (`python3 core/memory.py search "<topic>" --in notes`): the prompt only carries the newest of them.
 
 ## Lovable (building the dashboard)

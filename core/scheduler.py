@@ -15,6 +15,8 @@ Who sets what
   after_any: [job ids]: the job only sums up or builds on those; it is off when none of them runs.
   precheck: new_mail · open_orders · marketing_plan. Plain code asks first whether there is anything to do (counts only, no
          personal data); when there is not, no agent run is started and the owner's subscription is not spent on it.
+  expects: [globs under the install folder], e.g. "handoffs/ledger/*invoice-watch*.md": what the run must leave behind.
+  silent_ok: true when a SILENT reply is a full answer even without the expected file (nothing ran out, nothing to say).
 
 Rules
   - Times are the owner's (alerts.zone(): JINNEE_TZ, else schedule.timezone, else the machine's clock).
@@ -32,6 +34,13 @@ Rules
     --send yes), decisions are not carried out (approvals.py consume refuses), only brain/ and handoffs/ can be written.
     What should go out is queued for the owner. If a program file changes during the run anyway, the run counts as failed.
   - A failed run: the heartbeat says failed and the owner is told once, through core/alerts.py.
+  - Do not believe the run: "finished" is not enough. A reply that is empty, or an expected file (expects) that was not
+    written during the run, is empty, or is still marked in progress, makes the result "problem": shown in /schedule,
+    in the heartbeat, and told to the owner once (never in the quiet hours). A SILENT reply only excuses the file with
+    silent_ok. After a problem the next run looks back as far as after a failed one.
+  - A run that stopped (timed out or crashed) keeps its work: the in-progress work files it wrote (core/workfile.py) are
+    recorded with the job. The next run of that job continues them; the owner can also send /continue <job> to do it
+    now, in the same unattended mode.
 
 CLI (none of these starts a run):
   python3 core/scheduler.py plan [--days 7]   what would run when, and what is off and why
@@ -41,7 +50,7 @@ CLI (none of these starts a run):
 import contextlib, datetime as dt, hashlib, importlib.util, json, os, pathlib, re, sys, time
 from typing import NamedTuple
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import store, alerts, heartbeat
+import store, alerts, heartbeat, workfile
 from pack_loader import resolve
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -76,9 +85,11 @@ WEEKLY = ("The Friday weekly report for the owner, from this week's handoffs: Le
           "At most 10 lines. Numbers exactly as they are in the handoffs; a part that is missing is named as missing, never "
           "estimated. Save it to handoffs/jinnee/<date>-weekly-report.md too.")
 CORE_JOBS = {
-    "jinnee.brief": {"agent": "jinnee", "name": "Jinnee: morning brief", "when": "daily 08:00", "lead": True, "task": BRIEF},
+    "jinnee.brief": {"agent": "jinnee", "name": "Jinnee: morning brief", "when": "daily 08:00", "lead": True, "task": BRIEF,
+                     "expects": ["brain/brief_today.md"]},
     "jinnee.evening": {"agent": "jinnee", "name": "Jinnee: evening close", "when": "daily 20:00", "lead": True, "task": EVENING},
     "jinnee.weekly_report": {"agent": "jinnee", "name": "Jinnee: Friday report", "when": "weekly fri 15:30", "lead": True, "task": WEEKLY,
+                             "expects": ["handoffs/jinnee/*weekly-report*.md"],
                              "after_any": ["ledger.weekly_finance", "marketing.weekly_measurement", "watcher.weekly_round"]},
 }
 UNATTENDED_RULES = (
@@ -87,8 +98,18 @@ UNATTENDED_RULES = (
     "What should go out is queued for the owner with core/approvals.py add: finished, exactly as it would go out. Do not consume "
     "approvals: decided items reach the lead on their own. Write only under brain/ and handoffs/. The schedule records the "
     "heartbeat for this run.")
+CARRY = ("An earlier run of this job stopped before it finished. Its work so far is in {files} (marked <!-- work: in-progress -->). "
+         "Read it first. If it covers what this run asks (the same day or week), go on from its first open step in the same "
+         "file. If it is older than that, finish in it only what is still worth finishing, then set its first line to "
+         "<!-- work: done --> with one line saying it was closed by the next run, and do this run's task in its own file. "
+         "What is ticked is done: never send or queue it again.")
 REPLY = ("Your reply goes to the owner on Telegram as it is: at most 5 short lines, no personal data (order numbers and first "
          f"names at most). If nothing needs the owner, reply with exactly {SILENT} and nothing else.")
+
+
+def timeout_minutes():
+    """The bridge's limit for one run (JINNEE_TIMEOUT, seconds), in minutes, for the words of a continuation."""
+    return max(1, int(alerts.number("JINNEE_TIMEOUT", 600)) // 60)
 
 
 class SpecError(ValueError):
@@ -281,10 +302,19 @@ class Job(NamedTuple):
     pack: str
     source: str    # core | pack | owner (where `when` came from)
     off: str       # why it does not run; '' = it runs
+    expects: tuple = ()     # globs the run must leave behind (written during the run, not empty, not in progress)
+    silent_ok: bool = False  # SILENT is a full answer even without the expected file
+
+
+def _globs(v):
+    """expects as written in pack.json: one glob or a list of them. Anything else is ignored."""
+    if isinstance(v, str): v = [v]
+    if not isinstance(v, (list, tuple)): return ()
+    return tuple(g.strip().lstrip("/") for g in v if isinstance(g, str) and g.strip() and ".." not in g)
 
 
 class Outcome(NamedTuple):
-    result: str    # busy | skipped | nothing | silent | ok | failed
+    result: str    # busy | skipped | nothing | silent | ok | problem | failed
     message: str   # for the owner ('' = nothing to send)
     note: str
 
@@ -348,7 +378,8 @@ class Scheduler:
                     ok, why = need_ready(n, self.brain)
                     if not ok: off = f"needs {n}: {why}"; break
             out.append(Job(jid, d.get("agent", ""), d.get("name") or jid, when if isinstance(when, str) else ("off" if when is False else str(when)),
-                           rule, needs, d.get("precheck") or "", d.get("task", ""), bool(d.get("lead")), d.get("pack", ""), source, off))
+                           rule, needs, d.get("precheck") or "", d.get("task", ""), bool(d.get("lead")), d.get("pack", ""), source, off,
+                           _globs(d.get("expects")), bool(d.get("silent_ok"))))
         on = {j.id for j in out if not j.off}
         for i, j in enumerate(out):  # a job that only sums up others: off when none of them runs
             sources = declared[j.id].get("after_any") or []
@@ -539,22 +570,116 @@ class Scheduler:
                 try: work, note = PRECHECKS[job.precheck](since, self.root)
                 except Exception as e:  # the connector said why; it never carries personal data
                     return self._end(job, "failed", "", f"the pre-check could not ask: {str(e)[:200] or type(e).__name__}", now)
-                if not work: return self._end(job, "nothing", "", note, now)
-            before = self.fingerprint()
-            try: worked, text, note = runner.run(job, self.prompt(job, t, since, tz))
-            except Exception as e: worked, text, note = False, "", f"the run could not start ({type(e).__name__})"
-            if self.fingerprint() != before:
-                return self._end(job, "failed", "", "a program file changed during the run; nothing was rolled back, "
-                                                     "look at `git status` in the install folder", now)
-            text = (text or "").strip()
-            if not worked:
-                return self._end(job, "failed", text if job.lead else "", note, now)
-            if text.strip(" .").upper() == SILENT: return self._end(job, "silent", "", "nothing for the owner", now)
-            return self._end(job, "ok", text if job.lead else f"{job.name} (scheduled):\n{text}", note or "done", now)
+                if not work and not self.carried(job): return self._end(job, "nothing", "", note, now)
+            prompt = self.prompt(job, t, since, tz)
+            carried = self.carried(job)
+            if carried: prompt += "\n\n" + CARRY.format(files=", ".join(carried))
+            return self._execute(job, prompt, runner, now)
+
+    def resume(self, jid, runner, now=None):
+        """/continue <job>: go on with the work a stopped run of this job left, now, in the same unattended mode as a
+        scheduled run, without taking a slot. → Outcome; its message is always for the owner (they asked)."""
+        job = next((j for j in self.jobs() if j.id == jid), None)
+        if job is None: return Outcome("skipped", f"There is no scheduled job '{jid}'. /schedule lists them.", "unknown job")
+        if job.off: return Outcome("skipped", f"'{job.name}' is off: {job.off}. Nothing was started.", "off")
+        with self.exclusive() as got:
+            if not got or runner.busy():
+                return Outcome("busy", "Another run is going right now. Send /continue again in a minute.", "busy")
+            files = self.carried(job)
+            if not files:
+                return Outcome("skipped", f"'{job.name}' has no unfinished work to continue: its last run did not stop half-way, "
+                                          "or the work file was finished since.", "nothing to continue")
+            now = now or time.time()
+            rec = self.state().get(job.id, {})
+            attempt = int(rec.get("attempt") or 0) + 1
+            def mark(s):
+                s.setdefault(job.id, {"first_seen": int(now)}).update(started=int(now), ended=None, result="running",
+                                                                      note="continuing the cut-off work", attempt=attempt)
+            self._edit(mark)
+            heartbeat.beat(job.agent, f"scheduled {job.id}: continuing", "working", brain=self.brain)
+            tz = alerts.zone()
+            slot_t = rec.get("slot_t") or now
+            prompt = self.prompt(job, slot_t, self.since(job, slot_t), tz) + "\n\n" + workfile.resume_prompt(
+                files, "the scheduled task above", timeout_minutes(), attempt)
+            out = self._execute(job, prompt, runner, now)
+            if out.message or job.lead: return out
+            said = {"ok": "done", "silent": "done, nothing for you", "problem": f"finished, but {out.note}",
+                    "failed": f"stopped again: {out.note}"}.get(out.result, out.note)
+            return out._replace(message=f"{job.name}: {said}")
+
+    def _execute(self, job, prompt, runner, now):
+        """The agent run and what is checked after it: the program files, the work kept when it stopped, and whether the
+        run left what it promised (do not believe a run that only says it is done)."""
+        before = self.fingerprint()
+        wall = time.time()  # file times are real; `now` may be a test's clock
+        try: worked, text, note = runner.run(job, prompt)
+        except Exception as e: worked, text, note = False, "", f"the run could not start ({type(e).__name__})"
+        if self.fingerprint() != before:
+            return self._end(job, "failed", "", "a program file changed during the run; nothing was rolled back, "
+                                                 "look at `git status` in the install folder", now)
+        text = (text or "").strip()
+        if not worked:
+            kept = workfile.touched(self.root, wall)["open"]
+            work = kept + [f for f in self.carried(job) if f not in kept]
+            self._carry(job, work)
+            if work:
+                note = f"{note}; the work so far is kept in {', '.join(work)}"
+                if job.lead:
+                    text = (text + "\n\nThe work so far is kept:\n" + workfile.summary(self.root, work) +
+                            f"\nSend /continue {job.id} to go on from there now; otherwise the next run continues it.")
+            return self._end(job, "failed", text if job.lead else "", note, now)
+        self._carry(job, self.carried(job))  # what this run finished is no longer carried
+        silent = text.strip(" .").upper() == SILENT
+        wrong = self.missing(job, wall, silent)
+        if text in ("", "…"): wrong.insert(0, "the run ended without a word")
+        if wrong:
+            shown = "" if silent or text in ("", "…") else (text if job.lead else f"{job.name} (scheduled):\n{text}")
+            return self._end(job, "problem", shown, "the run said it was done, but " + "; ".join(wrong), now)
+        if silent: return self._end(job, "silent", "", "nothing for the owner", now)
+        return self._end(job, "ok", text if job.lead else f"{job.name} (scheduled):\n{text}", note or "done", now)
+
+    def missing(self, job, wall, silent=False):
+        """What the job promised (expects) and did not leave: [] when all is there. A file counts when it was written during
+        this run, says something, and is not still marked in progress. SILENT excuses it only with silent_ok."""
+        if silent and (job.silent_ok or not job.expects): return []
+        out = []
+        for g in job.expects:
+            base, pattern = (self.brain, g.split("/", 1)[1]) if g.startswith("brain/") else (self.root, g)  # brain/ may live elsewhere
+            try: hits = [p for p in base.glob(pattern) if p.is_file()]
+            except (ValueError, OSError, IndexError): hits = []
+            fresh = [p for p in hits if p.stat().st_mtime >= wall - 1]
+            if not fresh:
+                out.append(f"{g} was not written in this run"); continue
+            if not any(workfile.status(p) != workfile.IN_PROGRESS and workfile.has_content(p) for p in fresh):
+                out.append(f"{g} is " + ("still marked in progress" if any(workfile.status(p) == workfile.IN_PROGRESS for p in fresh)
+                                         else "empty"))
+        return out
+
+    def interrupted(self):
+        """Jobs whose stopped run left work that is still in progress → [(job, files, when it stopped)], newest first.
+        For /continue on Telegram."""
+        s, out = self.state(), []
+        for j in self.jobs():
+            rec = s.get(j.id, {})
+            files = workfile.still_open(self.root, rec.get("work") or [])
+            if files: out.append((j, files, rec.get("ended") or 0))
+        return sorted(out, key=lambda x: x[2], reverse=True)
+
+    def carried(self, job):
+        """Work files a stopped run of this job left that are still in progress."""
+        return workfile.still_open(self.root, self.state().get(job.id, {}).get("work") or [])
+
+    def _carry(self, job, files):
+        def put(s):
+            rec = s.setdefault(job.id, {})
+            if files: rec["work"] = list(files)
+            else:
+                rec.pop("work", None); rec.pop("attempt", None)
+        self._edit(put)
 
     def _end(self, job, result, message, note, started):
         self.finish(job, result, note, time.time(), started)
-        heartbeat.beat(job.agent, f"scheduled {job.id}: {note}", "failed" if result == "failed" else "ok", brain=self.brain)
+        heartbeat.beat(job.agent, f"scheduled {job.id}: {note}", result if result in ("failed", "problem") else "ok", brain=self.brain)
         return Outcome(result, message, note)
 
     # --- what finished in the quiet hours waits here (brain/schedule_outbox.json) for the first minute after them
@@ -654,14 +779,24 @@ class Scheduler:
         return out
 
     def problems(self, now=None):
-        """For core/alerts.py, said once each: a scheduled agent run that failed (until a later run of it works), and the
-        owner's settings that cannot be read. The lead's own runs (brief, evening) tell the owner themselves."""
+        """For core/alerts.py, said once each: a scheduled agent run that failed (until a later run of it works), with its
+        kept work and /continue when it stopped half-way; a run of any job whose result is "problem" (it said done but left
+        nothing usable); and the owner's settings that cannot be read. A failed lead run (brief, evening) tells the owner itself."""
         s, out = self.state(), []
         for j in self.jobs():
             rec = s.get(j.id, {})
             if rec.get("result") == "failed" and not j.lead:
-                out.append(f"The scheduled run '{j.name}' failed: {rec.get('note') or 'no reason given'}. It tries again at its "
-                           "next time; /schedule shows the details.")
+                work = workfile.still_open(self.root, rec.get("work") or [])
+                if work:  # the note already names the files; here: how far it got, and how to go on
+                    out.append(f"The scheduled run '{j.name}' stopped before it finished: {rec.get('note') or 'no reason given'}.\n"
+                               + workfile.summary(self.root, work) +
+                               f"\nThe next run continues it. To continue it now: /continue {j.id}")
+                else:
+                    out.append(f"The scheduled run '{j.name}' failed: {rec.get('note') or 'no reason given'}. It tries again at its "
+                               "next time; /schedule shows the details.")
+            elif rec.get("result") == "problem":  # the lead's own runs too: their message went out, but what they left did not
+                out.append(f"The scheduled run '{j.name}' did not leave what it should: {rec.get('note') or 'no reason given'}. "
+                           "It tries again at its next time; /schedule shows the details.")
         loud = ("is not understood", "there is no job", "not a time", "cannot be loaded")
         return out + [p for p in self.check() if any(w in p for w in loud)]
 

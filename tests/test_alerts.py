@@ -620,6 +620,7 @@ echo "UNATTENDED=$JINNEE_UNATTENDED" > env.txt
 python3 connectors/gmail/ops.py send --account info --draft_id d1 --confirm yes > send.txt 2>&1
 python3 connectors/order_flow.py parcel_prepare --order_id 1 --send yes > parcel.txt 2>&1
 python3 core/approvals.py consume ITEM > consume.txt 2>&1
+[ -n "$LEAVES" ] && mkdir -p "$(dirname "$LEAVES")" && echo "Nothing runs out within 7 days at the current speed." > "$LEAVES"
 echo "$REPLY"
 """
 
@@ -629,6 +630,7 @@ class ScheduledRuns(Bridge):
     def spy(self, item="none", reply="Stock is fine for the week."):
         env = self.fake_claude(SPY.replace("ITEM", item))
         env["REPLY"] = reply
+        env["LEAVES"] = "handoffs/milo/2026-11-06-stock.md"  # what the stock alert promises (expects); a real run writes it
         return env
 
     def read(self, name):
