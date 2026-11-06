@@ -15,9 +15,15 @@ VAT = os.getenv("BILLINGO_VAT", "27%")
 ELECTRONIC = os.getenv("BILLINGO_ELECTRONIC", "0").strip().lower() in ("1", "true", "yes")  # e-számla is a separate Billingo feature
 COD = ("cash on delivery", "cod", "utánvét", "utanvet")
 
-def payment_method(gateways):
+MANUAL = ("", "manual")  # no gateway: an order the owner made by hand from a draft (#1040)
+
+def payment_method(gateways, financial_status=None):
     g = " ".join(gateways).lower()
-    return "cash_on_delivery" if any(c in g for c in COD) else "wire_transfer" if any(w in g for w in ("bank deposit", "átutal", "atutal", "wire", "bank transfer")) else "bankcard"
+    if any(c in g for c in COD): return "cash_on_delivery"
+    if any(w in g for w in ("bank deposit", "átutal", "atutal", "wire", "bank transfer")): return "wire_transfer"
+    # Unpaid with no real gateway: the courier collects it. Reading it as a card payment printed 'PAID' and COD 0 on #1040.
+    if financial_status == "pending" and all(x.strip().lower() in MANUAL for x in gateways or [""]): return "cash_on_delivery"
+    return "bankcard"
 
 def items(o):
     """Shopify prices are gross (VAT included) in a Hungarian shop. A line discount is spread into the unit price."""
@@ -54,7 +60,7 @@ def invoice_draft(order_id, shop=None, bill=None):
     partner = step("create partner", bill.create_partner, partner_body(o))
     today = dt.date.today()
     body = {"partner_id": partner, "block_id": step("find numbering block", bill.block_id), "type": "draft", "fulfillment_date": today.isoformat(),
-            "due_date": (today + dt.timedelta(days=8)).isoformat(), "payment_method": payment_method(o["gateways"]),
+            "due_date": (today + dt.timedelta(days=8)).isoformat(), "payment_method": payment_method(o["gateways"], o.get("financial_status")),
             "language": "hu", "currency": o["currency"] or "HUF", "electronic": ELECTRONIC, "items": items(o),
             "comment": f"Shopify {o['name']}"}
     d = step("create draft", bill.post_document, body)
@@ -145,7 +151,7 @@ def gls_parcel(o, gls, house="", info=""):
     pick = {k: os.getenv("GLS_PICKUP_" + k.upper(), "").strip() for k in ("name", "street", "house", "city", "zip", "phone", "email")}
     gone = [k for k in ("name", "street", "city", "zip") if not pick[k]]
     if gone: raise ConnectorError("Missing in .env: " + ", ".join("GLS_PICKUP_" + k.upper() for k in gone))
-    cod = payment_method(o["gateways"]) == "cash_on_delivery"
+    cod = payment_method(o["gateways"], o.get("financial_status")) == "cash_on_delivery"
     total = round(sum(float(i["unit_price"]) * i["quantity"] for i in items(o)), 0)
     if cod and o.get("total") is not None and abs(total - float(o["total"])) >= 1:  # the courier must collect exactly what the customer owes
         raise ConnectorError(f"{o['name']}: COD amount {int(total)} Ft does not match the order total {int(float(o['total']))} Ft")

@@ -54,7 +54,8 @@ def check(o):
         out.append(_p("label", "shipping_method", "stop", "csomagpontos szállítás: a házhoz címke nem jó, kézzel kell"))
     if not o.get("email"): out.append(_p("label", "email", "warn", "nincs e-mail: a GLS nem tud értesítést küldeni"))
     # Invoice draft
-    if not gateways: out.append(_p("invoice", "payment", "stop", "ismeretlen fizetési mód"))
+    if not gateways and o.get("financial_status") != "pending":  # pending with no gateway = hand-made COD order (#1040)
+        out.append(_p("invoice", "payment", "stop", "ismeretlen fizetési mód"))
     bill_name = (b.get("company") or b.get("name") or "").strip()
     if not (bill_name and b.get("zip") and b.get("city") and b.get("address1")):
         out.append(_p("invoice", "billing_address", "stop", "a számlázási név vagy cím hiányos"))
@@ -77,7 +78,7 @@ def check_open(days="7", shop=None):
                                                  "shipping_address,billing_address,shipping_lines"}).get("orders", [])
     out = []
     for o in orders:
-        cod = any(c in " ".join(o.get("payment_gateway_names") or []).lower() for c in flow.COD)
+        cod = flow.payment_method(o.get("payment_gateway_names") or [], o.get("financial_status")) == "cash_on_delivery"
         out.append({"order": o.get("name"), "payment": f"COD {float(o.get('total_price') or 0):.0f} Ft" if cod else (o.get("financial_status") or "").upper(),
                     "missing": [f"{p['step']}: {p['label']} ({p['level']})" for p in check(o)] or "minden megvan"})
     return out
