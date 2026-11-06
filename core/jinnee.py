@@ -229,9 +229,12 @@ def started(session_id):
 def run_claude(cmd, run_env, session):
     try:
         # stdin closed: otherwise the CLI waits 3 s for piped input before it starts (2.1.302)
-        return subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=TIMEOUT, env=run_env, stdin=subprocess.DEVNULL)
-    finally:
-        if session: started(session[1])  # FileNotFoundError included: harmless, the id is only marked used
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=TIMEOUT, env=run_env, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        if session: started(session[1])
+        raise
+    if session: started(session[1])  # not when `claude` was not found at all: then nothing can have been saved
+    return r
 
 def call_claude(message: str, unattended=False, conversation=True):
     """→ (worked, text for the owner, short note for the heartbeat)."""
