@@ -26,7 +26,7 @@ labels:
   # The note printed on the GLS label. Placeholders: {shop} {order} {goods} {payment}.
   # The template is split at ", "; a part that comes out empty (an order with no goods listed) is left out with its comma.
   # Never put customer data here: the label note is visible to everyone who handles the parcel.
-  note: "{shop} {order}, {goods}, {payment}"   # -> "example-shop.hu #1001, 1× Wooden puzzle, COD 9890 Ft"
+  note: "{shop} {order}, {goods}, {payment}"   # -> "example-shop.hu #1001, 1× Wooden puzzle, COD 7350 Ft"
   cod: "COD {amount} Ft"                       # {amount} = the cash on delivery amount
   paid: "PAID"                                 # when the customer already paid
 

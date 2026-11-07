@@ -293,7 +293,7 @@ def _money(v):
     return x if math.isfinite(x) and x > 0 else 0.0
 
 def _alloc(x):
-    """Discount on a line: an automatic or order-level discount is only in discount_allocations (total_discount stays 0, Order 1031)."""
+    """Discount on a line: an automatic or order-level discount is only in discount_allocations (total_discount stays 0 for it)."""
     return sum(_money(a.get("amount")) for a in x.get("discount_allocations") or [])
 
 def _line_off(l): return _alloc(l) or _money(l.get("total_discount"))

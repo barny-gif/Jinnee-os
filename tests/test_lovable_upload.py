@@ -1,6 +1,5 @@
 """connectors/lovable_upload.py: the agent's only way to put an attachment for an approved Lovable prompt. Fake HTTP.
-The real case: approval 6972 (2026-10-31) needed 25 catalogue images; without an upload road the GO was used up and
-nothing went out."""
+Why: an approved prompt that needed attached images; without an upload road the GO was used up and nothing went out."""
 import importlib.util, pathlib, sys, tempfile, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent

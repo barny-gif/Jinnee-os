@@ -120,7 +120,9 @@ STUBS = {  # stand-ins so jinnee.py starts without the Telegram library, the net
 }
 OURS = ("JINNEE_NAME", "JINNEE_LANG", "PACKS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_ID", "REGISTRY_URL",
         "DASHBOARD_PASSWORD", "DASHBOARD_HOST", "DASHBOARD_PORT", "DASHBOARD_TRUST_PEER",
-        "QUIET_HOURS", "REMIND_AFTER_DAYS", "STUCK_AFTER_HOURS", "UNDO_SECONDS", "JINNEE_TZ", "JINNEE_LOG_DIR")
+        "QUIET_HOURS", "REMIND_AFTER_DAYS", "STUCK_AFTER_HOURS", "UNDO_SECONDS", "JINNEE_TZ", "JINNEE_LOG_DIR",
+        # the memory caps: an installation that raised one in its environment must not change what the copy's .env sets
+        "JINNEE_MEMORY_LESSONS_BYTES", "JINNEE_MEMORY_NOTES_BYTES")
 
 
 class RepoCopy(unittest.TestCase):

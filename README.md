@@ -97,7 +97,7 @@ the parcel label, which invoice series the Payments view shows, and which order 
 - Change it any time; the programs read it again on the next use. In Docker the `config/` folder is mounted, no rebuild needed.
 - `python3 core/business.py check` says whether everything your packs need is there. `python3 core/business.py setup` asks the
   questions again (it does not overwrite an existing file without `--force yes`). `python3 core/business.py label --order "#1001"
-  --goods "1× Wooden puzzle" --cod 9890` prints a label note exactly as it would go to GLS, without sending anything.
+  --goods "1× Wooden puzzle" --cod 7350` prints a label note exactly as it would go to GLS, without sending anything.
 - A value a step needs and that is missing **stops that step**: no parcel label and no invoice list goes out with a guessed value,
   and the error names the key to set. The team tells you when the file is missing, instead of inventing your name or tone.
 - What goes where: `.env` holds *how the system connects* (API keys, tokens, the Shopify store handle, the GLS pickup address,

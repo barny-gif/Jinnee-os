@@ -67,6 +67,54 @@ class ForgeGit(unittest.TestCase):
         main_log = subprocess.run(["git", "-C", str(self.remote), "log", "--oneline", "main"], capture_output=True, text=True).stdout
         self.assertEqual(len(main_log.strip().splitlines()), 1)  # main untouched
 
+    def words(self, text="Kis Bolt\n"):
+        p = self.tmp / "private.txt"; p.write_text(text, encoding="utf-8")
+        return mock.patch.object(self.fg, "private_words", return_value=self.fg.guard.private_patterns(p))
+
+    def test_start_turns_the_hooks_on(self):
+        self.fg.start("hooks")
+        self.assertEqual(self.fg.git("config", "core.hooksPath"), ".githooks")
+        # the owner's words are copied only into a clone that ignores the file (this seed has no .gitignore)
+        self.assertFalse((self.work / "config" / "private_patterns.txt").exists())
+
+    def test_business_data_in_a_file_or_the_message_blocks_the_commit(self):
+        self.fg.start("leak")
+        with self.words():
+            (self.work / "note.py").write_text("# label of the Kis Bolt order\n")
+            with self.assertRaises(SystemExit) as cm: self.fg.commit("add note")
+            self.assertIn("business data", str(cm.exception)); self.assertIn("private_patterns.txt line 1", str(cm.exception))
+            (self.work / "note.py").write_text("# label of the example-shop order\n")
+            for msg in ("Fix the label of order " + "5037", "COD was 12 " + "345 Ft", "Kis Bolt label"):
+                with self.subTest(msg=msg):
+                    with self.assertRaises(SystemExit) as cm: self.fg.commit(msg)
+                    self.assertIn("commit message", str(cm.exception))
+            self.assertEqual(self.fg.git("rev-list", "--count", "origin/main..HEAD"), "0")  # nothing was committed
+            self.assertTrue(self.fg.git("status", "--porcelain"))  # and the change is still there, unstaged
+            self.assertEqual(self.fg.git("diff", "--cached", "--name-only"), "")
+            self.assertIn("tests green", self.fg.commit("Label note uses the settings"))  # made-up values pass
+
+    def test_business_data_in_the_pr_title_or_body_pushes_nothing(self):
+        self.fg.start("leakpr")
+        (self.work / "new.txt").write_text("hello")
+        self.fg.commit("add file")
+        with self.words(), mock.patch.object(self.fg, "api", return_value={"html_url": "https://github.com/x/y/pull/9"}) as api:
+            for title, body in (("Fix order " + "5037", "Body"), ("Fix", "The Kis Bolt label"), ("Fix", "COD 12 " + "345 Ft")):
+                with self.subTest(title=title, body=body):
+                    with self.assertRaises(SystemExit) as cm: self.fg.pr(title, body)
+                    self.assertIn("pull request", str(cm.exception))
+            api.assert_not_called()
+            heads = subprocess.run(["git", "-C", str(self.remote), "branch", "--list"], capture_output=True, text=True).stdout
+            self.assertNotIn("forge/leakpr", heads)  # not pushed
+            self.assertEqual(self.fg.pr("Label note from the settings", "Tested with fake HTTP."), "https://github.com/x/y/pull/9")
+
+    def test_a_leaking_commit_already_on_the_branch_blocks_the_pr(self):
+        self.fg.start("oldleak")
+        (self.work / "new.txt").write_text("hello")
+        self.fg.commit("Kis Bolt fix")  # committed before the owner added the word
+        with self.words(), mock.patch.object(self.fg, "api") as api:
+            with self.assertRaises(SystemExit) as cm: self.fg.pr("Fix", "Body")
+            self.assertIn("message", str(cm.exception)); api.assert_not_called()
+
     def test_pr_without_news_is_refused(self):
         self.fg.start("empty")
         with self.assertRaises(SystemExit): self.fg.pr("T", "B")

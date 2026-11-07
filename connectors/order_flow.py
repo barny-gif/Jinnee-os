@@ -15,13 +15,13 @@ VAT = os.getenv("BILLINGO_VAT", "27%")
 ELECTRONIC = os.getenv("BILLINGO_ELECTRONIC", "0").strip().lower() in ("1", "true", "yes")  # e-számla is a separate Billingo feature
 COD = ("cash on delivery", "cod", "utánvét", "utanvet")
 
-MANUAL = ("", "manual")  # no gateway: an order the owner made by hand from a draft (#1040)
+MANUAL = ("", "manual")  # no gateway: an order the owner made by hand from a draft
 
 def payment_method(gateways, financial_status=None):
     g = " ".join(gateways).lower()
     if any(c in g for c in COD): return "cash_on_delivery"
     if any(w in g for w in ("bank deposit", "átutal", "atutal", "wire", "bank transfer")): return "wire_transfer"
-    # Unpaid with no real gateway: the courier collects it. Reading it as a card payment printed 'PAID' and COD 0 on #1040.
+    # Unpaid with no real gateway: the courier collects it. Reading it as a card payment printed 'PAID' and COD 0 on the label.
     if financial_status == "pending" and all(x.strip().lower() in MANUAL for x in gateways or [""]): return "cash_on_delivery"
     return "bankcard"
 
@@ -118,7 +118,7 @@ def split_street(address):
 
 def street_line(addr):
     """address1 + address2 as one line. An address2 with no letter or digit ('-', '.', '/') is a placeholder and is left out:
-    joined, it hid the house number at the end (#1038)."""
+    joined, it hid the house number at the end."""
     return " ".join(x for x in (addr.get("address1"), addr.get("address2")) if x and re.search(r"\w", x))
 
 def phone(p, country="HU"):
@@ -137,7 +137,7 @@ CONTENT_MAX = business.LABEL_MAX  # MyGLS Content: the note printed on the label
 
 def gls_content(o, cod_amount=0):
     """The label note from config/business.yaml (shop.label_name + labels.*), e.g. 'example-shop.hu #1001, 1× Wooden puzzle,
-    COD 9890 Ft' or '..., PAID'. No personal data. A missing setting stops the label (ConnectorError)."""
+    COD 7350 Ft' or '..., PAID'. No personal data. A missing setting stops the label (ConnectorError)."""
     goods = ", ".join(f"{max(int(l['qty']), 1)}× {l['title']}" for l in o["lines"] if l.get("title"))
     return setting(business.label_note, o["name"], goods, cod_amount)
 

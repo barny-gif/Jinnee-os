@@ -1,4 +1,4 @@
-"""connectors/complaints.py: the first real case (Order 1032, 2026-10-27, Velcro came off a soft book). The reply text and the
+"""connectors/complaints.py, with a made-up case (a part came off a toy). The reply text and the
 customer's e-mail reach the site only once the owner approved exactly that text."""
 import hashlib, importlib.util, pathlib, tempfile, unittest
 
@@ -18,8 +18,8 @@ class FakeBook:
     def __init__(self, items): self.items = items
     def get(self, i): return self.items.get(i)
 
-REPLY = "Kedves Vevő!\n\nKérünk, küldj pár fotót a tépőzárakról.\n\nBarni\nMonti Világ\n"
-ORDERS = [{"name": "#1032", "email": "vevo@example.com"}, {"name": "#1031", "email": "masik@example.com"}]
+REPLY = "Kedves Vevő!\n\nKérünk, küldj pár fotót a levált részről.\n\nAnna\nExample Shop\n"
+ORDERS = [{"name": "#1001", "email": "vevo@example.com"}, {"name": "#1002", "email": "masik@example.com"}]
 
 def item(state, decision=None, text=REPLY, file="handoffs/echo/valasz.md"):
     return {"state": state, "decision": decision, "file": file, "sha": hashlib.sha256(text.encode("utf-8")).hexdigest()}
@@ -28,9 +28,9 @@ class Complaints(unittest.TestCase):
     def setUp(self):
         self.m, self.tmp = load()
         (self.tmp / "handoffs" / "echo" / "valasz.md").write_text(REPLY, encoding="utf-8")
-        self.m.record("2026-10-27-1032", order="#1032", received_at="2026-10-26T18:00:00+01:00",
-                      products="1× Zsiráf Kalandkönyv, 1× Farmer Kalandkönyv", summary="Feljöttek a tépőzárak.",
-                      subject="#1032 rendelésed", reply_file="handoffs/echo/valasz.md", approval="surp")
+        self.m.record("2026-01-15-1001", order="#1001", received_at="2026-01-14T18:00:00+01:00",
+                      products="1× Fa kirakó, 1× Fa vonat", summary="Levált egy rész.",
+                      subject="#1001 rendelésed", reply_file="handoffs/echo/valasz.md", approval="surp")
 
     def one(self, book): return self.m.payload(ORDERS, book)[0]
 
@@ -58,7 +58,7 @@ class Complaints(unittest.TestCase):
             self.assertEqual(c["status"], "new"); self.assertIsNone(c["reply_body"])
 
     def test_echos_status_wins_and_order_outside_window_keeps_email(self):
-        self.m.record("2026-10-27-1032", status="exchange_in_progress")
+        self.m.record("2026-01-15-1001", status="exchange_in_progress")
         c = self.m.payload([], FakeBook({"surp": item("consumed", "ok")}))[0]
         self.assertEqual(c["status"], "exchange_in_progress")
         self.assertNotIn("reply_to_email", c)
@@ -70,7 +70,7 @@ class Complaints(unittest.TestCase):
     def test_show_never_prints_text_or_email(self):
         self.m._book = lambda: FakeBook({"surp": item("decided", "ok")})
         out = str(self.m.show())
-        self.assertNotIn("vevo@example.com", out); self.assertNotIn("tépőzárakról", out)
+        self.assertNotIn("vevo@example.com", out); self.assertNotIn("levált részről", out)
 
     def test_refuses_bad_input(self):
         with self.assertRaises(self.m.ConnectorError): self.m.record("x", status="reply_ready")  # follows the approval, not set by hand
