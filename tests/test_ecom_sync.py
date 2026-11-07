@@ -74,10 +74,10 @@ class Resp:
 
 ADDR = {"name": "Titkos Vevo", "address1": "Fo utca 1", "zip": "1111", "city": "Budapest", "country_code": "HU", "phone": "+36301112222",
         "latitude": 47.5, "first_name": "Titkos"}
-ORDER = {"id": 6001, "name": "#5024", "created_at": "2026-10-11T10:00:00+02:00", "total_price": "12990.00", "currency": "HUF",
+ORDER = {"id": 6001, "name": "#5024", "created_at": "2026-10-11T10:00:00+02:00", "total_price": "12600.00", "currency": "HUF",
          "financial_status": "paid", "fulfillment_status": None, "cancelled_at": None, "test": False,
          "fulfillments": [{"tracking_numbers": ["T1"], "created_at": "2026-10-12T09:00:00+02:00"}],
-         "payment_gateway_names": ["SimplePay"], "shipping_lines": [{"title": "GLS házhoz", "price": "1890.00"}],
+         "payment_gateway_names": ["SimplePay"], "shipping_lines": [{"title": "GLS házhoz", "price": "1500.00"}],
          "line_items": [{"title": "Fa kirakó", "variant_id": 77, "sku": "FK1", "quantity": 2, "price": "5550.00"}],
          "email": "x@y.hu", "note": "csengo: Kovacs", "shipping_address": ADDR, "billing_address": ADDR}
 COD_ORDER = {**ORDER, "id": 6002, "name": "#5025", "financial_status": "pending", "fulfillments": [], "payment_gateway_names": ["Cash on Delivery (COD)"]}
@@ -100,7 +100,7 @@ def shop(orders=(ORDER,), products=(PRODUCT,), fail=None, scopes=ALL_SCOPES, ful
 
 PAYMENTS = {"bank_accounts": [{"id": "1", "name": "Bank", "currency": "HUF", "last4": "1234"}],
             "invoices": [{"id": "5", "number": "EX-2026-1", "order": "#5025", "date": "2026-10-13", "due_date": "2026-10-13",
-                          "paid_date": "2026-10-13", "total": 15282, "currency": "HUF", "payment_status": "paid",
+                          "paid_date": "2026-10-13", "total": 14100, "currency": "HUF", "payment_status": "paid",
                           "payment_method": "bankcard", "overdue": False}], "since": "2025-09-13", "complete": True}
 
 def bill(docs=(), fail=False, payments=None, pay_fail=False):
@@ -163,10 +163,10 @@ class Payload(unittest.TestCase):
         self.assertEqual(b["label"], {"state": "uploaded", "parcel_id": None})
     def test_label_new_entry_carries_cod_amount(self):
         self.m.UPLOADED.write_text(json.dumps({"#5024": {"parcel_id": 555, "cod_amount": 0, "at": "2026-10-12T08:00:00+02:00"},
-                                               "#5025": {"parcel_id": 556, "cod_amount": 12990, "at": "2026-10-12T08:01:00+02:00"}}))
+                                               "#5025": {"parcel_id": 556, "cod_amount": 12600, "at": "2026-10-12T08:01:00+02:00"}}))
         a, b = self.m.build(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill())["orders"]
         self.assertEqual(a["label"], {"state": "uploaded", "parcel_id": "555", "cod_amount": 0.0, "sent_at": "2026-10-12T08:00:00+02:00"})
-        self.assertEqual(b["label"]["cod_amount"], 12990.0)
+        self.assertEqual(b["label"]["cod_amount"], 12600.0)
     def test_not_uploaded(self):
         self.assertEqual(self.m.build(shop=shop(), bill=bill())["orders"][0]["label"], {"state": "none", "parcel_id": None})
     def test_invoice_number_does_not_match_longer_order(self):
@@ -222,7 +222,7 @@ class GlsClassify(unittest.TestCase):
 class GlsTracking(unittest.TestCase):
     def setUp(self):
         self.m = load()
-        self.m.UPLOADED.write_text(json.dumps({"#5024": {"parcel_id": 900000001, "cod_amount": 12990}, "#5025": 900000002}))
+        self.m.UPLOADED.write_text(json.dumps({"#5024": {"parcel_id": 900000001, "cod_amount": 12600}, "#5025": 900000002}))
         self.gls = fake_gls({"900000001": "3423946814", "900000002": "9000000003"}, {"3423946814": HELD, "9000000003": DELIVERED})
     def run_build(self, now=10_000, gls=None, docs=()):
         return self.m.build(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill(docs), now=now, gls=gls or self.gls)

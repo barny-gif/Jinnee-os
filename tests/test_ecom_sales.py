@@ -37,17 +37,17 @@ def fake_shop(orders=(), products=(PRODUCT,), items=None, fail=None, page=None):
 
 class MoneyFields(unittest.TestCase):
     def setUp(self): self.m = load()
-    def test_automatic_discount_from_allocations_order_1031(self):
-        o = order(1, total_price="14880.00", total_discounts="0.00",
-                  line_items=[{"id": 1, "title": "Játék", "variant_id": 77, "quantity": 1, "price": "14480.00", "total_discount": "0.00",
-                               "discount_allocations": [{"amount": "1490.00"}]}],
-                  shipping_lines=[{"title": "GLS", "price": "1890.00", "discount_allocations": []}])
-        self.assertEqual(self.m.discounts(o), 1490.0)
-        self.assertEqual(self.m.shipping_paid(o), 1890.0)
+    def test_automatic_discount_from_allocations(self):
+        o = order(1, total_price="14100.00", total_discounts="0.00",
+                  line_items=[{"id": 1, "title": "Játék", "variant_id": 77, "quantity": 1, "price": "13800.00", "total_discount": "0.00",
+                               "discount_allocations": [{"amount": "1200.00"}]}],
+                  shipping_lines=[{"title": "GLS", "price": "1500.00", "discount_allocations": []}])
+        self.assertEqual(self.m.discounts(o), 1200.0)
+        self.assertEqual(self.m.shipping_paid(o), 1500.0)
     def test_free_shipping_discount_lowers_shipping_paid(self):
-        o = order(2, shipping_lines=[{"title": "GLS", "price": "1890.00", "discount_allocations": [{"amount": "1890.00"}]}])
+        o = order(2, shipping_lines=[{"title": "GLS", "price": "1500.00", "discount_allocations": [{"amount": "1500.00"}]}])
         self.assertEqual(self.m.shipping_paid(o), 0.0)
-        self.assertEqual(self.m.discounts(o), 1890.0)
+        self.assertEqual(self.m.discounts(o), 1500.0)
     def test_old_style_line_discount_and_order_total_fallback(self):
         self.assertEqual(self.m.discounts(order(3, line_items=[{"id": 1, "quantity": 1, "price": "100", "total_discount": "10"}])), 10.0)
         self.assertEqual(self.m.discounts(order(4, total_discounts="500.00")), 500.0)
@@ -61,7 +61,7 @@ class MoneyFields(unittest.TestCase):
     def test_orders_carry_the_new_fields_within_the_site_contract(self):
         out = self.m.build(shop=fake_shop(orders=(ORDER, COD_ORDER)), bill=bill(), now=NOW)
         a, b = out["orders"]
-        self.assertEqual((a["shipping_paid"], a["discounts"], a["payment_type"]), (1890.0, 0.0, "card"))
+        self.assertEqual((a["shipping_paid"], a["discounts"], a["payment_type"]), (1500.0, 0.0, "card"))
         self.assertEqual(b["payment_type"], "cod")
         for o in out["orders"]:
             self.assertIn(o["payment_type"], ("card", "transfer", "bank_transfer", "cod", None))
@@ -101,7 +101,7 @@ class Aggregate(unittest.TestCase):
         self.assertEqual(sorted(by), ["2026-10-19", "2026-10-20", "2026-10-21"])
         self.assertEqual(by["2026-10-19"]["orders"], 0); self.assertEqual(by["2026-10-21"], {**by["2026-10-21"], "orders": 0, "revenue_gross": 0.0})
         d = by["2026-10-20"]
-        self.assertEqual((d["orders"], d["units"], d["revenue_gross"], d["shipping_paid"], d["cod_orders"]), (3, 6, 3 * 12990.0, 3 * 1890.0, 1))
+        self.assertEqual((d["orders"], d["units"], d["revenue_gross"], d["shipping_paid"], d["cod_orders"]), (3, 6, 3 * 12600.0, 3 * 1500.0, 1))
         self.assertEqual(prods, [{"day": "2026-10-20", "variant_id": "77", "units": 6, "revenue_gross": 6 * 5550.0}])
         self.assertEqual(ex, {})
     def test_excluded_orders_leave_zero_rows_and_are_counted(self):
@@ -119,7 +119,7 @@ class Aggregate(unittest.TestCase):
                          "refund_line_items": [{"line_item_id": lid, "quantity": 1}]}]
         sales, prods, _ = self.agg([o])
         d = next(r for r in sales if r["day"] == "2026-10-20")
-        self.assertEqual((d["orders"], d["units"], d["revenue_gross"]), (1, 1, 12990.0 - 5550.0))
+        self.assertEqual((d["orders"], d["units"], d["revenue_gross"]), (1, 1, 12600.0 - 5550.0))
         self.assertEqual((prods[0]["units"], prods[0]["revenue_gross"]), (1, 5550.0))
     def test_refund_without_transaction_uses_the_discounted_line_price(self):
         o = order(1, financial_status="partially_refunded")
@@ -127,7 +127,7 @@ class Aggregate(unittest.TestCase):
         o["refunds"] = [{"transactions": [], "refund_line_items": [{"line_item_id": o["line_items"][0]["id"], "quantity": 1}]}]
         sales, prods, _ = self.agg([o])
         d = next(r for r in sales if r["day"] == "2026-10-20")
-        self.assertEqual((d["revenue_gross"], d["discounts"]), (12990.0 - 5000.0, 1100.0))
+        self.assertEqual((d["revenue_gross"], d["discounts"]), (12600.0 - 5000.0, 1100.0))
         self.assertEqual(prods[0]["revenue_gross"], 5000.0)
     def test_amounts_never_negative(self):
         o = order(1, financial_status="partially_refunded", refunds=[{"transactions": [{"kind": "refund", "status": "success", "amount": "99999"}]}])
@@ -199,7 +199,7 @@ class NoPersonalData(unittest.TestCase):
 
 class UnitCost(unittest.TestCase):
     def setUp(self): self.m = load()
-    PROD = {"id": 9, "title": "Farmer", "status": "active", "variants": [
+    PROD = {"id": 9, "title": "Fa kirakó", "status": "active", "variants": [
         {"id": 77, "title": "Default Title", "sku": "FK1", "price": "5550.00", "inventory_quantity": 4, "inventory_item_id": 501},
         {"id": 78, "title": "Nagy", "sku": "FK2", "price": "6550.00", "inventory_quantity": 1, "inventory_item_id": 502},
         {"id": 79, "title": "Új", "sku": "", "price": "7550.00", "inventory_quantity": 0, "inventory_item_id": 503}]}
@@ -236,14 +236,14 @@ class OwnerUnitCost(unittest.TestCase):
     def products(self, items, fail=None):
         return self.m.build(shop=fake_shop(products=(self.PROD,), items=items, fail=fail), bill=bill(), now=NOW)
     def test_empty_shopify_cost_uses_the_owner_price(self):
-        self.owner({"9": {"unit_cost": 3782, "currency": "HUF"}})
+        self.owner({"9": {"unit_cost": 2345, "currency": "HUF"}})
         a, b, c = self.products({"501": None, "502": None, "503": None})["products"]
-        for p in (a, b, c): self.assertEqual((p["unit_cost"], p["unit_cost_source"]), (3782.0, "owner"))
+        for p in (a, b, c): self.assertEqual((p["unit_cost"], p["unit_cost_source"]), (2345.0, "owner"))
     def test_shopify_cost_wins_over_the_owner_price(self):
-        self.owner({"9": {"unit_cost": 3782}})
+        self.owner({"9": {"unit_cost": 2345}})
         a, b, _ = self.products({"501": "2100", "502": None, "503": None})["products"]
         self.assertEqual((a["unit_cost"], a["unit_cost_source"]), (2100.0, "shopify"))
-        self.assertEqual((b["unit_cost"], b["unit_cost_source"]), (3782.0, "owner"))
+        self.assertEqual((b["unit_cost"], b["unit_cost_source"]), (2345.0, "owner"))
     def test_no_value_anywhere_leaves_the_key_out_never_null(self):
         self.owner({"12345": {"unit_cost": 999}})  # another product only
         out = self.products({"501": None, "502": None, "503": None})
@@ -251,7 +251,7 @@ class OwnerUnitCost(unittest.TestCase):
             self.assertNotIn("unit_cost", p); self.assertNotIn("unit_cost_source", p)
         self.assertNotIn(None, [p.get("unit_cost", 0) for p in out["products"]])
     def test_shopify_unreadable_sends_no_owner_price(self):
-        self.owner({"9": {"unit_cost": 3782}})  # one bad round must not overwrite a real Shopify cost on the site
+        self.owner({"9": {"unit_cost": 2345}})  # one bad round must not overwrite a real Shopify cost on the site
         out = self.products(None, fail="inventory_items")
         self.assertTrue(all("unit_cost" not in p for p in out["products"]))
     def test_bad_entries_are_skipped_and_a_broken_file_is_reported(self):
@@ -263,12 +263,12 @@ class OwnerUnitCost(unittest.TestCase):
         self.assertTrue(all("unit_cost" not in p for p in out["products"]))
         self.assertEqual(len(out["products"]), 3)  # the round still goes
     def test_switch_off(self):
-        self.owner({"9": {"unit_cost": 3782}})
+        self.owner({"9": {"unit_cost": 2345}})
         with mock.patch.dict(os.environ, {"ECOM_UNIT_COST_FALLBACK": "no"}):
             out = self.products({"501": None, "502": None, "503": None})
         self.assertTrue(all("unit_cost" not in p for p in out["products"]))
     def test_dry_run_counts(self):
-        self.owner({"9": {"unit_cost": 3782}})
+        self.owner({"9": {"unit_cost": 2345}})
         out = self.m.push(shop=fake_shop(products=(self.PROD,), items={"501": "2100", "502": None, "503": None}), bill=bill())
         self.assertTrue(out["dry_run"])
         self.assertEqual((out["unit_cost_known"], out["unit_cost_from_owner"]), (3, 2))
@@ -277,9 +277,9 @@ class ProductImage(unittest.TestCase):
     """image_url: the variant's own photo, else the product's main photo; left out when there is none (2026-10-28)."""
     def setUp(self): self.m = load()
     def prod(self, **kw):
-        p = {"id": 9, "title": "Farmer", "status": "active", "variants": [
-            {"id": 77, "title": "Default Title", "price": "8490", "inventory_item_id": 501, "image_id": None},
-            {"id": 78, "title": "Zöld", "price": "8490", "inventory_item_id": 502, "image_id": 2}]}
+        p = {"id": 9, "title": "Fa kirakó", "status": "active", "variants": [
+            {"id": 77, "title": "Default Title", "price": "6500", "inventory_item_id": 501, "image_id": None},
+            {"id": 78, "title": "Zöld", "price": "6500", "inventory_item_id": 502, "image_id": 2}]}
         p.update(kw); return p
     def build(self, p):
         return self.m.build(shop=fake_shop(products=(p,), items={"501": None, "502": None}), bill=bill(), now=NOW)["products"]

@@ -11,7 +11,7 @@ step with an error that says which key to set (the label or invoice is not made)
 
 CLI:
   python3 core/business.py check                     every key the installed packs need: ok, or what is missing
-  python3 core/business.py label --order "#1001" --goods "1x Wooden puzzle" --cod 9890
+  python3 core/business.py label --order "#1001" --goods "1x Wooden puzzle" --cod 7350
                                                      prints the parcel label note exactly as it would go to GLS (offline)
   python3 core/business.py setup                     asks the questions in the terminal and writes config/business.yaml
   python3 core/business.py init [--force yes]        writes config/business.yaml from variables (no questions):

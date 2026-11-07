@@ -18,7 +18,7 @@ def load():
 ADDR = {"name": "Titkos Vevo", "address1": "Fő utca 12/B", "zip": "1111", "city": "Budapest", "country_code": "HU", "phone": "06 30 111 2222"}
 NOW = 1792400000.0  # 2026-10-19
 def order(name="#5028", created="2026-10-19T10:00:00+02:00", **kw):
-    o = {"id": 7001, "name": name, "created_at": created, "total_price": "10380.00", "financial_status": "paid",
+    o = {"id": 7001, "name": name, "created_at": created, "total_price": "8240.00", "financial_status": "paid",
          "payment_gateway_names": ["SimplePay"], "cancelled_at": None, "test": False, "email": "x@y.hu", "phone": None,
          "shipping_address": ADDR, "billing_address": ADDR, "shipping_lines": [{"title": "GLS házhoz"}]}
     o.update(kw); return o

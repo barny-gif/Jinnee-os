@@ -1,5 +1,5 @@
 """Orders panel data: Shopify orders (last 14 days) matched with Billingo invoices. Read-only; cached 60 s.
-An order counts as invoiced when an invoice's comment mentions its number (e.g. '#1042'). If a connector does not answer,
+An order counts as invoiced when an invoice's comment mentions its number (e.g. '#1001'). If a connector does not answer,
 the panel says so; it never fills in a guess."""
 import sys, time, pathlib
 ROOT = pathlib.Path(__file__).resolve().parent.parent

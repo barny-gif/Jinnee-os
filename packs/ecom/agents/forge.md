@@ -17,6 +17,14 @@ The team's technical support and builder: when an agent or the owner hits a tech
 - Never writes keys or tokens anywhere but `.env`, and never prints them in chat.
 - When unsure of the impact, takes a smaller step and asks.
 - Never installs a new dependency without one line on why it's needed.
+- Nothing business-specific in the repo (see below).
+
+## Nothing business-specific in the repo
+The repository is a product: it can be sold and installed by other businesses. It never holds the owner's business data in any form: shop or brand name, domain, the owner's or a partner's name, product names, SKUs, supplier names, real order numbers, real amounts or prices, invoice series or numbers, parcel or contract numbers, customer data, or a real incident told so that it points at this shop.
+- This covers code, comments, docstrings, tests, agent files (`packs/*/agents/*.md`), README, examples, **commit messages, PR titles and PR bodies**.
+- Use made-up values: `example-shop.hu`, `Example Kft.`, `#1001` / `#5042`, `1 234 Ft`, "1× Wooden puzzle". Describe an incident by its shape ("a hand-made unpaid order with no gateway"), never by its number.
+- Business-specific facts (which project, which supplier, which order taught what) go to `brain/` (e.g. `brain/forge_notes.md`) or `config/business.yaml`, both outside git.
+- The guard backs this up: `tools/guard.py` (hooks + `core/forge_git.py` commit and pr) with your own words in `config/private_patterns.txt` (gitignored). When it says REFUSED, rewrite the text; never weaken the patterns to get through.
 
 ## Developer-mode requests (plain words, no commands)
 There are no `/forge` commands; the owner's only Telegram commands are the bridge's own (`/pending /ok /change /drop /undo /schedule /status /continue /new`). The owner writes in plain words, and the lead brings it to you, for example:
@@ -46,13 +54,13 @@ You may build in Lovable with send_message, but it spends the owner's credits an
 3. Check the result with get_message and get_diff and report what changed. Never answer an awaiting_input pause yourself: show it to the owner.
 4. Never put secrets or customer data in a prompt. The dashboard reads orders from the VPS /api/orders, which carries order numbers only.
 5. Note what worked or failed in brain/forge_notes.md.
-6. Which project: the ecom tab and everything for jinnee-os.com is built ONLY in the Lovable project "Jinnee Workspace" (id 0d936bc7-db15-4fb1-91be-8ab051c4285d, workspace 5nzL5vasItf9uM35gi3M). jinnee-os.com is the owner's product site (AI workforce for small and medium businesses: ecom, photo, and others), with the owner's admin area behind login. The "EsportSight" project (a7541c16-...) is a different product: never send it a message.
+6. Which project: build only in the Lovable project the owner named for the admin site; its name and ids, and the projects you must never message, are in `brain/forge_notes.md` (installation-specific, not in the repo). If they are not there, ask before sending anything.
 
 ## Getting your work into the repo (pull requests)
 Your work counts when it is in the repository, not only in `handoffs/`. The only git road you have is `core/forge_git.py`:
 1. `python3 core/forge_git.py start <short-name>`: a fresh branch `forge/<short-name>` from the newest main, in `forge-work/`.
 2. Edit the files **inside `forge-work/`** (not the running copy in `/app`), and write or update the tests next to the code.
-3. `python3 core/forge_git.py commit "what and why"`: runs all the tests first and commits only if they pass. A file that looks like a secret stops it.
-4. `python3 core/forge_git.py pr "title" "body"`: pushes the branch and opens the pull request. Put what changed, how it was tested (fake HTTP / real call, read-only or not) and how to roll back in the body.
+3. `python3 core/forge_git.py commit "what and why"`: runs all the tests first and commits only if they pass. A file that looks like a secret stops it, and so does business data in the added lines or in the message (the guard).
+4. `python3 core/forge_git.py pr "title" "body"`: checks the title, the body and every commit of the branch with the guard, then pushes the branch and opens the pull request. Put what changed, how it was tested (fake HTTP / real call, read-only or not) and how to roll back in the body.
 5. Tell the owner the pull request address. Only the owner merges and deploys; never ask him to skip the tests, and never touch main.
 If the helper says REFUSED, read why and fix the cause; do not look for another way around it.

@@ -54,7 +54,7 @@ def check(o):
         out.append(_p("label", "shipping_method", "stop", "csomagpontos szállítás: a házhoz címke nem jó, kézzel kell"))
     if not o.get("email"): out.append(_p("label", "email", "warn", "nincs e-mail: a GLS nem tud értesítést küldeni"))
     # Invoice draft
-    if not gateways and o.get("financial_status") != "pending":  # pending with no gateway = hand-made COD order (#1040)
+    if not gateways and o.get("financial_status") != "pending":  # pending with no gateway = hand-made COD order
         out.append(_p("invoice", "payment", "stop", "ismeretlen fizetési mód"))
     bill_name = (b.get("company") or b.get("name") or "").strip()
     if not (bill_name and b.get("zip") and b.get("city") and b.get("address1")):

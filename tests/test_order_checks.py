@@ -7,7 +7,7 @@ sys.path.insert(0, str(ROOT / "connectors"))
 s = importlib.util.spec_from_file_location("t_order_checks", ROOT / "connectors" / "order_checks.py"); C = importlib.util.module_from_spec(s); s.loader.exec_module(C)
 
 ADDR = {"name": "Titkos Vevo", "address1": "Fő utca 12/B", "zip": "1111", "city": "Budapest", "country_code": "HU", "phone": "06 30 111 2222"}
-OK = {"name": "#5030", "total_price": "12990.00", "financial_status": "paid", "payment_gateway_names": ["SimplePay"], "cancelled_at": None, "test": False,
+OK = {"name": "#5030", "total_price": "12600.00", "financial_status": "paid", "payment_gateway_names": ["SimplePay"], "cancelled_at": None, "test": False,
       "email": "x@y.hu", "phone": None, "shipping_address": ADDR, "billing_address": ADDR, "shipping_lines": [{"title": "GLS házhoz"}]}
 
 def fields(o, step=None): return sorted(p["field"] for p in C.check(o) if step in (None, p["step"]))
@@ -56,7 +56,7 @@ class Checks(unittest.TestCase):
                                                                     {**OK, "name": "#5031", "payment_gateway_names": ["Cash on Delivery (COD)"]}]}))
         out = C.check_open(shop=shop)
         self.assertEqual(out[0], {"order": "#5030", "payment": "PAID", "missing": ["label: házszám (stop)"]})
-        self.assertEqual(out[1], {"order": "#5031", "payment": "COD 12990 Ft", "missing": "minden megvan"})
+        self.assertEqual(out[1], {"order": "#5031", "payment": "COD 12600 Ft", "missing": "minden megvan"})
         self.assertNotIn("Titkos", json.dumps(out, ensure_ascii=False))
 
 if __name__ == "__main__": unittest.main()
