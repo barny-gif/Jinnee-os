@@ -163,5 +163,15 @@ class MarkPaid(Base):
         with mock.patch.object(self.m.requests, "get", return_value=Resp(order(financial_status="paid"))), mock.patch.object(self.m.requests, "post") as post:
             out = self.m.mark_paid("7001", confirm="yes")
         post.assert_not_called(); self.assertTrue(out["already"])
+    def test_hand_made_pending_order_without_gateway_counts_as_cod(self):
+        for gw in ([], [""], ["manual"]):
+            with mock.patch.object(self.m.requests, "get", return_value=Resp(order(payment_gateway_names=gw))), mock.patch.object(self.m.requests, "post") as post:
+                out = self.m.mark_paid("7001")
+            post.assert_not_called(); self.assertTrue(out["dry_run"])
+    def test_manual_gateway_on_a_paid_card_order_is_not_cod(self):
+        with mock.patch.object(self.m.requests, "get", return_value=Resp(order(payment_gateway_names=["manual"], financial_status="authorized"))), \
+             mock.patch.object(self.m.requests, "post") as post:
+            with self.assertRaisesRegex(ConnectorError, "not cash on delivery"): self.m.mark_paid("7001", confirm="yes")
+        post.assert_not_called()
 
 if __name__ == "__main__": unittest.main()

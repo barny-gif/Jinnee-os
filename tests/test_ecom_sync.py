@@ -21,6 +21,7 @@ def load(traffic=True):
     m.HIGHLIGHTS = tmp / "highlights.json"  # absent unless a test writes it
     m.order_auto.STATE, m.order_auto.START = tmp / "order_auto.json", tmp / "order_auto_start.json"
     m.order_auto._gate = lambda action: 1  # the automatic chain has its own tests (test_order_auto.py); off here
+    m.cod_paid.STATE = tmp / "cod_paid.json"  # the COD-paid step has its own tests (test_cod_paid.py)
     m._gls_fail.update(at=0.0, error=None)
     real = m._load
     m._load = lambda name: fake_gls() if name == "gls" else real(name)  # no test ever reaches MyGLS

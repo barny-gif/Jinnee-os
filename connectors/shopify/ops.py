@@ -253,13 +253,17 @@ MARK_PAID = "mutation($input: OrderMarkAsPaidInput!) { orderMarkAsPaid(input: $i
 COD_GATEWAYS = ("cash on delivery", "cod", "utánvét", "utanvet")
 
 def mark_paid(order_id, confirm="no"):
-    """Owner's rule (lessons 2026-10-29): a cash-on-delivery order is set to paid in Shopify when GLS has transferred the money,
-    not at delivery, only after a GO. Refused unless the order is open, cash on delivery and still 'pending'. Dry run unless --confirm yes."""
+    """A cash-on-delivery order is set to paid in Shopify, only after a GO (connectors/cod_paid.py decides when: GLS delivered it
+    and the label COD amount equals the order total). Refused unless the order is open, cash on delivery and still 'pending'.
+    A pending order with no gateway (made by hand from a draft) counts as cash on delivery, as in the label and invoice chain.
+    Dry run unless --confirm yes."""
     if not str(order_id).strip().isdigit(): raise ConnectorError("[mark paid] order_id must be the Shopify order id (digits)")
     o = _get(f"orders/{int(order_id)}.json")["order"]
     name, status = o.get("name"), o.get("financial_status")
     if o.get("cancelled_at"): raise ConnectorError(f"[mark paid] {name} is cancelled: nothing is written")
-    if not any(c in " ".join(o.get("payment_gateway_names") or []).lower() for c in COD_GATEWAYS):
+    gw = o.get("payment_gateway_names") or []
+    manual = status == "pending" and all(str(x or "").strip().lower() in ("", "manual") for x in gw or [""])
+    if not manual and not any(c in " ".join(x for x in gw if x).lower() for c in COD_GATEWAYS):
         raise ConnectorError(f"[mark paid] {name} is not cash on delivery: only COD orders are set to paid from here")
     if status == "paid": return {"order": name, "already": True, "written": False, "status": status}
     if status != "pending": raise ConnectorError(f"[mark paid] {name} is '{status}', not pending: nothing is written")
