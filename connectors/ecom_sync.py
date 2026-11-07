@@ -30,6 +30,7 @@ import business
 import order_checks
 import order_auto
 import complaints
+import cod_paid
 
 def _load(name):
     spec = importlib.util.spec_from_file_location(f"sync_{name}", HERE / name / "ops.py")
@@ -585,11 +586,16 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
     shipping, gls_err = _shipping(uploaded, gls, now)
     fulfilled, fulfill_errs, fulfilled_now = _fulfillments(every, shipping, shop, now, act)  # an older open order may still be picked up; the switch-on moment still limits it
     fulfill_err = "; ".join(dict.fromkeys(fulfill_errs)) or None
+    # Delivered COD orders → paid in Shopify (SHOPIFY_AUTO_MARK_PAID, off by default): one approval item a day, or auto at level 2
+    try: cod = cod_paid.run(every, shipping, uploaded, now, act=act, shop=shop)
+    except Exception as e: cod = {"mode": cod_paid.mode(), "ready": [], "queued": None, "marked": [], "mismatch": [], "note": None,
+                                  "errors": [f"[COD paid] {type(e).__name__}: {e}"]}
+    cod_err = "; ".join(dict.fromkeys(cod["errors"])) or None
     # The Complaints page; None = could not be read, the site keeps what it has. A broken complaint never stops the round.
     try: complaint_rows, complaints_err = complaints.payload(every), None
     except Exception as e: complaint_rows, complaints_err = None, f"[complaints] {type(e).__name__}: {e}"
     highlights, highlights_err = _try("highlights", _highlights)
-    errors = [e for e in (shop_err, bill_err, pay_err, prod_err, cost_err, owner_err, sales_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err, complaints_err, highlights_err) if e]
+    errors = [e for e in (shop_err, bill_err, pay_err, prod_err, cost_err, owner_err, sales_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err, complaints_err, highlights_err, cod_err) if e]
     if billing is not None and not billing["complete"]: errors.append("[Billingo payments] more than 1000 invoices in the window: only the newest are shown")
     if scopes and scopes["missing"]: errors.append(f"[Shopify scopes] missing: {', '.join(scopes['missing'])}")
     if every is not None and len(every) >= PAGE: errors.append(f"[Shopify orders] more than {PAGE} orders in {reach} days: only the newest {PAGE} are shown")
@@ -605,6 +611,8 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
                             {"key": "gls_tracking", "label": "GLS tracking", "ok": gls_err is None, "error": gls_err},
                             {"key": "shopify_fulfillment", "label": "Shopify fulfillment" if _auto_fulfill() else "Shopify fulfillment (off)",
                              "ok": fulfill_err is None, "error": fulfill_err},
+                            {"key": "cod_paid", "label": "COD set to paid" + ("" if cod["mode"] != "off" else " (off)"),
+                             "ok": cod_err is None, "error": cod_err},
                             {"key": "order_auto", "label": "Auto label + draft" + ("" if auto["enabled"]["label"] else " (label off)"),
                              "ok": auto_err is None, "error": auto_err},
                             {"key": "shopify_scopes", "label": "Shopify scopes", "ok": bool(scopes and scopes["ok"]),
@@ -614,6 +622,7 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
             # None = could not be read (the site keeps the last known state and says when it was checked)
             "shopify_scopes": None if scopes is None else {**scopes, "checked_at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat(timespec="seconds")},
             "fulfilled_now": fulfilled_now,
+            "cod_paid": cod,  # order numbers and amounts only: ready, queued approval id, marked, mismatches
             "order_auto": auto,  # order numbers and field names only: what got a label / draft this round and what is held
             "billing": billing,  # the Payments tab; None = Billingo did not answer, the site keeps what it has
             # the last days' orders, plus any older one (up to OPEN_DAYS) that is still open; a closed older order keeps its last state on the site
@@ -661,6 +670,9 @@ def push(send="no", days=DAYS, shop=None, bill=None, gls=None, history="auto"):
     a = payload["order_auto"]
     count["order_auto"] = {"enabled": a["enabled"], ("labels" if send == "yes" else "would_label"): a["labels"],
                            ("drafts" if send == "yes" else "would_draft"): a["drafts"], "held": a["held"]}
+    c = payload.pop("cod_paid")  # for the log only: the site's payload stays as it was
+    count["cod_paid"] = {"mode": c["mode"], "ready": c["ready"], "queued": c["queued"], "marked": c["marked"],
+                         "mismatch": c["mismatch"], "note": c["note"]}
     b = payload["billing"]
     count["billing"] = None if b is None else {"bank_accounts": len(b["bank_accounts"]), "invoices": len(b["invoices"]),
                                                "paid": sum(1 for i in b["invoices"] if i["payment_status"] == "paid"),
@@ -704,6 +716,9 @@ def loop(seconds=""):
             a = out.get("order_auto") or {}
             if a.get("labels"): print(f"ecom sync: MyGLS label uploaded: {', '.join(a['labels'])}", flush=True)
             if a.get("drafts"): print(f"ecom sync: Billingo invoice draft made: {', '.join(a['drafts'])}", flush=True)
+            c = out.get("cod_paid") or {}
+            if c.get("queued"): print(f"ecom sync: COD set-to-paid queued for approval ({c['queued']}): {', '.join(c['ready'])}", flush=True)
+            if c.get("marked"): print(f"ecom sync: COD set to paid in Shopify: {', '.join(c['marked'])}", flush=True)
         except ConnectorError as e: note = str(e)
         if note != last: print(f"ecom sync: {note}", flush=True); last = note
         time.sleep(wait)
