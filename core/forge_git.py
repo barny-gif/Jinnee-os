@@ -4,6 +4,7 @@
   python3 core/forge_git.py commit "message"     runs the guard and the tests, then commits everything in forge-work/
   python3 core/forge_git.py pr "title" "body"    guards title, body and the branch's commits, pushes the branch, opens the PR
   python3 core/forge_git.py status               branch and changed files
+  python3 core/forge_git.py --site <command> ...  the same against the owner's website repo (FORGE_SITE_REPO, see use_site)
 
 Forge edits files under forge-work/ (a clone kept on the host, so it survives a rebuild). The token (GITHUB_TOKEN, a fine-grained
 token for this one repo: contents + pull requests) is read from .env, handed to git through the environment and never printed.
@@ -20,6 +21,7 @@ import guard
 WORK = pathlib.Path(os.getenv("FORGE_WORK_DIR") or ROOT / "forge-work")
 REPO = os.getenv("FORGE_REPO", "barny-gif/Jinnee-os")
 REMOTE = os.getenv("FORGE_REMOTE_URL") or f"https://github.com/{REPO}.git"
+SITE = False  # True with --site: the owner's website repo (see use_site)
 PREFIX = "forge/"
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{1,40}")
 
@@ -66,6 +68,7 @@ def start(name):
     if git("status", "--porcelain"): refuse("forge-work has changes that were not committed: commit or ask the owner before starting a new branch")
     git("fetch", "--quiet", "origin", "main")
     git("checkout", "--quiet", "-B", PREFIX + name, "origin/main")
+    if SITE: return f"branch {PREFIX}{name} from the newest main of the site repo, in {WORK}"
     git("config", "core.hooksPath", ".githooks")  # the guard's pre-commit and commit-msg hooks, in this clone too
     own, theirs = ROOT / "config" / "private_patterns.txt", WORK / "config" / "private_patterns.txt"
     ignored = subprocess.run(["git", "check-ignore", "-q", "config/private_patterns.txt"], cwd=WORK, capture_output=True).returncode == 0
@@ -94,6 +97,13 @@ def text_problems(text, where, private):
 
 
 def run_tests():
+    if SITE:
+        cmd = os.getenv("FORGE_SITE_TEST", "").strip()
+        if not cmd: return True, "no site test command set (FORGE_SITE_TEST): not tested"
+        try: r = subprocess.run(cmd.split(), cwd=WORK, capture_output=True, text=True, timeout=900)
+        except (OSError, subprocess.TimeoutExpired) as e: return False, f"site tests could not run: {type(e).__name__}"
+        tail = (r.stdout + "\n" + r.stderr).strip().splitlines()[-3:]
+        return r.returncode == 0, "\n".join(tail)
     r = subprocess.run([sys.executable, "-m", "unittest", "discover", "tests"], cwd=WORK, capture_output=True, text=True)
     tail = (r.stderr or r.stdout).strip().splitlines()[-3:]
     return r.returncode == 0, "\n".join(tail)
@@ -106,6 +116,12 @@ def commit(message):
     if any(re.search(r"(^|/)\.env($|\.)|secret|token|\.pem$", f, re.I) and not f.endswith(".example")
            for f in (line[3:] for line in git("status", "--porcelain").splitlines())):
         refuse("a file that looks like a secret is among the changes: remove it first")
+    if SITE:
+        ok, tail = run_tests()
+        if not ok: refuse(f"the site tests do not pass, nothing was committed:\n{tail}")
+        git("add", "-A")
+        git("-c", "user.name=Forge", "-c", "user.email=forge@jinnee-os.local", "commit", "--quiet", "--no-verify", "-m", message)
+        return f"committed in the site repo ({tail.splitlines()[-1] if tail else ''})"
     private = private_words()
     git("add", "-A")
     try: added = guard.added_lines(git("diff", "--cached", "-U0", "--no-color", "--no-ext-diff"))
@@ -132,6 +148,9 @@ def pr(title, body):
     b = on_forge_branch()
     if git("status", "--porcelain"): refuse("there are uncommitted changes: commit first")
     if git("rev-list", "--count", "origin/main..HEAD", check=False) in ("", "0"): refuse("this branch has nothing new compared with main")
+    if SITE:  # the owner's private site: no business-data guard, only this branch is pushed, never main
+        git("push", "--quiet", "origin", f"refs/heads/{b}:refs/heads/{b}")
+        return api("POST", f"/repos/{REPO}/pulls", {"title": title, "head": b, "base": "main", "body": body + "\n\n(Forge, via core/forge_git.py --site)"})["html_url"]
     private = private_words()
     probs = text_problems(title, "PR title", private) + text_problems(body, "PR body", private)
     for sha in git("rev-list", "origin/main..HEAD").split():
@@ -149,8 +168,25 @@ def status():
 
 COMMANDS = {"start": (start, 1), "commit": (commit, 1), "pr": (pr, 2), "status": (status, 0)}
 
+
+def use_site():
+    """--site: the owner's own website repo instead of this one (FORGE_SITE_REPO in .env, owner/name; no default).
+    Its own clone (FORGE_SITE_WORK_DIR, default forge-site/) and its own test command (FORGE_SITE_TEST, e.g. 'npm test'; unset =
+    no tests, and the commit says so). The business-data guard is for this product's repo, not for the owner's private site;
+    a file that looks like a secret is still refused, and the token still needs access to that repo (contents + pull requests)."""
+    global REPO, REMOTE, WORK, SITE
+    repo = os.getenv("FORGE_SITE_REPO", "").strip()
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo): refuse("--site needs FORGE_SITE_REPO=owner/name in .env")
+    REPO, SITE = repo, True
+    REMOTE = os.getenv("FORGE_SITE_REMOTE_URL") or f"https://github.com/{REPO}.git"
+    WORK = pathlib.Path(os.getenv("FORGE_SITE_WORK_DIR") or ROOT / "forge-site")
+
+
 if __name__ == "__main__":
-    cmd, args = (sys.argv[1] if len(sys.argv) > 1 else ""), sys.argv[2:]
+    argv = sys.argv[1:]
+    if argv[:1] == ["--site"]:
+        argv = argv[1:]; use_site()
+    cmd, args = (argv[0] if argv else ""), argv[1:]
     if cmd not in COMMANDS or len(args) != COMMANDS[cmd][1]:
         raise SystemExit(__doc__)
     print(COMMANDS[cmd][0](*args))
