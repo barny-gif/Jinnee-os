@@ -70,9 +70,13 @@ def check(o, ship, label_entry):
     if o.get("financial_status") != "pending": return "skip", f"financial status {o.get('financial_status')}"
     if not is_cod(o): return "skip", "not cash on delivery"
     if (ship or {}).get("state") != "delivered" or str((ship or {}).get("code") or "05") != "05": return "skip", "not delivered (GLS 05)"
-    cod, total = forint(label_cod(label_entry)), forint(o.get("total_price"))
-    if cod is None: return "mismatch", f"{name}: the COD amount on the label is not known, order total {total} Ft"
-    if cod != total: return "mismatch", f"{name}: label COD {cod} Ft, order total {total} Ft"
+    cod, total = label_cod(label_entry), o.get("total_price")
+    if cod is None: return "mismatch", f"{name}: the COD amount on the label is not known, order total {forint(total)} Ft"
+    # whole forints on the label: a total ending in ,50 may be rounded either way (the label rounds half to even), so less than
+    # 1 Ft apart is the same amount; anything more is a real difference and is never marked
+    try: diff = abs(Decimal(str(cod)) - Decimal(str(total)))
+    except (InvalidOperation, ValueError, TypeError): return "mismatch", f"{name}: the order total is not a number"
+    if diff >= 1: return "mismatch", f"{name}: label COD {forint(cod)} Ft, order total {forint(total)} Ft"
     return "ready", None
 
 def select(raw, shipping, uploaded):

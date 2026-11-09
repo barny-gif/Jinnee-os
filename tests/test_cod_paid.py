@@ -49,6 +49,12 @@ class Select(unittest.TestCase):
         self.assertEqual(self.verdict(order(), DELIVERED, {"#1001": "9"}), "mismatch")
     def test_half_forint_rounds_up_and_matches(self):
         self.assertEqual(self.verdict(order(total_price="1234.50"), DELIVERED, {"#1001": {"cod_amount": 1235}}), "ready")
+    def test_half_forint_rounded_down_on_the_label_matches_too(self):
+        # shape of a real case: a ,50 total after a percentage discount; the label rounded half to even, down by 0,50 Ft
+        self.assertEqual(self.verdict(order(total_price="1234.50"), DELIVERED, {"#1001": {"cod_amount": 1234}}), "ready")
+    def test_one_forint_or_more_apart_is_a_mismatch(self):
+        self.assertEqual(self.verdict(order(total_price="1234.50"), DELIVERED, {"#1001": {"cod_amount": 1233}}), "mismatch")
+        self.assertEqual(self.verdict(order(total_price="1234.00"), DELIVERED, {"#1001": {"cod_amount": 1235}}), "mismatch")
 
 class Run(unittest.TestCase):
     def setUp(self): self.m = load(); self.book = Book(); self.shop = mock.Mock()
