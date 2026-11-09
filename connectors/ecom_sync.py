@@ -332,7 +332,9 @@ def _order(o, invoices, uploaded, shipping=None, fulfilled=None):
             "tracking": [t for f in ships for t in (f.get("tracking_numbers") or [])],
             "invoice": invoice, "label": _label(uploaded.get(name)),
             "shopify_fulfillment": _fulfill_fields(o, (fulfilled or {}).get(name)),
-            "checks": order_checks.check(o),  # what is missing before the draft / the label: field names only, never the data
+            # what is missing before the draft / the label: field names only, never the data. Once the label is in MyGLS its
+            # data was settled there (often fixed by hand on the label), so label problems are no longer shown for that order
+            "checks": [p for p in order_checks.check(o) if not (uploaded.get(name) and p["step"] == "label")],
             "lines": [{"title": l.get("title"), "variant_id": str(l["variant_id"]) if l.get("variant_id") else None, "sku": l.get("sku") or None,
                        "qty": l.get("quantity", 1), "price": float(l.get("price") or 0)} for l in o.get("line_items") or []],
             "private": _private(o)}

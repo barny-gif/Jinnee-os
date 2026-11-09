@@ -23,9 +23,21 @@ class Checks(unittest.TestCase):
     def test_phone_missing_or_bad(self):
         none = {**ADDR, "phone": None}
         self.assertEqual(fields({**OK, "shipping_address": none, "billing_address": none}), ["phone"])
-        self.assertEqual(fields({**OK, "shipping_address": {**ADDR, "phone": "123"}}), ["phone"])
+        bad = {**ADDR, "phone": "123"}
+        self.assertEqual(fields({**OK, "shipping_address": bad, "billing_address": bad}), ["phone"])
+        self.assertEqual(fields({**OK, "shipping_address": bad}), [])  # a valid billing phone is enough
         self.assertEqual(fields({**OK, "shipping_address": none, "billing_address": none, "phone": "+36301112222"}), [])  # order phone is enough
         self.assertEqual(fields({**OK, "shipping_address": none}), [])  # the billing phone is enough too
+    def test_one_malformed_phone_does_not_hide_a_good_one(self):
+        # shape of a real case: the checkout form put +36 before a number typed as 06…, and the order phone itself was fine
+        doubled = {**ADDR, "phone": "+3606301112222"}
+        self.assertEqual(fields({**OK, "shipping_address": doubled, "billing_address": doubled, "phone": "+36301112222"}), [])
+        self.assertEqual(fields({**OK, "shipping_address": doubled, "billing_address": doubled}), [])  # +36 06 30… is read as +36 30…
+        self.assertEqual(C.flow.phone("+3606301112222"), "+36301112222")
+        self.assertEqual(C.flow.phone("+36301112222"), "+36301112222")
+        self.assertEqual(C.flow.best_phone(["123", "06 30 111 2222"]), "+36301112222")
+        self.assertEqual(C.flow.best_phone(["123"]), "+36123")  # nothing valid: the first given, as before
+        self.assertEqual(C.flow.best_phone([None, ""]), "")
     def test_zip_city_country(self):
         o = {**OK, "shipping_address": {**ADDR, "zip": "111", "city": "", "country_code": "AT"}}
         self.assertEqual(fields(o), ["city", "country", "zip"])
