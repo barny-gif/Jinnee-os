@@ -70,6 +70,12 @@ GLS_RETRY = 600      # after a failed GLS call, wait 10 minutes before asking ag
 GLS_FINAL = ("delivered", "returned")  # never asked again
 HIGHLIGHTS = HERE.parent / "brain" / "highlights.json"  # id -> {order_name, title, note, trigger, complaint_id, created, done}: the Overview's "Kiemelt figyelés"
 MANUAL_KINDS = ("emag", "barter", "influencer", "gift", "test")
+# An exchange parcel (replacement sent, wrong item taken back by the courier). The site must know the kind before it is sent
+# (its table checks the kind): ECOM_EXCHANGE_KIND=yes once the site accepts 'exchange'; until then it goes as before.
+EXCHANGE = "exchange"
+
+def _manual_kinds():
+    return MANUAL_KINDS + ((EXCHANGE,) if os.getenv("ECOM_EXCHANGE_KIND", "").strip().lower() == "yes" else ())
 FULFILLED = HERE.parent / "brain" / "shopify_fulfilled.json"  # order name -> {order_id, tracking, at, fulfillment_id} or {..., error, tried}
 FULFILL_RETRY = 1800  # a failed Shopify fulfillment is tried again after 30 minutes, not every round
 PICKED_UP = ("handed_to_gls", "in_transit", "out_for_delivery", "delivered", "returned", "problem")  # GLS had the parcel
@@ -98,9 +104,10 @@ def _manual_parcels(uploaded, shipping):
         rec = entry if isinstance(entry, dict) else {"parcel_id": entry}
         info = rec.get("manual") or {}
         channel = "emag" if ref.lower().startswith("emag") else "manual"
+        kinds = _manual_kinds()
         kind = (info.get("kind") or "").lower()
-        if kind not in MANUAL_KINDS:  # records from before 2026-10-30: the kind is the reference's first word
-            kind = "emag" if channel == "emag" else next((k for k in MANUAL_KINDS if ref.lower().startswith(k)), "barter")
+        if kind not in kinds:  # records from before 2026-10-30: the kind is the reference's first word
+            kind = "emag" if channel == "emag" else next((k for k in kinds if ref.lower().startswith(k)), "barter")
         s = shipping.get(ref) or {}
         out.append({"ref": ref, "channel": channel, "kind": kind, "items": info.get("items") or "",
                     "cod_amount": float(rec.get("cod_amount") or 0), "uploaded_at": rec.get("at"), "parcel_id": rec.get("parcel_id"),
