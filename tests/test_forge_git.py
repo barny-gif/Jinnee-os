@@ -128,5 +128,59 @@ class ForgeGit(unittest.TestCase):
         self.assertNotIn("ghp_secretvalue", str(cm.exception))
 
 
+class SiteRepo(unittest.TestCase):
+    """--site: the owner's website repo, its own clone and test command; main is never pushed; no repo name means no start."""
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+        seed, self.remote = self.tmp / "seed", self.tmp / "site.git"
+        seed.mkdir()
+        (seed / "index.html").write_text("<p>example-shop.hu</p>\n")
+        sh("git", "init", "-q", "-b", "main", str(seed)); sh("git", "-C", str(seed), "add", "-A")
+        sh("git", "-C", str(seed), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed")
+        sh("git", "clone", "-q", "--bare", str(seed), str(self.remote))
+        env = {"FORGE_SITE_REPO": "example/site", "FORGE_SITE_REMOTE_URL": str(self.remote), "FORGE_SITE_WORK_DIR": str(self.tmp / "site"),
+               "FORGE_WORK_DIR": str(self.tmp / "work"), "GITHUB_TOKEN": "ghp_secretvalue", "FORGE_SITE_TEST": ""}
+        patcher = mock.patch.dict(os.environ, env); patcher.start(); self.addCleanup(patcher.stop)
+        import forge_git
+        self.fg = importlib.reload(forge_git); self.fg.use_site()
+        self.work = self.tmp / "site"
+
+    def test_own_clone_and_branch(self):
+        self.fg.start("research")
+        self.assertEqual(self.fg.branch(), "forge/research"); self.assertTrue((self.work / "index.html").exists())
+        self.assertFalse((self.tmp / "work").exists())
+
+    def test_business_words_allowed_but_secrets_refused(self):
+        self.fg.start("page")
+        (self.work / "page.html").write_text("<p>#1001 1 234 Ft</p>\n")
+        self.assertIn("committed in the site repo", self.fg.commit("research page"))
+        (self.work / ".env").write_text("A=1\n")
+        with self.assertRaises(SystemExit) as cm: self.fg.commit("oops")
+        self.assertIn("secret", str(cm.exception))
+
+    def test_failing_site_test_blocks_the_commit(self):
+        self.fg.start("broken")
+        (self.work / "x.txt").write_text("x")
+        with mock.patch.dict(os.environ, {"FORGE_SITE_TEST": sys.executable + " -c raise(SystemExit(1))"}):
+            with self.assertRaises(SystemExit) as cm: self.fg.commit("bad")
+        self.assertIn("site tests do not pass", str(cm.exception))
+
+    def test_pr_pushes_only_the_branch(self):
+        self.fg.start("feature")
+        (self.work / "new.html").write_text("hi")
+        self.fg.commit("add")
+        with mock.patch.object(self.fg, "api", return_value={"html_url": "https://github.com/example/site/pull/1"}) as api:
+            self.assertEqual(self.fg.pr("t", "b"), "https://github.com/example/site/pull/1")
+        self.assertEqual(api.call_args.args[1], "/repos/example/site/pulls")
+        heads = subprocess.run(["git", "--git-dir", str(self.remote), "branch"], capture_output=True, text=True).stdout
+        self.assertIn("forge/feature", heads)
+        main = subprocess.run(["git", "--git-dir", str(self.remote), "log", "-1", "--format=%s", "main"], capture_output=True, text=True).stdout
+        self.assertEqual(main.strip(), "seed")
+
+    def test_no_repo_name_no_site(self):
+        with mock.patch.dict(os.environ, {"FORGE_SITE_REPO": ""}):
+            with self.assertRaises(SystemExit): self.fg.use_site()
+
+
 if __name__ == "__main__":
     unittest.main()
