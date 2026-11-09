@@ -126,7 +126,19 @@ def phone(p, country="HU"):
     if d.startswith("00"): d = "+" + d[2:]
     if d.startswith("06"): d = "+36" + d[2:]
     if d and not d.startswith("+") and country == "HU": d = "+36" + d.lstrip("0")
+    # a checkout form that puts +36 in front of a number typed with its domestic 06 prefix: '+36 06 30…' is '+36 30…'
+    if country == "HU" and re.fullmatch(r"\+3606\d{8,9}", d): d = "+36" + d[5:]
     return d
+
+def valid_phone(p, country="HU"):
+    d = phone(p, country)
+    return bool(re.fullmatch(r"\+36\d{8,9}", d)) if country == "HU" else len(re.sub(r"\D", "", d)) >= 8
+
+def best_phone(candidates, country="HU"):
+    """The first number that is valid once normalised; else the first given one (normalised); else ''. An order can carry the
+    phone in several places (order, shipping address, billing address) and one of them may be malformed."""
+    given = [c for c in candidates if c and str(c).strip()]
+    return next((phone(c, country) for c in given if valid_phone(c, country)), phone(given[0], country) if given else "")
 
 def next_workday(today=None):
     d = (today or dt.date.today()) + dt.timedelta(days=1)
@@ -164,7 +176,7 @@ def gls_parcel(o, gls, house="", info=""):
                               "ContactEmail": pick["email"]},
             "DeliveryAddress": {"Name": sh["name"], "Street": street, "HouseNumber": house, "HouseNumberInfo": info, "City": sh["city"], "ZipCode": sh["zip"],
                                 "CountryIsoCode": sh.get("country_code") or "HU", "ContactName": sh["name"],
-                                "ContactPhone": phone(o["phone"] or sh.get("phone"), sh.get("country_code") or "HU"), "ContactEmail": o["email"]}}
+                                "ContactPhone": best_phone([o["phone"], sh.get("phone")], sh.get("country_code") or "HU"), "ContactEmail": o["email"]}}
 
 def parcel_prepare(order_id, send="no", house="", info="", replace="no", shop=None, gls=None):
     """Dry run by default: checks the data and says what WOULD be uploaded. send=yes uploads it to MyGLS (prepared, not printed)."""

@@ -168,6 +168,14 @@ class Payload(unittest.TestCase):
         a, b = self.m.build(shop=shop(orders=(ORDER, COD_ORDER)), bill=bill())["orders"]
         self.assertEqual(a["label"], {"state": "uploaded", "parcel_id": "555", "cod_amount": 0.0, "sent_at": "2026-10-12T08:00:00+02:00"})
         self.assertEqual(b["label"]["cod_amount"], 12600.0)
+    def test_label_problems_hidden_once_the_label_is_in_mygls(self):
+        # shape of a real case: the house number was added by hand on the label only, so Shopify still has none; after upload it is settled
+        no_number = {**ORDER, "shipping_address": {**(ORDER.get("shipping_address") or {}), "address1": "Example utca", "address2": None}}
+        before = self.m.build(shop=shop(orders=(no_number,)), bill=bill())["orders"][0]["checks"]
+        self.assertIn(("label", "house_number"), {(p["step"], p["field"]) for p in before})
+        self.m.UPLOADED.write_text(json.dumps({no_number["name"]: {"parcel_id": 555, "cod_amount": 0}}))
+        after = self.m.build(shop=shop(orders=(no_number,)), bill=bill())["orders"][0]["checks"]
+        self.assertNotIn("label", {p["step"] for p in after})
     def test_not_uploaded(self):
         self.assertEqual(self.m.build(shop=shop(), bill=bill())["orders"][0]["label"], {"state": "none", "parcel_id": None})
     def test_invoice_number_does_not_match_longer_order(self):

@@ -22,8 +22,7 @@ def _p(step, field, level, why):
     return {"step": step, "field": field, "label": NAMES.get(field, field), "level": level, "why": why}
 
 def _valid_phone(p, country):
-    d = flow.phone(p, country)
-    return bool(re.fullmatch(r"\+36\d{8,9}", d)) if country == "HU" else len(re.sub(r"\D", "", d)) >= 8
+    return flow.valid_phone(p, country)
 
 def check(o):
     """→ list of problems. Cancelled orders are not checked: nothing is done for them."""
@@ -46,9 +45,10 @@ def check(o):
             if not ok: out.append(_p("label", field, "stop", "hiányzik vagy hibás"))
         country = (sh.get("country_code") or "HU").upper()
         if country != "HU": out.append(_p("label", "country", "stop", "csak Magyarországra szállítunk"))
-        ph = sh.get("phone") or o.get("phone") or b.get("phone")
-        if not ph: out.append(_p("label", "phone", "stop", "nincs telefonszám: a futár nem tud hívni"))
-        elif not _valid_phone(ph, country): out.append(_p("label", "phone", "stop", "a telefonszám formátuma hibás"))
+        # the phone can be in several places and one may be malformed: it is enough if one of them is a valid number
+        phones = [x for x in (sh.get("phone"), o.get("phone"), b.get("phone")) if x and str(x).strip()]
+        if not phones: out.append(_p("label", "phone", "stop", "nincs telefonszám: a futár nem tud hívni"))
+        elif not any(_valid_phone(x, country) for x in phones): out.append(_p("label", "phone", "stop", "a telefonszám formátuma hibás"))
     titles = " ".join(l.get("title") or "" for l in o.get("shipping_lines") or []).lower()
     if any(w in titles for w in PICKUP_POINT):
         out.append(_p("label", "shipping_method", "stop", "csomagpontos szállítás: a házhoz címke nem jó, kézzel kell"))
