@@ -41,6 +41,14 @@ class ManualParcels(unittest.TestCase):
         p = self.rows()["eMAG-old"]
         self.assertEqual((p["parcel_id"], p["kind"], p["cod_amount"]), (553000000, "emag", 0.0))
 
+    def test_exchange_kind_only_once_the_site_knows_it(self):
+        up = {"Csere-1001": {"parcel_id": 3, "cod_amount": 0.0, "manual": {"kind": "exchange", "items": "1× Fa kirakó, csere"}}}
+        from unittest import mock
+        with mock.patch.dict("os.environ", {"ECOM_EXCHANGE_KIND": ""}):
+            self.assertNotEqual(self.m._manual_parcels(up, {})[0]["kind"], "exchange")  # the site's table would refuse it
+        with mock.patch.dict("os.environ", {"ECOM_EXCHANGE_KIND": "yes"}):
+            self.assertEqual(self.m._manual_parcels(up, {})[0]["kind"], "exchange")
+
     def test_no_personal_fields(self):
         keys = {k for p in self.rows().values() for k in p}
         self.assertFalse(keys & {"name", "address", "street", "phone", "email", "zip", "city"})
