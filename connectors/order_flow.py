@@ -113,7 +113,8 @@ def invoice_issue(draft_id, confirm="no", send="no", paid="no", bill=None):
 
 def split_street(address):
     """'Fő u. 12/B' -> ('Fő u.', '12/B'). GLS wants street and house number apart. No number found -> ('whole text', '')."""
-    m = re.match(r"^(.*?)[\s,]+(\d[\w/.\-]*(?:\s*(?:em|fsz|ép|lh)\.?\s*\S*)?)$", address.strip(), re.I)
+    # the number may follow the street type's dot with no space ('Fő u.12'): the dot then separates them
+    m = re.match(r"^(.*?)(?:[\s,]+|(?<=\.))(\d[\w/.\-]*(?:\s*(?:em|fsz|ép|lh)\.?\s*\S*)?)$", address.strip(), re.I)
     return (m.group(1).strip(), m.group(2).strip()) if m else (address.strip(), "")
 
 def street_line(addr):
