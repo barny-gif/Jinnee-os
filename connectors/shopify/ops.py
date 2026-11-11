@@ -236,7 +236,7 @@ def set_house_number(order_id, house_number, confirm="no"):
         return {"order": name, "already": True, "written": False, "next": "the shipping address already has a house number: nothing to do"}
     new_a1 = f"{a1} {house}".strip()
     street, got = _split_street(" ".join(x for x in (new_a1, a2) if x))
-    if got != house or not street:
+    if got != house.rstrip(".") or not street:  # a lone trailing dot ('12.') is dropped by the split
         raise ConnectorError(f"[house number] {name}: after adding it the address would still not split into street + '{house}'; fix it in Shopify by hand")
     out = {"order": name, "house_number": house, "field": "shipping address1", "billing_changed": False}
     if confirm != "yes": return {**out, "dry_run": True, "next": "run again with --confirm yes to write it to Shopify"}
@@ -245,7 +245,7 @@ def set_house_number(order_id, house_number, confirm="no"):
     data = _graphql(ORDER_UPDATE, {"input": {"id": f"gid://shopify/Order/{int(order_id)}", "shippingAddress": addr}}, "house number")
     _user_errors(data.get("orderUpdate"), "house number")
     back = (_get(f"orders/{int(order_id)}.json")["order"].get("shipping_address") or {})
-    ok = _split_street(" ".join(x for x in ((back.get("address1") or "").strip(), (back.get("address2") or "").strip()) if x))[1] == house
+    ok = _split_street(" ".join(x for x in ((back.get("address1") or "").strip(), (back.get("address2") or "").strip()) if x))[1] == house.rstrip(".")
     if not ok: raise ConnectorError(f"[house number] {name}: Shopify accepted it, but reading it back shows no house number; check the order by hand")
     return {**out, "written": True}
 

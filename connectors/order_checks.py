@@ -39,10 +39,11 @@ def check(o):
     if not sh:
         out.append(_p("label", "address", "stop", "nincs szállítási cím"))
     else:
-        street, house = flow.split_street(flow.street_line(sh))
+        a = flow.parse_address(sh)
         for field, ok in (("name", sh.get("name")), ("zip", re.fullmatch(r"\d{4}", (sh.get("zip") or "").strip())),
-                          ("city", sh.get("city")), ("street", street), ("house_number", house)):
-            if not ok: out.append(_p("label", field, "stop", "hiányzik vagy hibás"))
+                          ("city", sh.get("city")), ("street", a["street"]), ("house_number", a["house"])):
+            # the house number says what is wrong with it (no number / the number is the street's / several numbers); never the address
+            if not ok: out.append(_p("label", field, "stop", (field == "house_number" and a["why"]) or "hiányzik vagy hibás"))
         country = (sh.get("country_code") or "HU").upper()
         if country != "HU": out.append(_p("label", "country", "stop", "csak Magyarországra szállítunk"))
         # the phone can be in several places and one may be malformed: it is enough if one of them is a valid number

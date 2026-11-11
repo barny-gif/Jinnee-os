@@ -111,11 +111,68 @@ def invoice_issue(draft_id, confirm="no", send="no", paid="no", bill=None):
         remember(sent=True); out["sent"] = True
     return out
 
+L = r"[^\W\d_]"  # one letter (any alphabet), for boundaries
+# floor / door / building words that may follow the house number ('2. em. 5.', 'fsz. 1', 'B ép. 3. lh')
+FLOOR_WORD = re.compile(rf"(?<!{L})(?:fszt|fsz|földszint|félemelet|emelet|em|ajtó|ajto|lph|lh|lépcsőház|épület|ép|tetőtér|tt)\.?(?!{L})", re.I)
+FLOOR_REST = re.compile(r"(?:\d+|[IVX]+)(?:/\d+)?\.?|[\s,./:\-]+")
+# a house number token: 12, 12., 12/B, 12B, 12 B, 3/A, 12-14, 12/3 (a following letter run like '48as' is part of a name, not a number)
+HOUSE_TOKEN = re.compile(rf"(?<![\w/\-])(\d+(?:\s*[-/]\s*\d+)?(?:\s*/?\s*[A-Za-z](?!{L}))?)(\.?)(?=$|[\s,])")
+NUMBER_WORD = re.compile(rf"(?<!{L})(?:hsz|házszám|hászám|szám|sz)\.?:?(?!{L})", re.I)
+
+def _floor_info(text):
+    """Is this only floor / door / building detail ('2. em. 5.', 'fsz 1', 'III. em')? Needs at least one such word: bare numbers are not."""
+    t = text.strip(" ,")
+    return bool(FLOOR_WORD.search(t)) and not FLOOR_REST.sub("", FLOOR_WORD.sub(" ", t)).strip()
+
+def parse_street(address):
+    """One address line -> {'street', 'house', 'info', 'full', 'why'}. house is the number alone ('12', '12/B', '12-14'), info the
+    floor/door detail after it, full the house number as written with that detail ('12. 2. em. 5.'). No house number -> house ''
+    and why says what is wrong: 'nincs szám', 'a szám az utcanév része', 'több szám, nem egyértelmű'.
+    The house number is the first number after the street's words that is followed by nothing or by floor/door detail only, so a
+    street whose name holds a number ('1848. március 15. tér 4', 'Május 1. utca 3', 'IV. Béla út 2') keeps it."""
+    text = re.sub(r"\s+", " ", (address or "").strip()).strip(" ,")
+    out = {"street": text, "house": "", "info": "", "full": "", "why": ""}
+    if not text: return {**out, "why": "üres cím"}
+    # a number glued to the street ('u.12.', 'utca12', 'krt.5') gets its space; 'hsz.', 'szám' next to the number is dropped
+    text = re.sub(rf"(?:(?<=\.)|(?<={L}))(?=\d)", " ", text)
+    text = re.sub(rf"(?:(?<=\s)|^){NUMBER_WORD.pattern}\s*(?=\d)", "", text, flags=re.I)
+    text = re.sub(rf"(?<=\d)(\.?)\s*{NUMBER_WORD.pattern}(?=$|[\s,])", r"\1", text, flags=re.I)
+    text = re.sub(r"\s+", " ", text).strip(" ,")
+    out["street"] = text
+    if not re.search(L, text): return {**out, "why": "csak szám van a címben, utcanév nincs"}
+    if not re.search(r"\d", text): return {**out, "why": "nincs szám a címben"}
+    ambiguous = False
+    for m in HOUSE_TOKEN.finditer(text):
+        street, tail = text[:m.start()].rstrip(" ,"), text[m.end():]
+        if not re.search(L, street): continue  # nothing but numbers before it: a zip code or a bare number, not the street's number
+        if tail.strip(" ,") and not _floor_info(tail): continue  # more of the street's name follows: the number belongs to the name
+        if re.search(r"(?:^|[\s,])\d[\w/\-]*\.?$", street): ambiguous = True; break  # '12 14', '12. 3/5': which one is it?
+        house = re.sub(r"\s+", "", m.group(1)) if re.fullmatch(r"\d+\s*[-/]\s*\d+", m.group(1)) else re.sub(r"\s+", " ", m.group(1))
+        info = tail.strip(" ,")
+        full = (m.group(1) + m.group(2) + tail).strip(" ,") if info else m.group(1)
+        return {"street": street, "house": house, "info": info, "full": full, "why": ""}
+    if ambiguous: return {**out, "why": "több szám van egymás után, nem egyértelmű, melyik a házszám"}
+    return {**out, "why": "a címben lévő szám az utcanév része, házszám nincs utána"}
+
 def split_street(address):
-    """'Fő u. 12/B' -> ('Fő u.', '12/B'). GLS wants street and house number apart. No number found -> ('whole text', '')."""
-    # the number may follow the street type's dot with no space ('Fő u.12'): the dot then separates them
-    m = re.match(r"^(.*?)(?:[\s,]+|(?<=\.))(\d[\w/.\-]*(?:\s*(?:em|fsz|ép|lh)\.?\s*\S*)?)$", address.strip(), re.I)
-    return (m.group(1).strip(), m.group(2).strip()) if m else (address.strip(), "")
+    """'Fő u. 12/B' -> ('Fő u.', '12/B'). GLS wants street and house number apart. No number found -> ('whole text', '').
+    The house part keeps floor/door detail as written ('Fő tér 3. 2. em.' -> ('Fő tér', '3. 2. em.')); a lone trailing dot goes."""
+    p = parse_street(address)
+    return (p["street"], p["full"])
+
+def parse_address(addr):
+    """A shipping address (address1 + address2) -> parse_street's dict. address2 is the 'flat, floor' field: when address1 already
+    has the house number, address2 is the floor/door detail ('3/5', '2. em. 5.'); when it has none, the two are read as one line
+    (the house number written into address2: '12', '12. 2. em')."""
+    a1 = (addr.get("address1") or "").strip()
+    a2 = (addr.get("address2") or "").strip() if re.search(r"\w", addr.get("address2") or "") else ""
+    first = parse_street(a1)
+    if first["house"] and a2:
+        if re.search(rf"{L}{{3,}}", FLOOR_WORD.sub(" ", a2)):  # address2 has words of its own (a street?): read the two together
+            return parse_street(f"{a1} {a2}")
+        info = ", ".join(x for x in (first["info"], a2) if x)
+        return {**first, "info": info, "full": f"{first['full']} {a2}"}
+    return first if not a2 else parse_street(f"{a1} {a2}")
 
 def street_line(addr):
     """address1 + address2 as one line. An address2 with no letter or digit ('-', '.', '/') is a placeholder and is left out:
@@ -157,8 +214,9 @@ def gls_content(o, cod_amount=0):
 def gls_parcel(o, gls, house="", info=""):
     """The MyGLS Parcel for an order. Pickup data (your address) comes from GLS_PICKUP_* in .env."""
     sh = o["shipping"] or o["billing"]
-    street, found = split_street(street_line(sh))
-    house = house or found  # a house number given by hand wins
+    a = parse_address(sh)
+    street = a["street"]
+    if not house: house, info = a["house"], info or a["info"]  # a house number given by hand wins (with its own info)
     missing = [k for k, v in (("name", sh.get("name")), ("zip", sh.get("zip")), ("city", sh.get("city")), ("street", street)) if not v]
     if missing: raise ConnectorError(f"{o['name']}: shipping address incomplete ({', '.join(missing)})")
     pick = {k: os.getenv("GLS_PICKUP_" + k.upper(), "").strip() for k in ("name", "street", "house", "city", "zip", "phone", "email")}

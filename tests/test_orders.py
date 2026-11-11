@@ -167,10 +167,10 @@ class Gls(unittest.TestCase):
         self.assertEqual(order_flow.split_street("Kossuth Lajos utca 12/B"), ("Kossuth Lajos utca", "12/B"))
         self.assertEqual(order_flow.split_street("Fő u. 1"), ("Fő u.", "1"))
         # shape of a real case: no space after the street type's dot, the number ends with a dot too
-        self.assertEqual(order_flow.split_street("Példa Kálmán u.9."), ("Példa Kálmán u.", "9."))
+        self.assertEqual(order_flow.split_street("Példa Kálmán u.9."), ("Példa Kálmán u.", "9"))  # the lone trailing dot goes (#68 kept it)
         self.assertEqual(order_flow.split_street("Fő u.12/B"), ("Fő u.", "12/B"))
         self.assertEqual(order_flow.split_street("Fő utca"), ("Fő utca", ""))  # still no number = no number
-        self.assertEqual(order_flow.split_street("Fő tér 3. 2. em."), ("Fő tér 3.", "2. em."))  # unchanged behaviour
+        self.assertEqual(order_flow.split_street("Fő tér 3. 2. em."), ("Fő tér", "3. 2. em."))  # was ('Fő tér 3.', '2. em.'): the 3 was read as part of the street
         self.assertEqual(order_flow.phone("06 20 123 4567"), "+36201234567")
     def test_placeholder_address2_keeps_house_number(self):
         # address1 'Utca neve 5', address2 '-' -> the number was not found and the label waited
