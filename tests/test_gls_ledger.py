@@ -65,6 +65,13 @@ class Ledger(unittest.TestCase):
         self.assertEqual((b["collected_cod"], b["kept_for_invoices"], b["transferred"]), (5555.0, 2921.0, 2634.0))
         self.assertEqual(b["open_invoices"], [{"invoice": "HU00000009", "date": None, "open": 1357.0, "reminded": True}])
         self.assertEqual(b["we_owe_carrier"], 1357.0)
+    def test_timeline_for_the_site_has_no_names(self):
+        self.build()
+        b = self.m.balance()
+        self.assertEqual([c["ref"] for c in b["cod_items"]], ["#1001", "#1002"])
+        self.assertEqual([(c["invoice"], c["transferred"]) for c in b["compensations"]], [("HU00000001", 0), ("HU00000001", 2634)])
+        self.assertEqual({i["invoice"] for i in b["invoices"]}, {"HU00000001", "HU00000009"})
+        self.assertNotIn("SECRET", json.dumps(b))
     def test_an_invoice_the_owner_paid_is_not_open(self):
         self.build()
         b = self.m.balance(paid="HU00000009")

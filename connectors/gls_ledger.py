@@ -211,6 +211,13 @@ def balance(paid=""):
     return {"collected_cod": collected, "kept_for_invoices": compensated, "transferred": transferred,
             "open_invoices": open_inv, "we_owe_carrier": owed_to_carrier, "cod_on_the_way": coming, "cod_on_the_way_total": coming_sum,
             "must_pay": round(max(owed_to_carrier - coming_sum, 0), 2), "verdict": verdict,
+            # the timeline for the site: references, amounts and dates only
+            "cod_items": sorted(({"ref": c.get("ref"), "delivered": c.get("delivered"), "amount": c.get("amount")} for c in d["cod"].values()),
+                                key=lambda x: x["delivered"] or ""),
+            "compensations": [{k: c.get(k) for k in ("date", "invoice", "cod", "compensated", "transferred", "remaining")} for c in d["compensations"]],
+            "invoices": [{"invoice": no, "date": inv.get("date"), "gross": inv.get("gross"), "compensated": inv.get("compensated") or 0,
+                          "paid_by_owner": no in paid_set, "reminded": no in d["reminders"], "parcels": inv.get("parcels")}
+                         for no, inv in sorted(d["invoices"].items())],
             "avg_fee_per_parcel_gross": round(sum(nets) / len(nets) * (1 + vat)) if nets else None,
             "parcels_in_invoices": len(nets), "synced_at": d.get("synced_at")}
 

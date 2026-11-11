@@ -653,7 +653,15 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
             # brain/complaints.json: the reply text and the order's e-mail only once the owner approved the reply (connectors/complaints.py)
             "complaints": complaint_rows,
             # the packing queue: parcels outside Shopify (no personal data); and the Overview's watch list (None = unreadable, the site keeps it)
-            "manual_parcels": _manual_parcels(uploaded, shipping), "highlights": highlights}
+            "manual_parcels": _manual_parcels(uploaded, shipping), "highlights": highlights,
+            # the carrier ledger (COD collected / kept for invoices / transferred, open invoices, balance); None = not set up or
+            # unreadable: the site keeps what it has. References, amounts and dates only.
+            "carrier_ledger": _carrier_ledger()}
+
+def _carrier_ledger():
+    if not os.getenv("GLS_LEDGER_ACCOUNT", "").strip(): return None
+    try: return gls_ledger.balance()
+    except Exception: return None
 
 def _sales_count(payload):
     """Totals only (no order is named): days, rows, sums, left-out orders by reason, and orders / revenue per month."""
