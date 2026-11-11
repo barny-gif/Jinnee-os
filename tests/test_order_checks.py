@@ -23,7 +23,7 @@ class Checks(unittest.TestCase):
         self.assertEqual(fields(o), ["house_number"])
         self.assertFalse(C.ready(p, "label")); self.assertTrue(C.ready(p, "invoice"))
     def test_house_number_glued_or_elsewhere_is_found(self):
-        # shape of #1047: 'A A A.9.' with address2 '-': it was a false 'house number missing' stop
+        # shape of a real case: 'A A A.9.' with address2 '-': it was a false 'house number missing' stop
         for a1, a2 in (("Kossuth Lajos u.12.", "-"), ("Fő utca12", None), ("Fő utca", "12"), ("Fő utca hsz. 12", ""),
                        ("Fő u. 12. 2. em. 5.", ""), ("Fő utca 12", "3/5"), ("1848. március 15. tér 4", ""), ("Május 1. utca 3", "")):
             o = {**OK, "shipping_address": {**ADDR, "address1": a1, "address2": a2}}
