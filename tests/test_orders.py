@@ -264,7 +264,7 @@ class StreetSplit(unittest.TestCase):
         import order_flow; self.f = order_flow
     def split(self, a): p = self.f.parse_street(a); return (p["street"], p["house"], p["info"])
     def test_number_glued_to_the_street(self):
-        cases = {"Kossuth Lajos u.12.": ("Kossuth Lajos u.", "12", ""),   # #1047 shape: 'A A A.9.', address2 '-'
+        cases = {"Kossuth Lajos u.12.": ("Kossuth Lajos u.", "12", ""),   # real case shape: 'A A A.9.', address2 '-'
                  "Fő utca12": ("Fő utca", "12", ""), "Fő út 3/A": ("Fő út", "3/A", ""), "Teréz krt.5": ("Teréz krt.", "5", ""),
                  "Fő tér 7.": ("Fő tér", "7", ""), "Kossuth L.u.12": ("Kossuth L.u.", "12", ""), "Fő u.12/B": ("Fő u.", "12/B", ""),
                  "Petőfi S. u 3": ("Petőfi S. u", "3", ""), "Rákóczi út 12-14": ("Rákóczi út", "12-14", ""),
@@ -299,7 +299,7 @@ class StreetSplit(unittest.TestCase):
         self.assertIn("nem egyértelmű", p("Fő utca 12 II/5")["why"])  # a floor/door with no floor word: STOP, not a guess
     def test_address2(self):
         pa = lambda a1, a2: (lambda r: (r["street"], r["house"], r["info"]))(self.f.parse_address({"address1": a1, "address2": a2}))
-        self.assertEqual(pa("Kossuth Lajos u.12.", "-"), ("Kossuth Lajos u.", "12", ""))         # #1047: placeholder address2
+        self.assertEqual(pa("Kossuth Lajos u.12.", "-"), ("Kossuth Lajos u.", "12", ""))         # real case: placeholder address2
         self.assertEqual(pa("Fő utca", "12"), ("Fő utca", "12", ""))                             # house number typed into address2
         self.assertEqual(pa("Fő utca", "12. 2. em. 5."), ("Fő utca", "12", "2. em. 5."))
         self.assertEqual(pa("Fő utca", "hsz. 12"), ("Fő utca", "12", ""))
