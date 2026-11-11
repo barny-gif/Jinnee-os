@@ -167,10 +167,10 @@ class Gls(unittest.TestCase):
         self.assertEqual(order_flow.split_street("Kossuth Lajos utca 12/B"), ("Kossuth Lajos utca", "12/B"))
         self.assertEqual(order_flow.split_street("Fő u. 1"), ("Fő u.", "1"))
         # shape of a real case: no space after the street type's dot, the number ends with a dot too
-        self.assertEqual(order_flow.split_street("Példa Kálmán u.9."), ("Példa Kálmán u.", "9."))
+        self.assertEqual(order_flow.split_street("Példa Kálmán u.9."), ("Példa Kálmán u.", "9"))  # the lone trailing dot goes (#68 kept it)
         self.assertEqual(order_flow.split_street("Fő u.12/B"), ("Fő u.", "12/B"))
         self.assertEqual(order_flow.split_street("Fő utca"), ("Fő utca", ""))  # still no number = no number
-        self.assertEqual(order_flow.split_street("Fő tér 3. 2. em."), ("Fő tér 3.", "2. em."))  # unchanged behaviour
+        self.assertEqual(order_flow.split_street("Fő tér 3. 2. em."), ("Fő tér", "3. 2. em."))  # was ('Fő tér 3.', '2. em.'): the 3 was read as part of the street
         self.assertEqual(order_flow.phone("06 20 123 4567"), "+36201234567")
     def test_placeholder_address2_keeps_house_number(self):
         # address1 'Utca neve 5', address2 '-' -> the number was not found and the label waited
@@ -255,6 +255,72 @@ class Gls(unittest.TestCase):
     def test_hash_password(self):
         import hashlib; m = load("gls")
         self.assertEqual(m._auth()["Password"], list(hashlib.sha512(b"p").digest()))
+
+
+class StreetSplit(unittest.TestCase):
+    """How customers really type the address (shapes only, made-up streets). The house number is the number after the street's
+    words; a number inside the street's name stays in the name; when it cannot be told apart, there is no number and a reason."""
+    def setUp(self):
+        import order_flow; self.f = order_flow
+    def split(self, a): p = self.f.parse_street(a); return (p["street"], p["house"], p["info"])
+    def test_number_glued_to_the_street(self):
+        cases = {"Kossuth Lajos u.12.": ("Kossuth Lajos u.", "12", ""),   # #1047 shape: 'A A A.9.', address2 '-'
+                 "Fő utca12": ("Fő utca", "12", ""), "Fő út 3/A": ("Fő út", "3/A", ""), "Teréz krt.5": ("Teréz krt.", "5", ""),
+                 "Fő tér 7.": ("Fő tér", "7", ""), "Kossuth L.u.12": ("Kossuth L.u.", "12", ""), "Fő u.12/B": ("Fő u.", "12/B", ""),
+                 "Petőfi S. u 3": ("Petőfi S. u", "3", ""), "Rákóczi út 12-14": ("Rákóczi út", "12-14", ""),
+                 "Fő utca 12 B": ("Fő utca", "12 B", ""), "Fő utca 12, ": ("Fő utca", "12", ""),
+                 "Fő u.3. -": ("Fő u.", "3", "")}  # address2 "-" joined on by hand (shopify ops)
+        for a, want in cases.items(): self.assertEqual(self.split(a), want, a)
+    def test_floor_and_door_after_the_number(self):
+        cases = {"Fő u. 12. 2. em. 5.": ("Fő u.", "12", "2. em. 5."), "Fő u. 12 fsz. 1": ("Fő u.", "12", "fsz. 1"),
+                 "Fő tér 3. 2. em.": ("Fő tér", "3", "2. em."), "Fő utca 12, 2. emelet 5. ajtó": ("Fő utca", "12", "2. emelet 5. ajtó"),
+                 "Fő utca 12 III. em 5": ("Fő utca", "12", "III. em 5"), "Fő utca 7 B ép. 2. lh": ("Fő utca", "7 B", "ép. 2. lh"),
+                 "Fő u. 12.2.em.5.": ("Fő u.", "12", "2.em. 5.")}
+        for a, want in cases.items(): self.assertEqual(self.split(a), want, a)
+        self.assertEqual(self.f.split_street("Fő u. 12. 2. em. 5."), ("Fő u.", "12. 2. em. 5."))  # split_street keeps it as written
+    def test_a_number_in_the_street_name_stays_in_the_name(self):
+        cases = {"1848. március 15. tér 4": ("1848. március 15. tér", "4", ""), "IV. Béla út 2": ("IV. Béla út", "2", ""),
+                 "Május 1. utca 3": ("Május 1. utca", "3", ""), "Május 1. utca 3/A 1. em 2": ("Május 1. utca", "3/A", "1. em 2"),
+                 "Negyvennyolcas 48as utca 12/B": ("Negyvennyolcas 48as utca", "12/B", ""),
+                 "1111 Budapest, Fő utca 12": ("1111 Budapest, Fő utca", "12", "")}
+        for a, want in cases.items(): self.assertEqual(self.split(a), want, a)
+    def test_the_word_for_house_number(self):
+        for a in ("Fő utca hsz. 12", "Fő utca hsz 12", "Fő utca házszám: 12", "Fő utca 12. sz.", "Fő utca 12 szám", "Fő utca szám 12"):
+            self.assertEqual(self.split(a), ("Fő utca", "12", ""), a)
+    def test_no_house_number_says_why(self):
+        p = self.f.parse_street
+        self.assertEqual((p("Fő utca")["house"], p("Fő utca")["why"]), ("", "nincs szám a címben"))
+        self.assertIn("utcanév része", p("Május 1. utca")["why"]); self.assertIn("utcanév része", p("Negyvennyolcas 48as utca")["why"])
+        self.assertEqual(p("Május 1. utca")["street"], "Május 1. utca")
+        for a in ("Fő utca 12 14", "Fő u. 12. 3/5", "Fő utca 12/B 3/5"):
+            self.assertEqual(p(a)["house"], "", a); self.assertIn("nem egyértelmű", p(a)["why"], a)
+        self.assertIn("utcanév nincs", p("12")["why"]); self.assertEqual(p("")["why"], "üres cím")
+        self.assertEqual(self.f.split_street("Fő utca 12 14"), ("Fő utca 12 14", ""))
+        self.assertIn("nem egyértelmű", p("Fő utca 12 II/5")["why"])  # a floor/door with no floor word: STOP, not a guess
+    def test_address2(self):
+        pa = lambda a1, a2: (lambda r: (r["street"], r["house"], r["info"]))(self.f.parse_address({"address1": a1, "address2": a2}))
+        self.assertEqual(pa("Kossuth Lajos u.12.", "-"), ("Kossuth Lajos u.", "12", ""))         # #1047: placeholder address2
+        self.assertEqual(pa("Fő utca", "12"), ("Fő utca", "12", ""))                             # house number typed into address2
+        self.assertEqual(pa("Fő utca", "12. 2. em. 5."), ("Fő utca", "12", "2. em. 5."))
+        self.assertEqual(pa("Fő utca", "hsz. 12"), ("Fő utca", "12", ""))
+        self.assertEqual(pa("Fő utca 12", "2. em. 5."), ("Fő utca", "12", "2. em. 5."))          # floor / door in address2
+        self.assertEqual(pa("Fő utca 12", "3/5"), ("Fő utca", "12", "3/5"))                      # in address2 '3/5' is the flat, not a 2nd number
+        self.assertEqual(pa("Fő utca 12.", "fsz 1"), ("Fő utca", "12", "fsz 1"))
+        self.assertEqual(pa("Fő utca", "-"), ("Fő utca", "", ""))
+        self.assertEqual(pa("Fő utca", None), ("Fő utca", "", ""))
+        self.assertIn("nem egyértelmű", self.f.parse_address({"address1": "Fő utca", "address2": "12 3/5"})["why"])
+    def test_label_gets_number_and_floor_apart(self):
+        g = mock.Mock(client_number=lambda: 1)
+        o = Gls().order(); o["shipping"].update(address1="Kossuth Lajos u.12.", address2="-")
+        d = self.f.gls_parcel(o, g)["DeliveryAddress"]
+        self.assertEqual((d["Street"], d["HouseNumber"], d["HouseNumberInfo"]), ("Kossuth Lajos u.", "12", ""))
+        o = Gls().order(); o["shipping"].update(address1="Fő u. 12. 2. em. 5.", address2="")
+        d = self.f.gls_parcel(o, g)["DeliveryAddress"]
+        self.assertEqual((d["Street"], d["HouseNumber"], d["HouseNumberInfo"]), ("Fő u.", "12", "2. em. 5."))
+        d = self.f.gls_parcel(o, g, house="14", info="")["DeliveryAddress"]  # a number given by hand wins, and the found floor is not mixed in
+        self.assertEqual((d["HouseNumber"], d["HouseNumberInfo"]), ("14", ""))
+        d = self.f.gls_parcel(o, g, info="3. ajtó")["DeliveryAddress"]       # info given by hand wins over the found one
+        self.assertEqual((d["HouseNumber"], d["HouseNumberInfo"]), ("12", "3. ajtó"))
 
 
 class GlsDedupe(unittest.TestCase):
