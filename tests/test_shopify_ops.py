@@ -120,6 +120,16 @@ class HouseNumber(Base):
         self.assertEqual(inp["shippingAddress"], {"firstName": "Teszt", "lastName": "Elek", "address1": "Negyvennyolcas 48as utca 12/B",
                                                   "city": "Budapest", "zip": "1111", "countryCode": "HU", "phone": "+36301234567"})
         self.assertTrue(out["written"])
+    def test_number_with_a_trailing_dot_is_accepted(self):
+        # the split drops a lone trailing dot ('12.' -> '12'); the owner's '12.' is still the same number
+        with mock.patch.object(self.m.requests, "get", return_value=Resp(order())), mock.patch.object(self.m.requests, "post") as post:
+            out = self.m.set_house_number("7001", "12.")
+        post.assert_not_called(); self.assertTrue(out["dry_run"])
+    def test_glued_number_counts_as_already_there(self):
+        with mock.patch.object(self.m.requests, "get", return_value=Resp(order(shipping_address={**SHIP, "address1": "Fő u.3.", "address2": "-"}))), \
+             mock.patch.object(self.m.requests, "post") as post:
+            out = self.m.set_house_number("7001", "12", confirm="yes")
+        post.assert_not_called(); self.assertTrue(out["already"])
     def test_already_has_a_number_writes_nothing(self):
         with mock.patch.object(self.m.requests, "get", return_value=Resp(order(shipping_address={**SHIP, "address1": "Fő u. 3"}))), \
              mock.patch.object(self.m.requests, "post") as post:

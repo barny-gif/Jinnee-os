@@ -131,6 +131,7 @@ def parse_street(address):
     The house number is the first number after the street's words that is followed by nothing or by floor/door detail only, so a
     street whose name holds a number ('1848. március 15. tér 4', 'Május 1. utca 3', 'IV. Béla út 2') keeps it."""
     text = re.sub(r"\s+", " ", (address or "").strip()).strip(" ,")
+    text = re.sub(r"(?:[\s,]+[^\w\s]+)+$", "", text)  # a placeholder joined at the end ('Fő u. 3 -', from address2 '-') is not part of it
     out = {"street": text, "house": "", "info": "", "full": "", "why": ""}
     if not text: return {**out, "why": "üres cím"}
     # a number glued to the street ('u.12.', 'utca12', 'krt.5') gets its space; 'hsz.', 'szám' next to the number is dropped
