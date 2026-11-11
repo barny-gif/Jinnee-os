@@ -371,6 +371,12 @@ print("RESULT " + json.dumps({"tools": jinnee.TOOLS, "scheduled": jinnee.SCHEDUL
             self.assertIn(f"Bash({py} core/memory.py compact *)", got["guarded"])
             self.assertIn(f"Bash({py} core/memory.py compact *)", got["scheduled_deny"])
         self.assertFalse([t for t in got["tools"] + got["scheduled"] if "compact" in t or t.endswith("memory.py *)")])
+        # Gmail through the claude.ai connector: read (and draft in the owner's runs), never send / reply / forward / trash
+        self.assertIn("mcp__claude_ai_Gmail__search_threads", got["scheduled"])
+        self.assertIn("mcp__claude_ai_Gmail__create_draft", got["tools"])
+        self.assertNotIn("mcp__claude_ai_Gmail__create_draft", got["scheduled"])
+        for t in ("send_message", "reply", "forward", "trash_message", "trash_thread", "label_message", "update_draft", "delete_draft"):
+            self.assertNotIn(f"mcp__claude_ai_Gmail__{t}", got["tools"] + got["scheduled"])
 
 
 if __name__ == "__main__":

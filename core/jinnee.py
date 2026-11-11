@@ -48,6 +48,11 @@ TOOLS += [f"mcp__claude_ai_Lovable__{t}" for t in ("list_workspaces", "list_proj
 # Shopify through the owner's claude.ai connector: the shop's catalogue, stock and sales numbers only. Orders and customers
 # (names, addresses, e-mails) are deliberately NOT here: they stay behind connectors/shopify, which shows order numbers only.
 TOOLS += [f"mcp__claude_ai_Shopify__{t}" for t in ("get-shop-info", "search_products", "get-product", "get-inventory-levels", "run-analytics-query", "search_collections", "get-collection")]
+# Gmail through the owner's claude.ai connector (the owner's own mailbox): reading and drafts only. Sending, replying, forwarding,
+# labelling, spam and trash are deliberately NOT here: mail goes out only through connectors/gmail after a GO. A scheduled run
+# only reads. What is read stays out of Telegram, logs and handoffs beyond sender company and subject.
+GMAIL_READ = [f"mcp__claude_ai_Gmail__{t}" for t in ("search_threads", "get_thread", "get_message", "list_labels", "list_drafts", "get_draft")]
+TOOLS += GMAIL_READ + ["mcp__claude_ai_Gmail__create_draft"]
 # Forge's only way to git: this helper (own branch forge/*, tests must pass, pull request, never main).
 TOOLS += [f"Bash({py} core/forge_git.py *)" for py in ("python3", "python")]
 # Forge needs to read API docs and run the connectors and tests it writes; still no curl, rm or free shell.
@@ -65,7 +70,7 @@ GUARDED += [f"Bash({py} core/memory.py compact{rest})" for py in ("python3", "py
 # A scheduled run (core/scheduler.py) has nobody watching it. It gets less: no building (Lovable, git, tests), writing only
 # in brain/ and handoffs/ (dontAsk refuses everything not allowed here), and JINNEE_UNATTENDED=1, with which the connectors
 # refuse every outgoing step and approvals.py refuses to hand out a decision.
-SCHEDULED_TOOLS = [t for t in TOOLS if not any(x in t for x in ("forge_git", "-m unittest", "Lovable__send_message", "Lovable__get_message", "Lovable__get_file_upload_url"))]
+SCHEDULED_TOOLS = [t for t in TOOLS if not any(x in t for x in ("forge_git", "-m unittest", "Lovable__send_message", "Lovable__get_message", "Lovable__get_file_upload_url", "Gmail__create_draft"))]
 SCHEDULED_TOOLS += ["Edit(brain/**)", "Edit(handoffs/**)"]
 # company.md holds only the owner's own statements: a run nobody watches reads it, never changes it. (An Edit rule covers every
 # file-writing tool, Write included; Write is not allowed anywhere on its own.) The owner's own runs are unchanged.
