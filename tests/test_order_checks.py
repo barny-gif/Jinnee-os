@@ -10,6 +10,8 @@ ADDR = {"name": "Titkos Vevo", "address1": "Fő utca 12/B", "zip": "1111", "city
 OK = {"name": "#5030", "total_price": "12600.00", "financial_status": "paid", "payment_gateway_names": ["SimplePay"], "cancelled_at": None, "test": False,
       "email": "x@y.hu", "phone": None, "shipping_address": ADDR, "billing_address": ADDR, "shipping_lines": [{"title": "GLS házhoz"}]}
 
+EGER6 = "111" + "222"; EGER = "36 111 222"  # made up
+
 def fields(o, step=None): return sorted(p["field"] for p in C.check(o) if step in (None, p["step"]))
 
 class Checks(unittest.TestCase):
@@ -47,6 +49,33 @@ class Checks(unittest.TestCase):
                   ("Fő utca", None, "missing"), ("Fő utca", "-", "missing"), ("Fő utca 3. em. 4.", None, "only_floor"),
                   ("Fő utca", "3. em. 4.", "only_floor"), ("", None, "missing"), ("Fő utca 12 14", None, "ambiguous"),
                   ("Fő utca 12, 14", None, "ambiguous"), ("Dózsa György út 17 3/4", None, "ambiguous"), ("1848. március 15. 4", None, "ambiguous")]
+    # Phone shapes, the same table as the JinneeHQ check (address-check.test.js): (as typed, normalised, valid in HU)
+    PHONE_SAME_AS_HQ = [("+36 30 123 4567", "+36301234567", True), ("06 30 123 4567", "+36301234567", True),
+                        ("0036 30 123 4567", "+36301234567", True), ("30/123-4567", "+36301234567", True),
+                        ("+36 06 30 123 4567", "+36301234567", True), ("06 1 123 4567", "+3611234567", True),
+                        ("12345", "+3612345", False), ("+49 151 2345678", "+491512345678", False),
+                        # 2026-11-11 false alarm: the country code typed without its + ('36 30 …' in one block, 11 digits)
+                        ("36301234567", "+36301234567", True), ("36 30 123 4567", "+36301234567", True), ("36-30-123-4567", "+36301234567", True),
+                        ("36 1 123 4567", "+3611234567", True), ("36 06 30 123 4567", "+36301234567", True),
+                        # the domestic 0 / 06 left after +36, written several ways
+                        ("+36 06 20 123 4567", "+36201234567", True), ("+36 0 20 123 4567", "+36201234567", True),
+                        ("+36 (0) 20 123 4567", "+36201234567", True), ("+3606301234567", "+36301234567", True),
+                        # 0036, also with 06 left in or a + in front; the country code twice
+                        ("0036 06 30 123 4567", "+36301234567", True), ("+0036 30 123 4567", "+36301234567", True),
+                        ("+36 36 30 123 4567", "+36301234567", True),
+                        # separators
+                        ("(06-30) 123-45-67", "+36301234567", True), ("06/30/123-4567", "+36301234567", True),
+                        # an Eger number (area code 36) stays what it is
+                        # (built from parts: a 6-digit Eger test number cannot end in one of tools/guard.py's made-up 7-digit endings)
+                        (EGER, "+3636" + EGER6, True), ("06 " + EGER, "+3636" + EGER6, True), ("+36 " + EGER, "+3636" + EGER6, True),
+                        # still bad: too short / too long / nothing
+                        ("36", "+3636", False), ("+36 30 123 45678 9", "+363012345678" + "9", False), ("", "", False)]
+    def test_phone_shapes_match_the_hq_check(self):
+        for raw, norm, ok in self.PHONE_SAME_AS_HQ:
+            self.assertEqual(C.flow.phone(raw), norm, raw); self.assertEqual(C.flow.valid_phone(raw), ok, raw)
+            o = {**OK, "phone": None, "shipping_address": {**ADDR, "phone": raw}, "billing_address": {**ADDR, "phone": raw}}
+            self.assertEqual("phone" in fields(o), not ok, raw)
+        self.assertTrue(C.flow.valid_phone("+49 151 2345678", "DE"))
     def test_house_number_verdict_matches_the_hq_check(self):
         for a1, a2, want in self.SAME_AS_HQ:
             a = C.flow.parse_address({"address1": a1, "address2": a2})

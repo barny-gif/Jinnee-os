@@ -198,12 +198,22 @@ def street_line(addr):
     return " ".join(x for x in (addr.get("address1"), addr.get("address2")) if x and re.search(r"\w", x))
 
 def phone(p, country="HU"):
+    """A phone number as +<country><number>, spaces, dashes, brackets and slashes dropped. Hungarian shapes customers and checkout
+    forms really produce: 06 30…, 0036 30…, 36 30… (country code with no +), +36 06 30… / +36 (0) 30… (the domestic 0 or 06 left in),
+    +36 36 30… (a form put +36 in front of a number already typed with 36)."""
     d = re.sub(r"[^\d+]", "", p or "")
+    if d.startswith("+00"): d = d[1:]
     if d.startswith("00"): d = "+" + d[2:]
     if d.startswith("06"): d = "+36" + d[2:]
+    # the country code typed without its +: 36 + an 8 or 9 digit number. Shorter is a domestic number (Eger's area code is 36 too)
+    if country == "HU" and re.fullmatch(r"36(?:06|0)?\d{8,9}", d): d = "+" + d
     if d and not d.startswith("+") and country == "HU": d = "+36" + d.lstrip("0")
-    # a checkout form that puts +36 in front of a number typed with its domestic 06 prefix: '+36 06 30…' is '+36 30…'
-    if country == "HU" and re.fullmatch(r"\+3606\d{8,9}", d): d = "+36" + d[5:]
+    if country == "HU":
+        # a domestic 06 or 0 left after +36: '+36 06 30…' is '+36 30…'
+        if re.fullmatch(r"\+3606\d{8,9}", d): d = "+36" + d[5:]
+        elif re.fullmatch(r"\+360\d{8,9}", d): d = "+36" + d[4:]
+        # the country code twice: '+36 36 30…' is '+36 30…' (+36 36 + 6 digits, an Eger number, is left alone)
+        elif re.fullmatch(r"\+3636\d{8,9}", d): d = "+36" + d[5:]
     return d
 
 def valid_phone(p, country="HU"):
