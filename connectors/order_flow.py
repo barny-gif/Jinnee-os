@@ -117,6 +117,14 @@ FLOOR_WORD = re.compile(rf"(?<!{L})(?:fszt|fsz|földszint|félemelet|emelet|em|a
 FLOOR_REST = re.compile(r"(?:\d+|[IVX]+)(?:/\d+)?\.?|[\s,./:\-]+")
 # a house number token: 12, 12., 12/B, 12B, 12 B, 3/A, 12-14, 12/3 (a following letter run like '48as' is part of a name, not a number)
 HOUSE_TOKEN = re.compile(rf"(?<![\w/\-])(\d+(?:\s*[-/]\s*\d+)?(?:\s*/?\s*[A-Za-z](?!{L}))?)(\.?)(?=$|[\s,])")
+# a number followed straight by one of these was a floor or a door, not the house number ('Fő utca 3. em. 4.')
+FLOOR_AFTER = re.compile(rf"\s*(?:félemelet|emelet|em|ajtó|ajto)\.?(?!{L})", re.I)
+# street-type words: one alone is no street name ('utca 12'). Same list as the JinneeHQ address check (address-check.ts)
+STREET_TYPES = {"utcája", "utca", "u", "útja", "út", "sugárút", "körút", "krt", "tere", "tér", "köz", "köze", "sor", "sora", "sétány",
+                "stny", "dűlő", "dülő", "lakótelep", "ltp", "park", "parkja", "rakpart", "rkp", "fasor", "liget", "telep", "udvar", "lejtő",
+                "ösvény", "határút", "árok", "kert", "sétaút", "lépcső", "tanya", "major", "puszta", "zug", "kapu", "pincesor", "üdülőtelep"}
+ONLY_FLOOR = "csak emelet vagy ajtó szerepel, maga a házszám hiányzik"
+AMBIGUOUS = "több szám van egymás után, nem egyértelmű, melyik a házszám"
 NUMBER_WORD = re.compile(rf"(?<!{L})(?:hsz|házszám|hászám|szám|sz)\.?:?(?!{L})", re.I)
 
 def _floor_info(text):
@@ -146,13 +154,22 @@ def parse_street(address):
     for m in HOUSE_TOKEN.finditer(text):
         street, tail = text[:m.start()].rstrip(" ,"), text[m.end():]
         if not re.search(L, street): continue  # nothing but numbers before it: a zip code or a bare number, not the street's number
-        if tail.strip(" ,") and not _floor_info(tail): continue  # more of the street's name follows: the number belongs to the name
+        # '3. em. 4.' straight after the street, or 'fsz. 1': the number is a floor / door, the house number is not there.
+        # Never sent as the house number (a '3' on the label would be a wrong address).
+        if FLOOR_AFTER.match(tail) or FLOOR_WORD.fullmatch(street.rsplit(" ", 1)[-1]):
+            return {**out, "why": ONLY_FLOOR}
+        if tail.strip(" ,") and not _floor_info(tail):
+            # only numbers follow ('12 14', '12 II/5' with no floor word): not clear which is the house number
+            if not FLOOR_REST.sub("", tail).strip(): ambiguous = True
+            continue  # else more of the street's name follows: the number belongs to the name
         if re.search(r"(?:^|[\s,])\d[\w/\-]*\.?$", street): ambiguous = True; break  # '12 14', '12. 3/5': which one is it?
+        if street.lower().rstrip(".") in STREET_TYPES:  # 'utca 12': a street type with no name in front is no street
+            return {**out, "street": "", "why": "nincs utcanév, csak az utca típusa"}
         house = re.sub(r"\s+", "", m.group(1)) if re.fullmatch(r"\d+\s*[-/]\s*\d+", m.group(1)) else re.sub(r"\s+", " ", m.group(1))
         info = tail.strip(" ,")
         full = (m.group(1) + m.group(2) + tail).strip(" ,") if info else m.group(1)
         return {"street": street, "house": house, "info": info, "full": full, "why": ""}
-    if ambiguous: return {**out, "why": "több szám van egymás után, nem egyértelmű, melyik a házszám"}
+    if ambiguous: return {**out, "why": AMBIGUOUS}
     return {**out, "why": "a címben lévő szám az utcanév része, házszám nincs utána"}
 
 def split_street(address):

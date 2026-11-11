@@ -296,6 +296,7 @@ class StreetSplit(unittest.TestCase):
             self.assertEqual(p(a)["house"], "", a); self.assertIn("nem egyértelmű", p(a)["why"], a)
         self.assertIn("utcanév nincs", p("12")["why"]); self.assertEqual(p("")["why"], "üres cím")
         self.assertEqual(self.f.split_street("Fő utca 12 14"), ("Fő utca 12 14", ""))
+        self.assertIn("nem egyértelmű", p("Fő utca 12 II/5")["why"])  # a floor/door with no floor word: STOP, not a guess
     def test_address2(self):
         pa = lambda a1, a2: (lambda r: (r["street"], r["house"], r["info"]))(self.f.parse_address({"address1": a1, "address2": a2}))
         self.assertEqual(pa("Kossuth Lajos u.12.", "-"), ("Kossuth Lajos u.", "12", ""))         # #1047: placeholder address2

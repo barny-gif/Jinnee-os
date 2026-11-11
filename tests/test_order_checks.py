@@ -34,6 +34,38 @@ class Checks(unittest.TestCase):
         self.assertIn("utcanév része", why("Május 1. utca"))
         self.assertIn("nem egyértelmű", why("Fő utca 12 14")); self.assertIn("nem egyértelmű", why("Fő utca", "12 3/5"))
         self.assertNotIn("Fő", why("Fő utca 12 14"))  # the reason names the problem, never the address
+    # The JinneeHQ address check (address-check.test.js HOUSE_CASES) reads the same addresses: the house number yes / no / not clear
+    # verdict must be the same on every row. One row is stricter here on purpose ('12 II/5', a floor/door with no floor word: STOP).
+    SAME_AS_HQ = [("Kossuth u.12.", None, "ok"), ("Kossuth utca12", None, "ok"), ("Kossuth utca12.", None, "ok"),
+                  ("Kossuth u.12. fsz.2.", None, "ok"), ("Fő utca 12", None, "ok"), ("Fő utca 12.", None, "ok"), ("Fő u. 12/B", None, "ok"),
+                  ("Fő utca 12-14", None, "ok"), ("Fő utca 12 B", None, "ok"), ("Petőfi Sándor u 7", None, "ok"), ("Kossuth Lajos 12", None, "ok"),
+                  ("Fő utca hsz. 12", None, "ok"), ("Fő utca 12 hsz.", None, "ok"), ("Fő utca 12. 3. em. 4.", None, "ok"),
+                  ("Rákóczi Ferenc utca 5/A 2. emelet 6. ajtó", None, "ok"), ("Andrássy út 2. 3. em. 4", None, "ok"),
+                  ("Fő utca 12 II/5", None, "ambiguous"), ("Fő utca 12 B ép. 2. lh.", None, "ok"), ("1848. március 15. tér 4", None, "ok"),
+                  ("IV. Béla út 2", None, "ok"), ("Május 1. utca 3", None, "ok"), ("Május 1. utca", None, "missing"),
+                  ("1848. március 15. tér", None, "missing"), ("Fő utca", "12", "ok"), ("Fő utca", "12/B fsz. 1", "ok"), ("", "Fő utca 9", "ok"),
+                  ("Fő utca", None, "missing"), ("Fő utca", "-", "missing"), ("Fő utca 3. em. 4.", None, "only_floor"),
+                  ("Fő utca", "3. em. 4.", "only_floor"), ("", None, "missing"), ("Fő utca 12 14", None, "ambiguous"),
+                  ("Fő utca 12, 14", None, "ambiguous"), ("Dózsa György út 17 3/4", None, "ambiguous"), ("1848. március 15. 4", None, "ambiguous")]
+    def test_house_number_verdict_matches_the_hq_check(self):
+        for a1, a2, want in self.SAME_AS_HQ:
+            a = C.flow.parse_address({"address1": a1, "address2": a2})
+            got = "ok" if a["house"] else "ambiguous" if "nem egyértelmű" in a["why"] else "only_floor" if "csak emelet" in a["why"] else "missing"
+            self.assertEqual(got, want, (a1, a2))
+            p = [x for x in C.check({**OK, "shipping_address": {**ADDR, "address1": a1, "address2": a2}}) if x["field"] == "house_number"]
+            self.assertEqual(bool(p), want != "ok", (a1, a2))
+    def test_only_a_floor_or_door_is_no_house_number(self):
+        # 'Fő utca 3. em. 4.': the 3 is the floor; it must not go on the label as the house number
+        for a in ("Fő utca 3. em. 4.", "Fő utca 3. emelet", "Fő utca 12 em 3", "Fő utca 5 ajtó", "Fő utca fsz. 1"):
+            r = C.flow.parse_street(a); self.assertEqual((r["house"], r["why"]), ("", C.flow.ONLY_FLOOR), a)
+        self.assertEqual(C.flow.parse_street("Fő utca 12. 3. ajtó")["house"], "12")  # a number before the floor is still the house number
+        o = {**OK, "shipping_address": {**ADDR, "address1": "Fő utca 3. em. 4."}}
+        self.assertEqual([(x["field"], x["level"], x["why"]) for x in C.check(o)], [("house_number", "stop", C.flow.ONLY_FLOOR)])
+    def test_a_street_type_alone_is_no_street(self):
+        for a in ("utca 12", "u. 12"):
+            self.assertEqual(C.flow.parse_street(a)["street"], "", a)
+            self.assertIn("street", fields({**OK, "shipping_address": {**ADDR, "address1": a}}), a)
+        self.assertEqual(C.flow.parse_street("Tér utca 3")["street"], "Tér utca")  # a name that is also a street type word is fine
     def test_phone_missing_or_bad(self):
         none = {**ADDR, "phone": None}
         self.assertEqual(fields({**OK, "shipping_address": none, "billing_address": none}), ["phone"])
