@@ -31,6 +31,9 @@ import order_checks
 import order_auto
 import complaints
 import cod_paid
+import gls_ledger
+LEDGER_EVERY = 3600  # seconds between two reads of the carrier's mails
+_ledger_try = {"at": 0.0}
 
 def _load(name):
     spec = importlib.util.spec_from_file_location(f"sync_{name}", HERE / name / "ops.py")
@@ -600,11 +603,17 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
     except Exception as e: cod = {"mode": cod_paid.mode(), "ready": [], "queued": None, "marked": [], "mismatch": [], "note": None,
                                   "errors": [f"[COD paid] {type(e).__name__}: {e}"]}
     cod_err = "; ".join(dict.fromkeys(cod["errors"])) or None
+    # Carrier ledger from the carrier's e-mails (GLS_LEDGER_ACCOUNT set): read at most once an hour, only when really sending
+    ledger_err = None
+    if act and os.getenv("GLS_LEDGER_ACCOUNT", "").strip() and now - _ledger_try["at"] >= LEDGER_EVERY:
+        _ledger_try["at"] = now
+        try: gls_ledger.sync()
+        except Exception as e: ledger_err = f"[carrier ledger] {type(e).__name__}: {e}"
     # The Complaints page; None = could not be read, the site keeps what it has. A broken complaint never stops the round.
     try: complaint_rows, complaints_err = complaints.payload(every), None
     except Exception as e: complaint_rows, complaints_err = None, f"[complaints] {type(e).__name__}: {e}"
     highlights, highlights_err = _try("highlights", _highlights)
-    errors = [e for e in (shop_err, bill_err, pay_err, prod_err, cost_err, owner_err, sales_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err, complaints_err, highlights_err, cod_err) if e]
+    errors = [e for e in (shop_err, bill_err, pay_err, prod_err, cost_err, owner_err, sales_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err, complaints_err, highlights_err, cod_err, ledger_err) if e]
     if billing is not None and not billing["complete"]: errors.append("[Billingo payments] more than 1000 invoices in the window: only the newest are shown")
     if scopes and scopes["missing"]: errors.append(f"[Shopify scopes] missing: {', '.join(scopes['missing'])}")
     if every is not None and len(every) >= PAGE: errors.append(f"[Shopify orders] more than {PAGE} orders in {reach} days: only the newest {PAGE} are shown")

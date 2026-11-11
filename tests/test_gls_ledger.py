@@ -69,6 +69,23 @@ class Ledger(unittest.TestCase):
         self.build()
         b = self.m.balance(paid="HU00000009")
         self.assertEqual((b["open_invoices"], b["verdict"]), ([], "nobody owes anything"))
+    def test_owner_paid_invoice_kept_in_state(self):
+        self.build()
+        self.m.mark_paid_invoice("HU00000009", note="bank transfer")
+        b = self.m.balance()
+        self.assertEqual((b["open_invoices"], b["must_pay"]), ([], 0))
+        with self.assertRaises(self.m.ConnectorError): self.m.mark_paid_invoice("1357")
+    def test_cod_on_the_way_decides_whether_to_pay(self):
+        self.m.UPLOADED, self.m.GLS_STATUS = self.tmp / "up.json", self.tmp / "st.json"
+        self.m.UPLOADED.write_text(json.dumps({"#1003": {"parcel_id": 1, "cod_amount": 5000.0}, "#1004": {"parcel_id": 2, "cod_amount": 0}}))
+        self.m.GLS_STATUS.write_text(json.dumps({"#1003": {"state": "delivered", "delivered_at": "2026-11-10T10:00:00+00:00", "parcel_number": "77"},
+                                                 "#1004": {"state": "delivered"}}))
+        self.build()
+        b = self.m.balance()
+        self.assertEqual(b["cod_on_the_way"], [{"ref": "#1003", "amount": 5000.0, "delivered": "2026-11-10"}])  # a paid-card parcel is not COD
+        self.assertEqual(b["must_pay"], 0)  # the open invoice will be kept from it
+        self.m.GLS_STATUS.write_text(json.dumps({}))
+        self.assertEqual(self.m.balance()["must_pay"], 1357.0)  # nothing coming: pay it
     def test_invoice_with_no_cod_to_keep_from_is_owed(self):
         d = self.m._read()
         self.m.ingest(d, "Számla és Számlamelléklet (HU00000001)", [self.file("SettlementDocument_x.xlsx", SETTLE)], "1"); self.m._write(d)

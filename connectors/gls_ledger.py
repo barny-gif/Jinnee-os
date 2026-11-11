@@ -11,7 +11,9 @@ Name and address columns are never read out: only references, parcel numbers, am
 State: brain/gls_ledger.json (processed message uids + parsed records). Settings (.env):
   GLS_LEDGER_ACCOUNT=<IMAP account name>   GLS_LEDGER_SENDER=gls-hungary.com   GLS_LEDGER_SINCE=2026-10-01   GLS_INVOICE_VAT=0.27
 CLI: python3 connectors/gls_ledger.py sync        (reads new mails, saves attachments, updates the state)
-     python3 connectors/gls_ledger.py balance     (the summary; no mail access)"""
+     python3 connectors/gls_ledger.py balance     (the summary; no mail access)
+     python3 connectors/gls_ledger.py mark_paid_invoice --invoice HU00000001   (the owner paid it himself)
+The site sender (ecom_sync) runs sync at most once an hour when GLS_LEDGER_ACCOUNT is set."""
 import os, re, sys, io, json, zipfile, pathlib, datetime as dt, xml.etree.ElementTree as ET
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -162,11 +164,35 @@ def sync(account="", since=""):
     _write(d)
     return {"new": new, "balance": balance()}
 
+def mark_paid_invoice(invoice, note=""):
+    """The owner paid a carrier invoice himself (bank transfer): it is no longer open. Kept in the state, not in .env."""
+    if not re.fullmatch(r"[A-Z]{2}\d{6,}", (invoice or "").strip()): raise ConnectorError("--invoice: the carrier's invoice number, e.g. HU00000001")
+    d = _read(); d.setdefault("paid", {})[invoice.strip()] = {"at": dt.date.today().isoformat(), "note": note[:200]}
+    _write(d); return {"paid": sorted(d["paid"])}
+
+UPLOADED = HERE.parent / "brain" / "gls_uploaded.json"
+GLS_STATUS = HERE.parent / "brain" / "gls_status.json"
+
+def _cod_on_the_way(d):
+    """COD parcels the carrier delivered (status file) that no COD detail report lists yet: money that will still come."""
+    try:
+        up = json.loads(UPLOADED.read_text(encoding="utf-8")); st = json.loads(GLS_STATUS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    reported = {c.get("ref") for c in d["cod"].values()} | set(d["cod"])
+    out = []
+    for name, s in st.items():
+        rec = up.get(name) if isinstance(up.get(name), dict) else {}
+        amount = rec.get("cod_amount") or 0
+        if amount and (s or {}).get("state") == "delivered" and name not in reported and str((s or {}).get("parcel_number")) not in reported:
+            out.append({"ref": name, "amount": amount, "delivered": (s.get("delivered_at") or "")[:10]})
+    return out
+
 def balance(paid=""):
     """The summary: collected COD, kept against invoices, transferred, open invoices and the end balance. paid: invoice numbers
-    the owner paid himself, comma separated (also GLS_PAID_INVOICES in .env)."""
+    the owner paid himself, comma separated (also GLS_PAID_INVOICES in .env, or mark_paid_invoice, kept in the state)."""
     d = _read()
-    paid_set = {x.strip() for x in (paid or os.getenv("GLS_PAID_INVOICES", "")).split(",") if x.strip()}
+    paid_set = {x.strip() for x in (paid or os.getenv("GLS_PAID_INVOICES", "")).split(",") if x.strip()} | set(d.get("paid") or {})
     collected = round(sum(c["amount"] for c in d["cod"].values()), 2)
     compensated = round(sum(c["compensated"] for c in d["compensations"]), 2)
     transferred = round(collected - compensated, 2)
@@ -178,11 +204,15 @@ def balance(paid=""):
     owed_to_carrier = round(sum(i["open"] for i in open_inv), 2)
     nets = [n for inv in d["invoices"].values() for n in inv.get("per_parcel_net") or []]
     vat = float(os.getenv("GLS_INVOICE_VAT", "0.27") or 0.27)
+    coming = _cod_on_the_way(d); coming_sum = round(sum(c["amount"] for c in coming), 2)
+    if not owed_to_carrier: verdict = "nobody owes anything" + (f"; COD still coming: {coming_sum:.0f}" if coming_sum else "")
+    elif coming_sum >= owed_to_carrier: verdict = f"open invoices {owed_to_carrier:.0f} will be kept from the COD on the way ({coming_sum:.0f})"
+    else: verdict = f"pay the carrier {owed_to_carrier - coming_sum:.0f}: not enough COD on the way to keep it from"
     return {"collected_cod": collected, "kept_for_invoices": compensated, "transferred": transferred,
-            "open_invoices": open_inv, "we_owe_carrier": owed_to_carrier,
-            "verdict": f"we owe the carrier {owed_to_carrier:.0f}" if owed_to_carrier else "nobody owes anything",
+            "open_invoices": open_inv, "we_owe_carrier": owed_to_carrier, "cod_on_the_way": coming, "cod_on_the_way_total": coming_sum,
+            "must_pay": round(max(owed_to_carrier - coming_sum, 0), 2), "verdict": verdict,
             "avg_fee_per_parcel_gross": round(sum(nets) / len(nets) * (1 + vat)) if nets else None,
             "parcels_in_invoices": len(nets), "synced_at": d.get("synced_at")}
 
-OPS = {"sync": sync, "balance": balance}
+OPS = {"sync": sync, "balance": balance, "mark_paid_invoice": mark_paid_invoice}
 if __name__ == "__main__": sys.exit(run_cli(OPS))
