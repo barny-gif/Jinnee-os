@@ -88,6 +88,36 @@ class Reading(Base):
         with self.fake({("GET", "/messages/m1"): only}):
             self.assertNotIn("<b>", self.m.read("info", "m1")["body"])
 
+class Attachments(Base):
+    WITH = {**MSG, "payload": {**MSG["payload"], "parts": MSG["payload"]["parts"] + [
+        {"mimeType": "application/vnd.ms-excel", "filename": "report 2026.xlsx", "body": {"attachmentId": "a1", "size": 5}},
+        {"mimeType": "application/pdf", "filename": "../../evil.pdf", "body": {"attachmentId": "a2", "size": 3}}]}}
+    def setUp(self):
+        super().setUp()
+        import tempfile
+        self.tmp = pathlib.Path(tempfile.mkdtemp()); self.m.INBOX = self.tmp / "handoffs" / "inbox" / "mail"
+    def test_lists_attachments(self):
+        with self.fake({("GET", "/messages/m1"): self.WITH}):
+            out = self.m.attachments("info", "m1")
+        self.assertEqual([a["filename"] for a in out["attachments"]], ["report 2026.xlsx", "../../evil.pdf"])
+    def test_saves_only_under_the_inbox_with_safe_names_and_once(self):
+        routes = {("GET", "/messages/m1/attachments/a1"): {"data": base64.urlsafe_b64encode(b"hello").decode()},
+                  ("GET", "/messages/m1"): self.WITH}
+        with self.fake(routes):
+            out = self.m.save_attachments("info", "m1", folder="carrier", match=".xlsx")
+            again = self.m.save_attachments("info", "m1", folder="carrier", match=".xlsx")
+        self.assertEqual(out["saved"], ["handoffs/inbox/mail/carrier/m1_report_2026.xlsx"])
+        self.assertEqual((self.m.INBOX / "carrier" / "m1_report_2026.xlsx").read_bytes(), b"hello")
+        self.assertEqual(sum(1 for c in self.calls if "/attachments/" in c[2]), 1)  # the second run fetched nothing
+        self.assertEqual(again["saved"], out["saved"])
+    def test_path_parts_in_names_and_folders_cannot_leave_the_inbox(self):
+        routes = {("GET", "/messages/m1/attachments/a2"): {"data": base64.urlsafe_b64encode(b"x").decode()},
+                  ("GET", "/messages/m1"): self.WITH}
+        with self.fake(routes):
+            out = self.m.save_attachments("info", "m1", folder="../../etc", match=".pdf")
+        p = (self.tmp / out["saved"][0]).resolve()
+        self.assertTrue(str(p).startswith(str(self.m.INBOX.resolve())))
+
 class SharedMailbox(Base):
     """info@ is only an alias inside the owner mailbox: one token, two slices that never mix."""
     envs = ALIAS
