@@ -408,6 +408,16 @@ class OwnerCommands(Bridge):
         self.assertIn("Approved", got[2]["replies"][0]); self.assertIn("Undone", got[3]["replies"][0])
         self.assertEqual(self.state(a)[0], "pending")
 
+    def test_all_invoices_at_once_and_nothing_else(self):
+        inv = [self.book.add("ledger", "issue_invoice", f"Invoice #{n}", text=f"Invoice draft for #{n}, 1 234 Ft.")[0]["id"] for n in (1001, 1002, 1003)]
+        mail = self.add()
+        got = self.drive([["msg", OWNER, "/pending"], ["msg", OWNER, "/ok_invoices"], ["msg", OWNER, "/ok_invoices"]])
+        self.assertIn("/ok_invoices", got[0]["replies"][0])  # offered when two or more invoices wait
+        self.assertEqual(got[1]["replies"][0].count("Approved"), 3)
+        for i in inv: self.assertEqual(self.state(i), ("decided", "ok", "telegram"))
+        self.assertEqual(self.state(mail)[0], "pending")  # a customer e-mail is never swept along
+        self.assertIn("nothing", got[2]["replies"][0].lower())  # second time: nothing left to decide
+
     def test_several_items_need_an_id(self):
         a, b = self.add("One"), self.add("Two")
         got = self.drive([["msg", OWNER, "/ok"], ["msg", OWNER, "/ok nope"], ["msg", OWNER, "/drop too pushy"], ["msg", OWNER, "/pending"]])
