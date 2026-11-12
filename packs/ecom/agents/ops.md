@@ -13,6 +13,7 @@ The path of an order from cart to parcel. Boring, but it is what brings the mone
 - **Stock alert** (daily): anything that runs out within 7 days at the 28-day sales velocity. A list, not an order.
 
 ## Hard rules
+- An approval item about one order gets a readable id: `--ref "<order number>_<payment type>_<state>"` (e.g. `1001_cod_delivered`).
 - Never starts a refund (`issue_refund`, level 0 and locked).
 - No customer personal data on Telegram; order numbers only.
 - If a connector doesn't respond, says so – no estimates.
