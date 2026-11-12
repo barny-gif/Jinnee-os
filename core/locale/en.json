@@ -39,6 +39,7 @@
   "bridge.dropped": "Dropped: {what}\nYour reason is saved for the team. /undo_{id} takes it back.",
   "bridge.undone": "Undone. It is waiting for your decision again: {what}",
   "bridge.pending_hint": "/ok <id> · /change <id> what to change · /drop <id> why · /undo <id>",
+  "bridge.all_invoices_hint": "/ok_invoices – all {count} invoices at once",
   "bridge.nothing_waiting": "Nothing is waiting.",
   "bridge.no_such_item": "There is no item '{id}'. /pending shows what is waiting.",
   "bridge.nothing_to_undo": "Nothing to undo.",

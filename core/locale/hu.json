@@ -39,6 +39,7 @@
   "bridge.dropped": "Elvetve: {what}\nAz indokodat a csapat megjegyzi. Visszavonás: /undo_{id}",
   "bridge.undone": "Visszavonva. Újra a döntésedre vár: {what}",
   "bridge.pending_hint": "/ok <azonosító> · /change <azonosító> mi változzon · /drop <azonosító> miért · /undo <azonosító>",
+  "bridge.all_invoices_hint": "/ok_szamlak – mind a(z) {count} számla egyben",
   "bridge.nothing_waiting": "Semmi nem vár rád.",
   "bridge.no_such_item": "Nincs '{id}' azonosítójú tétel. A /pending megmutatja, mi vár rád.",
   "bridge.nothing_to_undo": "Nincs mit visszavonni.",

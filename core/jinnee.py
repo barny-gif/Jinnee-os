@@ -380,6 +380,8 @@ def decide(item_id, decision, note):
     if decision == "edit": return T("bridge.sent_back", what=what)
     return T("bridge.dropped", what=what, id=item_id)
 
+ALL_INVOICES = ("invoices", "szamlak", "számlák")
+
 def owner_command(text: str) -> str:
     """/ok k7qd · /ok_k7qd · /change k7qd shorter · /drop k7qd why · /undo k7qd · /pending · /schedule.
     The id may be left out when only one item fits."""
@@ -389,9 +391,16 @@ def owner_command(text: str) -> str:
     if word == "schedule": return SCHED.summary()
     if word == "status": return status_text()
     pending, decided, _ = BOOK.open_items()
+    invoices = [i for i in pending if i["action"] == "issue_invoice"]
     if word == "pending":
         rows = [f"• {alerts.line(BOOK, i)}: {BOOK.status(i)}" for i in pending + decided]
-        return "\n".join(rows) + "\n\n" + T("bridge.pending_hint") if rows else T("bridge.nothing_waiting")
+        hint = T("bridge.pending_hint") + ("\n" + T("bridge.all_invoices_hint", count=len(invoices)) if len(invoices) > 1 else "")
+        return "\n".join(rows) + "\n\n" + hint if rows else T("bridge.nothing_waiting")
+    # /ok_invoices (or /ok_szamlak): every invoice waiting for a decision approved at once; each one is still decided,
+    # undoable and carried out on its own, and nothing but invoices is touched
+    if word == "ok" and first.lower() in ALL_INVOICES and first not in {i["id"] for i in BOOK.read()[0]}:
+        if not invoices: return T("bridge.nothing_to_decide")
+        return "\n\n".join(decide(i["id"], "ok", rest) for i in invoices)
     fits = decided if word == "undo" else pending
     known = {i["id"] for i in BOOK.read()[0]}
     if first in known: target, note = first, rest
