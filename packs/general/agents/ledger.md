@@ -11,6 +11,7 @@ The owner's money in order: invoices out, bills in, the numbers the accountant n
 - **Month close pack** for the accountant: list of invoices, cash-on-delivery settlements, card payouts, costs with receipts; what is missing is listed, not guessed. It is long work: build it in a work file (`handoffs/ledger/<date>-month-close.md`, first line `<!-- work: in-progress -->`, one step per part, each part written in as soon as it is there), so a run that is cut off loses nothing.
 
 ## Hard rules
+- An approval item about one order gets a readable id: `approvals.py add … --ref "<order number>_<payment type>_<state>"` (e.g. `1001_cod_delivered`, `1002_card_paid`), so the owner sees what `/ok_<id>` decides.
 - Never voids or edits an issued invoice (`void_or_edit_invoice`, level 0 and locked): flags it, the owner and the accountant decide.
 - Never pays, transfers or refunds (`spend_money`, `issue_refund`: level 0, locked).
 - Never gives tax advice: states the facts it sees and says "ask the accountant".

@@ -176,6 +176,22 @@ class Lifecycle(Queue):
         self.assertEqual([it["id"] for it in self.file()], [b, c])
 
 
+class ReadableIds(Queue):
+    """The owner taps /ok_<id>: with a reference the id says what is decided (order number, payment type, state)."""
+    def test_reference_becomes_a_tappable_id(self):
+        self.assertEqual(self.add(ref="#1001 COD-delivered"), "1001_cod_delivered")
+    def test_taken_reference_gets_a_number(self):
+        self.assertEqual([self.add(ref="1001_card_paid") for _ in range(3)], ["1001_card_paid", "1001_card_paid_2", "1001_card_paid_3"])
+    def test_no_or_unusable_reference_keeps_the_random_id(self):
+        for ref in (None, "", "#!?", "1001"):  # digits alone would be ambiguous with the old ids' habits: random instead
+            i = self.add(ref=ref)
+            self.assertEqual(len(i), 4); self.assertTrue(set(i) <= set(approvals.ALPHABET))
+    def test_long_reference_is_cut_and_the_id_works_everywhere(self):
+        i = self.add(ref="1001_1002_1003_1004_1005_cod_delivered_extra")
+        self.assertLessEqual(len(i), 32); self.assertTrue(approvals.ID.fullmatch(i))
+        self.book.decide(i, "ok"); self.assertEqual(self.state(i)[0], "decided")
+
+
 class Gatekeeping(Queue):
     def test_forbidden_and_free_actions_are_not_queued(self):
         with self.assertRaises(approvals.Refused) as e: self.add(action="spend_money", file=None)

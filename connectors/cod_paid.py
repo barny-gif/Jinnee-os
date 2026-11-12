@@ -133,7 +133,9 @@ def run(raw, shipping, uploaded, now, act=False, shop=None, book=None, gate=None
     try:
         it, _ = (book or _book()).add("milo", ACTION, f"{len(new)} utánvétes rendelés fizetettre állítása (GLS 05)",
                                       summary=", ".join(f"{r['name']} {_money(r['total'])}" for r in new), text=item_text(new),
-                                      payload={"orders": new})
+                                      payload={"orders": new},
+                                      # readable /ok id: the order number(s), COD, what /ok does (set paid)
+                                      ref="_".join(r["name"].lstrip("#") for r in new[:3]) + "_cod_fizetett")
     except Exception as e:
         out["errors"].append(f"[COD paid queue] {type(e).__name__}: {e}"); return out
     for r in new: queued[r["name"]] = {"order_id": r["id"], "total": r["total"], "approval_id": it["id"], "at": stamp}

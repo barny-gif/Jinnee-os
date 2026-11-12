@@ -159,7 +159,16 @@ class Book:
     def log(self, who, line):
         store.append_line(self.brain / "decisions.log.md", f"- {time.strftime('%Y-%m-%d')} {who}: {line}")
 
-    def _new_id(self, taken):
+    def _new_id(self, taken, ref=None):
+        """A readable id when a reference is given (e.g. order number, payment type and state: '1041_cod_paid'), so the
+        owner sees what /ok_<id> decides; lowercase letters, digits and '_' only (a tappable Telegram command), at most 32
+        characters, '_2', '_3'… when taken. Without a reference: four random characters as before."""
+        if ref:
+            base = re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", str(ref).lower())).strip("_")[:28]
+            if base and not base.isdigit():
+                n, new = 1, base
+                while new in taken: n += 1; new = f"{base}_{n}"
+                return new
         while True:
             new = "".join(secrets.choice(ALPHABET) for _ in range(4))
             if new not in taken: return new
@@ -170,7 +179,7 @@ class Book:
         if it is None: raise Missing(texts.t("approvals.no_item", id=item_id))
         return it
 
-    def add(self, agent, action, title, summary="", text=None, file=None, reference=False, payload=None, replaces=None):
+    def add(self, agent, action, title, summary="", text=None, file=None, reference=False, payload=None, replaces=None, ref=None):
         """Ask the owner. → (item, warning). Refused when the action is forbidden; NotNeeded when no approval is required."""
         gate = self.gate.allowed(action)
         if gate.level == 0: raise Refused(f"{gate.reason}. Tell the owner in words instead of queueing it")
@@ -182,7 +191,7 @@ class Book:
                 old = self._find(items, replaces)
                 if old["state"] != "consumed":  # the earlier decision does not carry over to the new version
                     old.update(state="consumed", outcome="superseded", consumed_at=int(time.time()), finished_at=int(time.time()))
-            it = {**FIELDS, "id": self._new_id({i["id"] for i in items}), "agent": one_line(agent), "action": action,
+            it = {**FIELDS, "id": self._new_id({i["id"] for i in items}, ref), "agent": one_line(agent), "action": action,
                   "title": one_line(title), "summary": one_line(summary), "text": text, "file": file or None,
                   "outbound": (text is not None or bool(file)) and not reference, "payload": payload,
                   "replaces": replaces or None, "created_at": int(time.time())}
@@ -338,6 +347,7 @@ def main(argv):
     c.add_argument("--text", help="the exact text that will go out"); c.add_argument("--file", help="or the file that holds it (handoffs/… or brain/…)")
     c.add_argument("--reference", action="store_true", help="the text or file is background, not something that goes out")
     c.add_argument("--replaces", metavar="ID", help="the item this corrected version replaces")
+    c.add_argument("--ref", help="a readable id: order number, payment type, state (e.g. 1041_cod_delivered); the owner taps /ok_<id>")
     c = sub.add_parser("list", help="what is open"); c.add_argument("--all", action="store_true")
     for name in ("show", "consume"):
         sub.add_parser(name).add_argument("id")
@@ -347,7 +357,7 @@ def main(argv):
     book = Book()
     try:
         if a.cmd == "add":
-            item, warning = book.add(a.agent, a.action, a.title, a.summary, a.text, a.file, a.reference, replaces=a.replaces)
+            item, warning = book.add(a.agent, a.action, a.title, a.summary, a.text, a.file, a.reference, replaces=a.replaces, ref=a.ref)
             print(f"ASKED {item['id']}: waiting for the owner. Do nothing until `consume {item['id']}` says GO.")
             if warning: print(f"WARNING {warning}. The owner will see it as not sendable.")
         elif a.cmd == "list":
