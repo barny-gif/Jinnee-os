@@ -1,9 +1,11 @@
 """Load and merge packs. `PACKS=general,ecom python core/pack_loader.py --init`"""
-import json, os, sys, pathlib
+import json, os, sys, pathlib, shutil
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKS_DIR = ROOT / "packs"
 BRAIN = ROOT / "brain"
+# The shop's own design rules: the template is in git, the filled-in copy in brain/brand/ (never in git). tools/design_lint.py reads it.
+DESIGN_TEMPLATE = ROOT / "config" / "DESIGN.example.md"
 
 def load_pack(pack_id: str) -> dict:
     p = PACKS_DIR / pack_id / "pack.json"
@@ -59,6 +61,10 @@ if __name__ == "__main__":
         for name, content in defaults.items():
             f = BRAIN / name
             if not f.exists(): f.write_text(content, encoding="utf-8")
+        brand = BRAIN / "brand" / "DESIGN.md"
+        if not brand.exists() and DESIGN_TEMPLATE.exists():
+            brand.parent.mkdir(exist_ok=True); shutil.copy(DESIGN_TEMPLATE, brand)
+            print("brain/brand/DESIGN.md: the design template, filled in during onboarding (Brand).")
         if cfg.migrate(): print("brain/autonomy_config.json updated to the lockable format; your levels are kept.")
         print("brain/ ready. Agents:", ", ".join(m["agents"]))
     else:

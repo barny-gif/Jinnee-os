@@ -24,7 +24,9 @@ packs/       general (base) + vertical packs; a pack = agents/ + pack.json + onb
 connectors/  external systems; same operation set within a category → swappable
 dashboard/   simple web UI (FastAPI + one HTML file), domain via Caddy
 registry/    index.json – served by jinnee-os.com; updates come from here
-tools/       guard.py – keeps business data out of this public repo (with .githooks/ and .github/workflows/)
+tools/       guard.py – keeps business data out of this public repo (with .githooks/ and .github/workflows/);
+             design_lint.py, visual_check.py – the design checks; skills_fetch.py – the skills not kept in git
+.claude/     skills/ – design and email skills the agents use (third-party ones: THIRD_PARTY.md)
 ```
 
 ## Autonomy levels
@@ -69,6 +71,31 @@ work (a pull request address, a test result), never "someone is working on it".
 - Your time zone, quiet hours, another time or off per job: `schedule` in `config/business.yaml` (examples in
   `config/business.example.yaml`). `python3 core/scheduler.py plan` prints what would run when and starts nothing;
   `python3 core/scheduler.py check` checks your settings.
+
+## Design and email skills
+The agents run Claude Code in the install folder, so the skills in `.claude/skills/` are theirs to use. Third-party ones are pinned
+to one upstream commit, with their licences next to them (`THIRD_PARTY.md`):
+- **impeccable**: design, critique and polish of a page; its `detect` finds the template-made look. Forge may use it on its own.
+- **emails**: planning and writing email sequences (welcome, post-purchase, win-back). Muse and Echo use it. It writes drafts only:
+  every email to a customer is still a `send_customer_email` approval (locked, "asks you first").
+- **awesome-design-md**: the design systems of 83 well-known products, as patterns when you say "make it feel like …". Never a brand to copy.
+- **design-taste-frontend** (the taste skill): runs only when you start it by name, as `/design_taste_frontend <what to build>` on
+  Telegram, because it has strong taste of its own (no purple, a random palette) that would fight your brand. Fetched at install time.
+
+Before any page, shop section or email template reaches you, Forge runs three checks: `tools/design_lint.py` against your own
+design rules in `brain/brand/DESIGN.md` (filled in during onboarding from your brandbook; the template is `config/DESIGN.example.md`),
+Impeccable's `detect`, and `tools/visual_check.py`, which takes screenshots at phone, tablet and desktop size (`handoffs/visual/`)
+and reports console errors, missing files and pages wider than the screen. Where a check disagrees with your brand, you decide.
+- The screenshots need a headless browser: the installer sets it up (`python3 -m playwright install --with-deps chromium`; on Linux
+  this may ask for your password once). `python3 tools/visual_check.py --self-check` says whether it works and what to run if not.
+  `JINNEE_DESIGN_TOOLS=no` skips it (a small server where nobody builds pages).
+- No usage data is sent: every agent run has `DO_NOT_TRACK=1` and `IMPECCABLE_NO_TELEMETRY=1`.
+
+## Updating an install
+Installed directly on a machine: `cd ~/jinnee-os && git pull && pip3 install -r requirements.txt && python3 core/pack_loader.py --init
+&& python3 tools/skills_fetch.py sync && ./run.sh restart` (`--init` only adds what is missing and never overwrites your files; when a
+release adds the screenshot browser, also `python3 -m playwright install --with-deps chromium`, and put the path that
+`python3 tools/visual_check.py --self-check` prints into `.env` as `CHROME_PATH=`). In Docker: `git pull && docker compose up -d --build`.
 
 ## Requirements
 - A Linux VPS (Docker) **or** a Mac/Linux/Windows machine that stays on

@@ -11,3 +11,6 @@ forge-work/
 config/business.yaml
 config/*.tmp
 config/private_patterns.txt
+# Skills: the Impeccable engine is downloaded by its launcher; the taste skill is fetched by tools/skills_fetch.py (THIRD_PARTY.md)
+.claude/skills/impeccable/scripts/bin/
+.claude/skills/design-taste-frontend/

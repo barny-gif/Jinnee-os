@@ -9,6 +9,7 @@ Asks only for what the general round didn't cover. Output: appended to `brain/co
 
 ## 2. Brand
 - Brandbook, logo, colours, old posts somewhere? (link/folder → `brain/brand/`)
+- From those: fill in `brain/brand/DESIGN.md` together with the owner (colours with their jobs, fonts, corner radius, what to avoid). The design checks read its tokens; until they are there, only the general checks run.
 - Which products matter most right now?
 
 ## 3. Goals for the next 30 days

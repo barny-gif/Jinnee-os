@@ -57,6 +57,16 @@ TOOLS += GMAIL_READ + ["mcp__claude_ai_Gmail__create_draft"]
 TOOLS += [f"Bash({py} core/forge_git.py *)" for py in ("python3", "python")]
 # Forge needs to read API docs and run the connectors and tests it writes; still no curl, rm or free shell.
 TOOLS += ["WebFetch", "WebSearch"] + [f"Bash({py} {cmd})" for py in ("python3", "python") for cmd in ("connectors/*", "-m unittest *", "-I connectors/*")]
+# Skills (.claude/skills/, loaded by the CLI from this folder, see THIRD_PARTY.md): Skill runs the ones the agents may start
+# themselves (Impeccable, emails, awesome-design-md); the taste skill is by name only (disable-model-invocation).
+# The design checks Forge's file asks for before any UI reaches the owner: read-only lint, screenshots into handoffs/visual/,
+# the Impeccable detector; the taste skill's own scripts (node) when the owner started it by name. No free shell still.
+SKILLS = ROOT / ".claude" / "skills"
+IMPECCABLE = ".claude/skills/impeccable/scripts/impeccable"
+DESIGN_TOOLS = [f"Bash({py} tools/{prog}.py *)" for prog in ("design_lint", "visual_check") for py in ("python3", "python")]
+DESIGN_TOOLS += [f"Bash({launcher} *)" for launcher in (IMPECCABLE, f"sh {IMPECCABLE}", f"{ROOT}/{IMPECCABLE}", f"sh {ROOT}/{IMPECCABLE}")]
+DESIGN_TOOLS += [f"Bash(node {base}.claude/skills/design-taste-frontend/scripts/*)" for base in ("", f"{ROOT}/")]
+TOOLS += ["Skill"] + DESIGN_TOOLS
 GUARDED = [f"Edit(brain/{name})" for name in ("approvals.json", "autonomy_config.json", "alerts_state.json")]
 INTERRUPTED = "interrupted.json"  # the owner's run that stopped half-way: its task and work files, for /continue; the bridge's own
 GUARDED += [f"Edit(brain/{INTERRUPTED})"]
@@ -70,7 +80,8 @@ GUARDED += [f"Bash({py} core/memory.py compact{rest})" for py in ("python3", "py
 # A scheduled run (core/scheduler.py) has nobody watching it. It gets less: no building (Lovable, git, tests), writing only
 # in brain/ and handoffs/ (dontAsk refuses everything not allowed here), and JINNEE_UNATTENDED=1, with which the connectors
 # refuse every outgoing step and approvals.py refuses to hand out a decision.
-SCHEDULED_TOOLS = [t for t in TOOLS if not any(x in t for x in ("forge_git", "-m unittest", "Lovable__send_message", "Lovable__get_message", "Lovable__get_file_upload_url", "Gmail__create_draft"))]
+SCHEDULED_TOOLS = [t for t in TOOLS if not any(x in t for x in ("forge_git", "-m unittest", "Lovable__send_message", "Lovable__get_message", "Lovable__get_file_upload_url", "Gmail__create_draft"))
+                   and t not in DESIGN_TOOLS]  # building and checking UI is the owner's run, never a scheduled one
 SCHEDULED_TOOLS += ["Edit(brain/**)", "Edit(handoffs/**)"]
 # company.md holds only the owner's own statements: a run nobody watches reads it, never changes it. (An Edit rule covers every
 # file-writing tool, Write included; Write is not allowed anywhere on its own.) The owner's own runs are unchanged.
@@ -100,6 +111,20 @@ OWNER_COMMANDS = (("/pending", "what is waiting for a decision"), ("/ok", "appro
                   ("/undo", "take a decision back"), ("/schedule", "the scheduled runs"),
                   ("/status", "what is going on right now"),
                   ("/continue", "go on with unfinished work"), ("/new", "start a clean conversation"))
+SKILL_COMMAND = re.compile(r"/([a-z0-9][a-z0-9_-]*)(?:@\w+)?(?:\s+(.*))?", re.I | re.S)
+
+def skill_command(text: str):
+    """'/design_taste_frontend a sale page' → '/design-taste-frontend a sale page' when that skill is installed
+    (.claude/skills/<name>/SKILL.md), for the agent run, where the CLI starts the skill by its name; else None.
+    Telegram makes only [a-z0-9_] commands tappable, so _ stands for -. The bridge's own commands are never skills."""
+    m = SKILL_COMMAND.fullmatch(text.strip())
+    if not m: return None
+    name = m.group(1).lower().replace("_", "-")
+    if name.split("-")[0] in {c.lstrip("/") for c, _ in OWNER_COMMANDS}: return None
+    if not (SKILLS / name / "SKILL.md").is_file(): return None
+    rest = (m.group(2) or "").strip()
+    return f"/{name}" + (f" {rest}" if rest else "")
+
 def command_line() -> str:
     return T("bridge.commands", commands=" · ".join(c for c, _ in OWNER_COMMANDS))
 
@@ -111,7 +136,7 @@ FOREGROUND_RULE = """FINISH IN THIS RUN. This run ends when your answer is sent,
 - Never start a subagent (Forge or any other agent) or a long command in the background. Run it in the foreground and wait for its result in this same run. (Background running is switched off for these runs anyway.)
 - Too long for one run ({MINUTES} minutes)? Cut it into steps: do what fits now, writing into the work file (WORK IN PROGRESS below), and tell the owner what is done and that /continue goes on from the file.
 - Tell the owner only about work that is done, with its proof: the result itself, the pull request address, the test result. Never say that someone "is working on it", "has started" or "will report back": after your answer nobody is.
-- The owner's Telegram commands are exactly these, and no others exist: {COMMANDS}. Never suggest any other command (there is no /forge); for everything else the owner simply writes in plain words. /status answers at once even while you are working: the bridge itself says what is running, how many items wait for a decision, what is unfinished and what is scheduled next."""
+- The owner's Telegram commands are exactly these, and no others exist: {COMMANDS}. Never suggest any other command (there is no /forge); for everything else the owner simply writes in plain words. The one addition: a skill that runs only by its name (e.g. the taste skill) is started by the owner as /<skill name> with _ for - (/design_taste_frontend …); the bridge hands it to you as /design-taste-frontend. /status answers at once even while you are working: the bridge itself says what is running, how many items wait for a decision, what is unfinished and what is scheduled next."""
 
 def foreground_rule() -> str:
     return (FOREGROUND_RULE.replace("{MINUTES}", str(MINUTES))
@@ -153,8 +178,11 @@ def holding(kind, job=""):
 NO_BACKGROUND = {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}
 DROP_ENV = ("CLAUDE_AUTO_BACKGROUND_TASKS",)
 
+# The skills' tools send no usage data home: DO_NOT_TRACK is the common switch, IMPECCABLE_NO_TELEMETRY Impeccable's own.
+NO_TELEMETRY = {"DO_NOT_TRACK": "1", "IMPECCABLE_NO_TELEMETRY": "1"}
+
 def foreground(run_env):
-    return {**{k: v for k, v in run_env.items() if k not in DROP_ENV}, **NO_BACKGROUND}
+    return {**{k: v for k, v in run_env.items() if k not in DROP_ENV}, **NO_BACKGROUND, **NO_TELEMETRY}
 
 def command(message: str, unattended=False, conversation=True, session=None):
     """→ (the command, the environment). unattended: started by the schedule. conversation=False: a session of its own
@@ -449,6 +477,8 @@ async def on_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     AWAITING.clear()
     m = CONTINUE.fullmatch((update.message.text or "").strip())
     if m: return await go_on(update, ctx, m.group(1) or "")
+    skill = skill_command(update.message.text or "")
+    if skill: return await answer(update, skill)  # an installed skill by its name: an ordinary agent run that starts with it
     await say(update.message.reply_text, await asyncio.to_thread(owner_command, update.message.text or ""))
 
 async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):

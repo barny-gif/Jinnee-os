@@ -52,7 +52,9 @@ class Installer(unittest.TestCase):
         real = dict.fromkeys(os.path.dirname(shutil.which(c)) for c in ("bash", "python3", "cat", "cp", "uname", "mkdir", "rm", "basename"))
         self.env = {k: v for k, v in os.environ.items() if k not in OURS}
         self.env.update(HOME=str(self.home), PATH=os.pathsep.join([str(fakebin), *real]), FAKE_LOG=str(self.log),
-                        FAKE_SRC=str(src), PYTHONDONTWRITEBYTECODE="1")
+                        FAKE_SRC=str(src), PYTHONDONTWRITEBYTECODE="1",
+                        JINNEE_DESIGN_TOOLS="no")  # no browser download in a test; test_design_tools covers the step with a stand-in
+        self.fakebin = fakebin
 
     def calls(self, started=0):
         """What the stand-ins wrote down. started: how many backgrounded programs to wait for (they outlive the installer)."""
@@ -202,6 +204,44 @@ class Installer(unittest.TestCase):
         self.assertIn("TELEGRAM_OWNER_ID=… BUSINESS_NAME=… BUSINESS_VOICE=… bash", r.stderr)  # shows how to pass the answers
         self.assertEqual(self.calls(), [])  # not even git
         self.assertFalse(self.dir.exists())
+
+    def test_design_tools(self):
+        """The design step with a stand-in python3 for Playwright and the two tools (the rest is the real python3):
+        Linux asks Playwright for the browser with its system libraries, and the path that starts goes to .env."""
+        real = shutil.which("python3")
+        py = self.fakebin / "python3"
+        py.write_text(f"""#!/bin/sh
+case "$1 $2" in
+  "-m playwright") echo "python3 $*" >> "$FAKE_LOG"; exit 0 ;;
+esac
+case "$1" in
+  tools/skills_fetch.py) echo "python3 $*" >> "$FAKE_LOG"; exit 0 ;;
+  tools/visual_check.py) echo "python3 $*" >> "$FAKE_LOG"; [ -n "$NO_BROWSER" ] && exit 2; echo "ok /opt/fake/chrome"; exit 0 ;;
+esac
+exec "{real}" "$@"
+"""); py.chmod(0o755)
+        answers = {"JINNEE_MODE": "native", "TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_OWNER_ID": "4242", **BIZ}
+        self.env.pop("JINNEE_DESIGN_TOOLS")
+        r = self.no_terminal(answers)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        calls = [c for c in self.calls(started=2) if c.startswith("python3 ")]
+        self.assertEqual(calls[:3], ["python3 tools/skills_fetch.py sync",
+                                     "python3 -m playwright install " + ("--with-deps chromium" if sys.platform.startswith("linux") else "chromium"),
+                                     "python3 tools/visual_check.py --self-check"])
+        self.assertEqual(self.dotenv()["CHROME_PATH"], "/opt/fake/chrome")
+        self.assertIn("Screenshot browser ready.", r.stdout)
+        # the browser does not start: the install still finishes, and says what to run
+        shutil.rmtree(self.dir); self.log.unlink()
+        r = self.no_terminal({**answers, "NO_BROWSER": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("The screenshot browser does not start yet. Run: python3 -m playwright install --with-deps chromium", r.stdout)
+        self.assertNotIn("CHROME_PATH", self.dotenv())
+        self.assertEqual(len([c for c in self.calls(started=2) if c.startswith("nohup python3")]), 2)
+        # skipped on request
+        shutil.rmtree(self.dir); self.log.unlink()
+        r = self.no_terminal({**answers, "JINNEE_DESIGN_TOOLS": "no"})
+        self.assertIn("Design tools skipped (JINNEE_DESIGN_TOOLS=no).", r.stdout)
+        self.assertFalse([c for c in self.calls(started=2) if c.startswith("python3 ")])
 
     def test_no_terminal_with_variables_installs_without_questions(self):
         r = self.no_terminal({"JINNEE_MODE": "native", "TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_OWNER_ID": "4242",

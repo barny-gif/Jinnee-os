@@ -5,3 +5,4 @@ requests>=2.31
 PyYAML>=6
 pypdf>=4      # reads the text of a PDF the owner sends on Telegram (contracts, GLS settlements); pure Python, no system packages
 tzdata>=2024.1   # time zones for the schedule where the system has none (Windows, slim Docker images); zoneinfo falls back to it
+playwright>=1.47  # tools/visual_check.py: screenshots at phone/tablet/desktop size; the browser itself: python3 -m playwright install chromium

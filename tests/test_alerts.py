@@ -392,6 +392,36 @@ class Bridge(base.RepoCopy):
 
 
 class OwnerCommands(Bridge):
+    def test_an_installed_skill_by_name_goes_to_the_agent(self):
+        skills = self.root / ".claude" / "skills"
+        for name in ("design-taste-frontend", "ok-skill"):
+            (skills / name).mkdir(parents=True); (skills / name / "SKILL.md").write_text(f"---\nname: {name}\n---\n")
+        (skills / "half").mkdir()  # no SKILL.md: not a skill
+        got = self.drive([["msg", OWNER, "/design_taste_frontend a sale page"], ["msg", OWNER, "/design-taste-frontend"],
+                          ["msg", OWNER, "/half x"], ["msg", OWNER, "/nonsense"], ["msg", OWNER, "/ok_skill"],
+                          ["msg", STRANGER, "/design_taste_frontend"]])
+        self.assertEqual(got[0]["ran"], ["/design-taste-frontend a sale page"])  # the CLI starts the skill by this name
+        self.assertEqual(got[1]["ran"], ["/design-taste-frontend"])
+        for g in got[2:]: self.assertEqual(g["ran"], [])
+        self.assertTrue(got[2]["replies"][0].startswith("Commands:"))
+        self.assertEqual(got[5]["replies"], [])  # a stranger gets nothing, as with every command
+
+    def test_runs_have_telemetry_off_and_the_design_tools_only_in_the_owners_runs(self):
+        self.dotenv(TOKEN)
+        (self.root / "d.py").write_text(
+            'import json, sys\nsys.path.insert(0, "core")\nimport jinnee\n'
+            'print("RESULT " + json.dumps({"env": [jinnee.command("x", unattended=u)[1].get(k) for u in (False, True)'
+            ' for k in ("DO_NOT_TRACK", "IMPECCABLE_NO_TELEMETRY")], "tools": jinnee.TOOLS, "scheduled": jinnee.SCHEDULED_TOOLS}))\n')
+        r = self.run_py("d.py", {"DO_NOT_TRACK": "0"})  # even when the machine says otherwise
+        self.assertEqual(r.returncode, 0, r.stderr)
+        got = json.loads(r.stdout.split("RESULT ", 1)[1])
+        self.assertEqual(got["env"], ["1"] * 4)
+        for t in ("Bash(python3 tools/design_lint.py *)", "Bash(python3 tools/visual_check.py *)",
+                  "Bash(.claude/skills/impeccable/scripts/impeccable *)", "Bash(node .claude/skills/design-taste-frontend/scripts/*)"):
+            self.assertIn(t, got["tools"]); self.assertNotIn(t, got["scheduled"])
+        self.assertIn("Skill", got["tools"]); self.assertIn("Skill", got["scheduled"])  # a skill is instructions; its tools are gated
+        self.assertFalse([t for t in got["tools"] if t in ("Bash", "Bash(*)") or t.startswith(("Bash(node *", "Bash(sh *"))])
+
     def test_ok_is_recorded_by_the_bridge_not_the_agent(self):
         a = self.add()
         got = self.drive([["msg", OWNER, f"/ok {a}"], ["msg", OWNER, f"/ok {a}"]])
