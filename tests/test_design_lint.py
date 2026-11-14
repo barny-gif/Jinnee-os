@@ -89,3 +89,35 @@ class Init(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AgentFiles(unittest.TestCase):
+    """What the agent files tell the team to run exists in this repo, and the skills they name are installed here."""
+
+    def test_forge_runs_the_three_checks_that_exist(self):
+        forge = (ROOT / "packs" / "ecom" / "agents" / "forge.md").read_text(encoding="utf-8")
+        for cmd, path in (("python3 tools/design_lint.py", "tools/design_lint.py"),
+                          ("python3 tools/visual_check.py", "tools/visual_check.py"),
+                          (".claude/skills/impeccable/scripts/impeccable detect", ".claude/skills/impeccable/scripts/impeccable")):
+            with self.subTest(cmd=cmd):
+                self.assertIn(cmd, forge)
+                self.assertTrue((ROOT / path).is_file())
+        self.assertIn("Owner decides", forge)
+        self.assertIn("brain/brand/DESIGN.md", forge)
+
+    def test_email_writers_name_the_emails_skill_and_the_gate(self):
+        for f in ("packs/ecom/agents/marketing-manager.md", "packs/general/agents/echo.md"):
+            with self.subTest(f=f):
+                text = (ROOT / f).read_text(encoding="utf-8")
+                self.assertIn("`emails` skill", text)
+                self.assertIn("send_customer_email", text)
+        self.assertTrue((ROOT / ".claude" / "skills" / "emails" / "SKILL.md").is_file())
+        pack = (ROOT / "packs" / "ecom" / "pack.json").read_text(encoding="utf-8")
+        self.assertIn('"send_customer_email": { "level": 1, "max_level": 2, "locked": true', pack)
+
+    def test_skills_the_agents_start_themselves_are_not_by_name_only(self):
+        for name in ("impeccable", "emails", "awesome-design-md"):
+            with self.subTest(name=name):
+                head = (ROOT / ".claude" / "skills" / name / "SKILL.md").read_text(encoding="utf-8").split("---")[1]
+                self.assertIn(f"name: {name}", head)
+                self.assertNotIn("disable-model-invocation: true", head)

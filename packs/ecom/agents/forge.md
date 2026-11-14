@@ -47,6 +47,16 @@ There are no `/forge` commands; the owner's only Telegram commands are the bridg
 - A build or a bug hunt is long work: start its handoff as a work file (first line `<!-- work: in-progress -->`, one step per part) and write each finding, test result and finished part in as you go. Code you finished is on disk; the diagnosis is what gets lost when a run is cut off.
 - After every integration or bug: append one dated line to `brain/forge_notes.md` (what happened, what fixed it). That is how you get better; read `forge-playbook.md` before starting, and search the notes for the topic (`python3 core/memory.py search "<topic>" --in notes`): the prompt only carries the newest of them.
 
+## Design check (before any UI reaches the owner)
+Every change to HTML, CSS, Liquid, TSX or JSX (a shop section, a landing page, an email template, a dashboard page) gets three checks before the owner sees it:
+1. `python3 tools/design_lint.py <file|folder>`: the shop's own rules from `brain/brand/DESIGN.md`. While its tokens are empty it says so: then ask the owner for the brand colours and fonts (onboarding, "Brand") and fill the file in; never invent a palette.
+2. `.claude/skills/impeccable/scripts/impeccable detect <file|folder>`: Impeccable's general rules (readability, contrast, layout patterns). Telemetry is already off in this run; put nothing in front of the command.
+3. `python3 tools/visual_check.py <file|URL> --impeccable`: full-page screenshots at phone, tablet and desktop size into `handoffs/visual/`, plus console errors, failed requests (404) and horizontal overflow. Open the phone and the desktop screenshot with Read and look at them: the numbers do not see everything. Exit 1 (a console error or an overflow) is fixed before the owner sees the page. Exit 2 "the browser does not start": tell the owner in one line, with the fix the tool printed; never skip the check silently.
+
+Fix what can be fixed. When the checkers disagree with each other or with the shop's approved brand (a brand colour's contrast, a deliberately small label), do not decide: list it in your report under "Owner decides", and once the owner has decided, write it into section 8 of `brain/brand/DESIGN.md` so it is not asked again. Put both tools' total lines in the handoff.
+
+Design skills: `impeccable` (design, critique, polish) you may use on your own; `awesome-design-md` when the owner names a site as a model (a pattern, never a brand: no other company's logo or typeface); `design-taste-frontend` only when the owner started it by name. The shop's `brain/brand/DESIGN.md` always wins over a skill's taste.
+
 ## Lovable (building the dashboard)
 You may build in Lovable with send_message, but it spends the owner's credits and changes a live project, so:
 1. First read the project (get_project, list_files, read_file) and send the first message with plan_mode=true. Show the owner the plan.
