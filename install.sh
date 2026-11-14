@@ -91,6 +91,24 @@ set_env(){ # set_env KEY VALUE: rewrite the KEY= line of .env. The value is plai
   cat .env.new > .env && rm -f .env.new
 }
 
+design_tools(){ # the design checks' screenshot browser and the skills fetched at a pinned commit (THIRD_PARTY.md).
+  # Nothing needs them to start, so a failure here only warns, with the command for later. JINNEE_DESIGN_TOOLS=no skips
+  # them (a small server where nobody builds pages: the browser is a few hundred MB).
+  if [ "${JINNEE_DESIGN_TOOLS:-yes}" = no ]; then echo "  Design tools skipped (JINNEE_DESIGN_TOOLS=no)."; return 0; fi
+  say "Design tools (the skills, and a headless browser for page screenshots)…"
+  python3 tools/skills_fetch.py sync >/dev/null 2>&1 || echo "  Not every design skill could be fetched now. Later: python3 tools/skills_fetch.py sync"
+  # On Linux the browser also needs system libraries; Playwright installs them with sudo (it may ask for your password).
+  if [ "$PLAT" = linux ]; then python3 -m playwright install --with-deps chromium >/dev/null 2>&1 || python3 -m playwright install chromium >/dev/null 2>&1 || true
+  else python3 -m playwright install chromium >/dev/null 2>&1 || true; fi
+  local chrome
+  if chrome="$(python3 tools/visual_check.py --self-check 2>/dev/null)"; then
+    set_env CHROME_PATH "${chrome#ok }"  # the taste skill finds the browser here
+    echo "  Screenshot browser ready."
+  else
+    echo "  The screenshot browser does not start yet. Run: python3 -m playwright install --with-deps chromium   then check: python3 tools/visual_check.py --self-check"
+  fi
+}
+
 main(){
   say "Jinnee OS installer"
   case "$(uname -s)" in Linux) PLAT=linux;; Darwin) PLAT=mac;; *) echo "On Windows use install.ps1"; exit 1;; esac
@@ -200,6 +218,7 @@ main(){
     if [ "$TTY" = yes ]; then say "Claude login (one time):"; claude login <&3 || true
     else LOGIN_LATER="claude login"; fi
     pip3 install -q -r requirements.txt --break-system-packages 2>/dev/null || pip3 install -q -r requirements.txt
+    design_tools
     bash run.sh restart  # running it again replaces the running copy; it never adds a second one
   fi
   say "Done. Message $NAME on Telegram and open: http://localhost:8080"

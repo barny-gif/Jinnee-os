@@ -26,6 +26,14 @@ $env:PACKS = $packs; python core\pack_loader.py --init
 if (Test-Path config\business.yaml) { Write-Host "config\business.yaml is already here: kept as it is." }
 else { python core\business.py setup; if ($LASTEXITCODE -ne 0) { throw "config\business.yaml could not be written." } }
 pip install -q -r requirements.txt
+# Design tools: the skills fetched at a pinned commit (THIRD_PARTY.md) and a headless browser for page screenshots.
+# Nothing needs them to start, so a failure only warns, with the command for later.
+python tools\skills_fetch.py sync | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Host "Not every design skill could be fetched now. Later: python tools\skills_fetch.py sync" }
+python -m playwright install chromium | Out-Null
+$chrome = python tools\visual_check.py --self-check 2>$null
+if ($LASTEXITCODE -eq 0) { Add-Content .env ("CHROME_PATH=" + ($chrome -replace '^ok ','')) }
+else { Write-Host "The screenshot browser does not start yet. Later: python -m playwright install chromium" }
 claude login
 Start-Process python -ArgumentList "core\jinnee.py" -WindowStyle Hidden
 Start-Process python -ArgumentList "dashboard\app.py" -WindowStyle Hidden

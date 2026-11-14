@@ -26,6 +26,10 @@ EXAMPLE_DOMAIN = re.compile(r"(^|\.)(example(-[a-z0-9-]+)?\.[a-z.]+|[a-z0-9-]+\.
                             r"users\.noreply\.github\.com|jinnee-os\.com|[a-z]\.[a-z]{2,3})$", re.I)
 EXAMPLE_HANDLES = {"demo", "example", "example-shop", "your-store", "your-shop", "yourstore", "test", "shop", "store", "my-store"}
 NOREPLY = {"noreply@anthropic.com"}
+# Third-party skills copied unchanged from their upstream (THIRD_PARTY.md). Their public contact lines and encoded data
+# (a font index full of digit runs) are not a business's data, so the phone and e-mail patterns skip them; tokens, store
+# handles and your own words are still checked there. Only these exact folders: a skill of our own is checked in full.
+VENDORED = (".claude/skills/impeccable/", ".claude/skills/awesome-design-md/library/", ".claude/skills/emails/")
 
 PHONE = re.compile(r"(?<![\w+])(?:\+36|06)[ /-]?(?:1|[2-9]\d)[ /-]?\d{3}[ -]?\d{3,4}(?!\d)")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})")
@@ -62,12 +66,12 @@ def private_patterns(path=None):
     return out
 
 
-def findings(text: str, message=False, private=()):
-    """Every problem in one text: [(what, masked match)]."""
+def findings(text: str, message=False, private=(), contacts=True):
+    """Every problem in one text: [(what, masked match)]. contacts=False: no phone and e-mail check (vendored files)."""
     out = []
-    for m in PHONE.finditer(text):
+    for m in (PHONE.finditer(text) if contacts else ()):
         if re.sub(r"\D", "", m.group(0))[-7:] not in FAKE_SUBSCRIBERS: out.append(("a phone number", mask(m.group(0))))
-    for m in EMAIL.finditer(text):
+    for m in (EMAIL.finditer(text) if contacts else ()):
         if m.group(0).lower() not in NOREPLY and not EXAMPLE_DOMAIN.search(m.group(1)): out.append(("an e-mail address", mask(m.group(0))))
     for m in SHOPIFY.finditer(text):
         if m.group(1).lower() not in EXAMPLE_HANDLES: out.append(("a real Shopify store handle", mask(m.group(0))))
@@ -98,8 +102,13 @@ def git(*args) -> str:
     return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=True).stdout
 
 
+def vendored(path: str) -> bool:
+    return path.replace("\\", "/").startswith(VENDORED)
+
+
 def check_lines(lines, private=()):
-    return [f"{f}:{n}: {what} ({shown})" for f, n, text in lines for what, shown in findings(text, private=private)]
+    return [f"{f}:{n}: {what} ({shown})" for f, n, text in lines
+            for what, shown in findings(text, private=private, contacts=not vendored(f))]
 
 
 def check_message(text, where="commit message", private=()):
