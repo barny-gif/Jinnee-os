@@ -3,3 +3,5 @@ logs/
 forge-work/
 config/business.yaml
 config/private_patterns.txt
+.claude/skills/impeccable/scripts/bin/
+.claude/skills/design-taste-frontend/

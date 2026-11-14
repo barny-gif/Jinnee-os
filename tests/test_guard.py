@@ -56,6 +56,18 @@ class Patterns(unittest.TestCase):
         self.assertEqual(guard.added_lines(diff), [("x.py", 1, "new line"), ("x.py", 10, "mail " + MAIL), ("x.py", 11, "ok")])
         self.assertEqual(guard.check_lines(guard.added_lines(diff)), ["x.py:10: an e-mail address (" + guard.mask(MAIL) + ")"])
 
+    def test_vendored_skills_skip_contact_patterns_only(self):
+        token = "ghp_" + "A" * 36
+        lines = [(".claude/skills/awesome-design-md/library/x/DESIGN.md", 1, "see " + MAIL),
+                 (".claude/skills/impeccable/scripts/data/font-index.json", 1, "0h" + PHONE),
+                 (".claude/skills/emails/SKILL.md", 2, "key " + token)]
+        self.assertEqual(guard.check_lines(lines), [".claude/skills/emails/SKILL.md:2: a GitHub token (" + guard.mask(token) + ")"])
+        priv = [("a private word", guard.re.compile("kis bolt", guard.re.I))]
+        self.assertEqual(len(guard.check_lines([(".claude/skills/emails/SKILL.md", 3, "Kis Bolt")], priv)), 1)
+        # only the listed upstream folders: a skill of our own, or a file elsewhere, is checked in full
+        for f in (".claude/skills/own-skill/SKILL.md", "packs/ecom/agents/x.md", "x/.claude/skills/emails/a.md"):
+            with self.subTest(f=f): self.assertEqual(len(guard.check_lines([(f, 1, "see " + MAIL)])), 1)
+
     def test_the_repo_itself_is_clean(self):
         files = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split()
         if not files: self.skipTest("not a git checkout")
