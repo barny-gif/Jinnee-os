@@ -599,10 +599,11 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
     shipping, gls_err = _shipping(uploaded, gls, now)
     fulfilled, fulfill_errs, fulfilled_now = _fulfillments(every, shipping, shop, now, act)  # an older open order may still be picked up; the switch-on moment still limits it
     fulfill_err = "; ".join(dict.fromkeys(fulfill_errs)) or None
-    # Delivered COD orders → paid in Shopify (SHOPIFY_AUTO_MARK_PAID, off by default): one approval item a day, or auto at level 2
+    # COD orders GLS delivered AND transferred (carrier ledger) → paid in Shopify (SHOPIFY_AUTO_MARK_PAID, off by default):
+    # one approval item a day, or auto at level 2
     try: cod = cod_paid.run(every, shipping, uploaded, now, act=act, shop=shop)
-    except Exception as e: cod = {"mode": cod_paid.mode(), "ready": [], "queued": None, "marked": [], "mismatch": [], "note": None,
-                                  "errors": [f"[COD paid] {type(e).__name__}: {e}"]}
+    except Exception as e: cod = {"mode": cod_paid.mode(), "ready": [], "queued": None, "marked": [], "mismatch": [], "unclear": [],
+                                  "waiting": [], "late": [], "marked_rows": [], "note": None, "errors": [f"[COD paid] {type(e).__name__}: {e}"]}
     cod_err = "; ".join(dict.fromkeys(cod["errors"])) or None
     # Carrier ledger from the carrier's e-mails (GLS_LEDGER_ACCOUNT set): read at most once an hour, only when really sending
     ledger_err = None
@@ -718,7 +719,8 @@ def push(send="no", days=DAYS, shop=None, bill=None, gls=None, history="auto"):
                            ("drafts" if send == "yes" else "would_draft"): a["drafts"], "held": a["held"]}
     c = payload.pop("cod_paid")  # for the log only: the site's payload stays as it was
     count["cod_paid"] = {"mode": c["mode"], "ready": c["ready"], "queued": c["queued"], "marked": c["marked"],
-                         "mismatch": c["mismatch"], "note": c["note"]}
+                         "mismatch": c["mismatch"], "unclear": c.get("unclear", []), "waiting_for_transfer": c.get("waiting", []),
+                         "late": c.get("late", []), "note": c["note"]}
     b = payload["billing"]
     count["billing"] = None if b is None else {"bank_accounts": len(b["bank_accounts"]), "invoices": len(b["invoices"]),
                                                "paid": sum(1 for i in b["invoices"] if i["payment_status"] == "paid"),
