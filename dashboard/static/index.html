@@ -6,7 +6,7 @@
 <title>{{NAME}}</title>
 <style>
 :root{--paper:#F3F5F2;--ink:#17262B;--mute:#5F7177;--line:#D4DBD6;--ok:#2F7D5B;--warn:#B8641B;--bad:#A8382F;--panel:#FFFFFF}
-@media (prefers-color-scheme:dark){:root{--paper:#15201F;--ink:#E7EDE9;--mute:#9BAAA6;--line:#2B3A38;--panel:#1C2A28}}
+@media (prefers-color-scheme:dark){:root{--paper:#15201F;--ink:#E7EDE9;--mute:#9BAAA6;--line:#2B3A38;--panel:#1C2A28;--ok:#4FAE82;--warn:#D9893F;--bad:#E5776B}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.5 Georgia,"Times New Roman",serif}
 header{padding:28px 24px 8px;max-width:960px;margin:0 auto}
@@ -39,6 +39,7 @@ button.ok{border-color:var(--ok);color:var(--ok)}button.drop{border-color:var(--
 .keyform input{font:15px system-ui,sans-serif;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);min-width:0}
 .keyform input:focus-visible{outline:2px solid var(--ok);outline-offset:1px}
 .keyform .acts{align-self:end}
+#keys .row{flex-wrap:wrap;row-gap:2px}#keys .row>span:first-child{overflow-wrap:anywhere}
 .hint{color:var(--mute);font-family:system-ui,sans-serif;font-size:14px;margin:8px 0 0}
 @media(min-width:760px){.two{display:grid;grid-template-columns:1fr 1fr;gap:28px}.keyform{grid-template-columns:1fr 1fr auto}}
 </style>

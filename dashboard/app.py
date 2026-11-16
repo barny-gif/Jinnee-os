@@ -197,7 +197,7 @@ def keys(req: Request):
     try: stored, err = vault.names(), ""
     except vault.VaultError as e: stored, err = [], str(e)
     plain = sorted(vault.plain_secrets())
-    try: found = vault.doctor(ROOT)
+    try: found = vault.doctor(ROOT, check_env=False)
     except Exception as e: found = [("problem", type(e).__name__)]
     known = known_keys()
     rows = [{"name": n, "used_by": known.get(n, ""), "where": "plain" if n in plain else "stored" if n in stored else "unset"}

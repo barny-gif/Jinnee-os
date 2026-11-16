@@ -314,7 +314,7 @@ def _inside(child: pathlib.Path, parent: pathlib.Path) -> bool:
         return False
 
 
-def doctor(root=None, deep=True) -> list:
+def doctor(root=None, deep=True, check_env=True) -> list:
     """[(level, message)]; level is "problem" or "note". The messages name files and keys, never a value."""
     root = pathlib.Path(root or ROOT)
     out = []
@@ -325,7 +325,7 @@ def doctor(root=None, deep=True) -> list:
             values = get_all()
         except VaultError as e:
             out.append(("problem", "the key store cannot be opened: %s" % e))
-    left = sorted(plain_secrets(root / ".env"))
+    left = sorted(plain_secrets(root / ".env")) if check_env else []  # the dashboard shows these in its own box
     if left:
         out.append(("problem", ".env still holds keys in plain text: %s. Move them: python3 core/vault.py import"
                     % ", ".join(left)))
