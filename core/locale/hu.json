@@ -307,8 +307,8 @@
   "order.invoice_issue_failed": "{order}: a vevő átvette a csomagot, de a számlát nem sikerült kiállítani: {why}. Nézz rá, kérlek.",
   "order.invoice_no_draft": "{order}: a vevő átvette a csomagot, de nem találok hozzá számla-piszkozatot a Billingóban, így nem tudom kiállítani. Nézz rá, kérlek.",
   "order.returned_cod": "{order}: a csomag visszament, a vevő nem vette át (utánvét, {amount}). A számla piszkozat marad, nem állítom ki.",
+  "order.invoice_item": "Végrehajtás a GO után (kiállítás előtt a program újra ellenőrzi, hogy a GLS kézbesítette-e, 05-ös státusz):\n{command}",
   "order.cod_paid": "A GLS átutalta a {order} utánvétjét ({amount}), a Shopifyban fizetettre állítottam.",
-  "order.cod_queued": "A GLS átutalta ezeknek az utánvétjét: {orders}. Fizetettre állíthatom őket a Shopifyban? (jóváhagyásra vár)",
   "order.cod_mismatch": "{order}: nem állítottam fizetettre, mert az utánvét összege nem egyezik a rendelés végösszegével. Nézz rá, kérlek.",
   "order.cod_unclear": "{order}: nem állítottam fizetettre, mert a GLS elszámolásában nem egyértelmű, melyik tétel tartozik hozzá. Nézz rá, kérlek.",
   "order.cod_late": "{order}: a vevő több mint {days} napja átvette, de a GLS még nem utalta át az utánvétet. Érdemes rákérdezni a GLS-nél."

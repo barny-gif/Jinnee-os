@@ -307,8 +307,8 @@
   "order.invoice_issue_failed": "{order}: the customer took the parcel, but the invoice could not be issued: {why}. Please take a look.",
   "order.invoice_no_draft": "{order}: the customer took the parcel, but I find no invoice draft for it in Billingo, so I cannot issue it. Please take a look.",
   "order.returned_cod": "{order}: the parcel went back, the customer did not take it (cash on delivery, {amount}). The invoice stays a draft; I do not issue it.",
+  "order.invoice_item": "After the GO (before issuing, the program checks again that GLS delivered it, status 05):\n{command}",
   "order.cod_paid": "GLS transferred the cash on delivery of {order} ({amount}); I set it paid in Shopify.",
-  "order.cod_queued": "GLS transferred the cash on delivery of: {orders}. May I set them paid in Shopify? (waiting for your approval)",
   "order.cod_mismatch": "{order}: not set paid, because the cash-on-delivery amount differs from the order total. Please take a look.",
   "order.cod_unclear": "{order}: not set paid, because the GLS settlement does not show clearly which row belongs to it. Please take a look.",
   "order.cod_late": "{order}: the customer took it more than {days} days ago, but GLS has not transferred the cash on delivery yet. Worth asking GLS."
