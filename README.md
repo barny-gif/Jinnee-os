@@ -18,7 +18,7 @@ Windows: `irm https://raw.githubusercontent.com/barny-gif/Jinnee-os/main/install
 
 ## Layout
 ```
-core/        the core: Jinnee, delegation, memory, autonomy levels, heartbeat, registry client, business settings
+core/        the core: Jinnee, delegation, memory, autonomy levels, heartbeat, registry client, business settings, key store
 config/      business.example.yaml (template); your own business.yaml stays here and out of git
 packs/       general (base) + vertical packs; a pack = agents/ + pack.json + onboarding.md
 connectors/  external systems; same operation set within a category → swappable
@@ -101,12 +101,16 @@ Installed directly on a machine: `cd ~/jinnee-os && git pull && pip3 install -r 
 && python3 tools/skills_fetch.py sync && ./run.sh restart` (`--init` only adds what is missing and never overwrites your files; when a
 release adds the screenshot browser, also `python3 -m playwright install --with-deps chromium`, and put the path that
 `python3 tools/visual_check.py --self-check` prints into `.env` as `CHROME_PATH=`). In Docker: `git pull && docker compose up -d --build`.
+An install from before the key store: after the update, open the dashboard's **Your keys** box and press *Move them into the
+encrypted store* (or `python3 core/vault.py import`; in Docker `docker compose exec jinnee python core/vault.py import`), then
+restart (`./run.sh restart`, or `docker compose up -d`). In Docker the master key is then in `./keys`, inside the install folder:
+move it out as "Your keys" says.
 
 ## Requirements
 - A Linux VPS (Docker) **or** a Mac/Linux/Windows machine that stays on
 - A Claude Pro/Max subscription (Claude Code CLI runs on it) – your account, your cost
 - A Telegram bot token (@BotFather, 2 minutes) and your own Telegram user ID (@userinfobot): the bot obeys that user only and does not start without it
-- API keys for the connectors you use (`.env`)
+- API keys for the connectors you use (pasted on the dashboard, kept encrypted: "Your keys" below)
 
 ## First run
 1. `install.sh` asks for: VPS or local machine, Telegram token, your Telegram user ID, the agent's name, which pack, and then your
@@ -132,8 +136,8 @@ the parcel label, which invoice series the Payments view shows, and which order 
   --goods "1× Wooden puzzle" --cod 7350` prints a label note exactly as it would go to GLS, without sending anything.
 - A value a step needs and that is missing **stops that step**: no parcel label and no invoice list goes out with a guessed value,
   and the error names the key to set. The team tells you when the file is missing, instead of inventing your name or tone.
-- What goes where: `.env` holds *how the system connects* (API keys, tokens, the Shopify store handle, the GLS pickup address,
-  VAT); `config/business.yaml` holds *who you are* and what goes on your documents. `JINNEE_LANG` in `.env` still works and
+- What goes where: `.env` holds *how the system connects* (the Shopify store handle, the GLS pickup address, VAT; the API keys
+  and tokens themselves go to the encrypted key store, see "Your keys"); `config/business.yaml` holds *who you are* and what goes on your documents. `JINNEE_LANG` in `.env` still works and
   wins over `business.language`; `BILLINGO_PAYMENTS_PREFIX` is no longer read (an old value that differs from
   `billing.invoice_prefix` stops the Payments view until you delete the `.env` line).
 - **The system's own words follow the language too.** What the bridge and the dashboard say by themselves (alerts, `/status`,
@@ -141,6 +145,34 @@ the parcel label, which invoice series the Payments view shows, and which order 
   `hu` and `en` are built in; any other language gets these in English, and adding `core/locale/de.json` (same keys as
   `en.json`) adds one. `python3 core/texts.py check` lists what a language file is missing. The commands (`/ok`, `/pending`…)
   stay the same in every language, and so do the logs and the agents' instructions.
+
+## Your keys
+API keys and tokens (Telegram, Shopify, Billingo, Gmail, GLS…) are not kept in plain text. They are in an encrypted key store,
+`config/secrets.vault.json` (AES-256-GCM, each value bound to its name), and the programs read them when they start (`core/env.py`
+reads `.env` first, then the store; a variable already set in the environment still wins, an empty `KEY=` line does not).
+- **Adding or changing a key:** the dashboard's **Your keys** box. Pick the name, paste the key, *Store encrypted*. The page never
+  shows a key again, only where it is (stored encrypted / in `.env`, readable / not set). The team's next run uses it; Jinnee's
+  own Telegram connection needs a restart for a new bot token. Without the dashboard: `python3 core/vault.py set NAME` (asks for the
+  value without showing it; never put a key on the command line, it stays in the shell history).
+- **The installer** asks for the Telegram token as before, puts it into the store, and leaves `.env` without it.
+- **Keys left in `.env`** (an older install, or one typed in by hand): the box lists them in red with a button to move them;
+  after your OK they are encrypted, checked to read back the same, and only then removed from `.env`. No plain copy is kept.
+- **The check:** `python3 core/vault.py doctor` (and the same box) reports any key still readable: a line in `.env`, a `.env`
+  copy saved under another name (`.env.bak`, `.env~`, a typo), a stored key's value pasted into a note, a log or the team's memory,
+  and files other users of the machine can read. It names the file and the key, never the value.
+- **The master key** is 32 random bytes in a file only you can read, kept **outside the install folder**, so a copy, zip or backup
+  of the folder carries no key: `~/.config/jinnee-os/master.key` directly on a machine (`%APPDATA%\jinnee-os` on Windows); in
+  Docker the installer writes that folder into `.env` as `JINNEE_KEY_DIR` and `docker-compose.yml` mounts it at `/run/jinnee-keys`.
+  **Back it up** somewhere else (a password manager): without it the stored keys cannot be read, only typed in again. To move it
+  out of an older Docker install: `mkdir -p ~/.config/jinnee-os && sudo mv keys/master.key ~/.config/jinnee-os/ && sudo chown
+  "$USER" ~/.config/jinnee-os/master.key && chmod 600 ~/.config/jinnee-os/master.key`, add `JINNEE_KEY_DIR=$HOME/.config/jinnee-os`
+  (written out in full) to `.env`, then `docker compose up -d`.
+- **What it protects, honestly.** On a VPS the master key and the store are on the same disk: there is no hardware key safe. So
+  this guards against *copies and leaks of files*: a backup or zip, a mistyped save, a commit, a screen share, an agent or a person
+  reading the folder. It does **not** guard against someone who can read the master key file as well: root on the server, a stolen
+  disk image, or any program running as the same user (in Docker: anything inside the container, the agents included). The running
+  programs hold the keys in memory and in their environment, as every setup must. For a VPS, an encrypted disk (LUKS) adds the next
+  layer.
 
 ## Keeping your business out of the repo
 This repo is public. Two checks keep a business's own data out of it:
