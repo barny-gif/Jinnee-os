@@ -26,6 +26,10 @@ $env:PACKS = $packs; python core\pack_loader.py --init
 if (Test-Path config\business.yaml) { Write-Host "config\business.yaml is already here: kept as it is." }
 else { python core\business.py setup; if ($LASTEXITCODE -ne 0) { throw "config\business.yaml could not be written." } }
 pip install -q -r requirements.txt
+# The keys move from .env into the encrypted key store (core\vault.py); its master key goes to %APPDATA%\jinnee-os, outside this folder.
+python core\vault.py import --yes | Out-Null
+if ($LASTEXITCODE -eq 0) { Write-Host "Your keys are in the encrypted key store, not in .env. Back up $env:APPDATA\jinnee-os\master.key somewhere safe." }
+else { Write-Host "Your keys are still in .env in plain text. Later: python core\vault.py import" }
 # Design tools: the skills fetched at a pinned commit (THIRD_PARTY.md) and a headless browser for page screenshots.
 # Nothing needs them to start, so a failure only warns, with the command for later.
 python tools\skills_fetch.py sync | Out-Null
