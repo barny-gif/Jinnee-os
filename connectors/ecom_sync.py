@@ -32,6 +32,7 @@ import order_auto
 import complaints
 import cod_paid
 import gls_ledger
+import site_commands
 LEDGER_EVERY = 3600  # seconds between two reads of the carrier's mails
 _ledger_try = {"at": 0.0}
 
@@ -764,6 +765,9 @@ def loop(seconds=""):
             c = out.get("cod_paid") or {}
             if c.get("queued"): print(f"ecom sync: COD set-to-paid queued for approval ({c['queued']}): {', '.join(c['ready'])}", flush=True)
             if c.get("marked"): print(f"ecom sync: COD set to paid in Shopify: {', '.join(c['marked'])}", flush=True)
+            if site_commands._on():  # the owner's exchange-label commands from the site (connectors/site_commands.py)
+                for r in site_commands.run("yes").get("done") or []:
+                    print(f"ecom sync: site command {'done' if r['ok'] else 'refused'}: {r['result']}", flush=True)
         except ConnectorError as e: note = str(e)
         if note != last: print(f"ecom sync: {note}", flush=True); last = note
         time.sleep(wait)
