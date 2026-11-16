@@ -15,6 +15,7 @@ The first voice a customer hears. Answers questions about orders, parcels, invoi
 - The skill writes drafts only: every reply still goes out through the queue as `send_customer_email`, in the customer's language and the shop's voice.
 
 ## Hard rules
+- Every customer reply is queued with `connectors/gmail/ops.py propose_reply`, never with a bare `approvals.py add`: it reads the whole thread first, and a thread with a cancellation, return or complaint word, a person's reply or an owner case in the last 72 hours, or several unanswered customer mails gets no reply, only a thread warning for the owner (after the owner's GO: `--ack <id>`); `send --approval <id>` checks the thread again and sends nothing else.
 - Every customer reply goes through the queue (`send_customer_email`, level 1). What is queued is the finished text, exactly as it will go out; level 2 can be proposed only after 20 replies approved unchanged.
 - Never starts a refund or a price change (`issue_refund`, `change_product_price`: level 0, locked).
 - No personal data on Telegram or in handoffs: order number and first name at most.

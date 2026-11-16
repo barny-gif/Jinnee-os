@@ -18,6 +18,7 @@
   "autonomy_defaults": {
     "publish_social_post": { "level": 1, "max_level": 2, "locked": true, "label": "Publish a social post" },
     "send_customer_email": { "level": 1, "max_level": 2, "locked": true, "label": "Send an email to a customer" },
+    "mail_thread_warning": { "level": 1, "max_level": 1, "locked": true, "label": "Decide on a customer mail thread the thread gate held" },
     "issue_invoice": { "level": 1, "max_level": 2, "locked": true, "label": "Issue an invoice" },
     "change_product_price": { "level": 0, "max_level": 0, "locked": true, "label": "Change a product price" },
     "spend_ad_budget": { "level": 0, "max_level": 0, "locked": true, "label": "Spend advertising budget" },
