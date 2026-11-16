@@ -656,7 +656,26 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
             "manual_parcels": _manual_parcels(uploaded, shipping), "highlights": highlights,
             # the carrier ledger (COD collected / kept for invoices / transferred, open invoices, balance); None = not set up or
             # unreadable: the site keeps what it has. References, amounts and dates only.
-            "carrier_ledger": _carrier_ledger()}
+            "carrier_ledger": _carrier_ledger(),
+            # the bank statement report the finance agent writes from the owner's statement file (brain/bank_statement.json):
+            # weeks, categories and items with dates, amounts and plain labels. None = no report: the site keeps what it has.
+            "bank_statement": _bank_statement()}
+
+BANK_FILE = "bank_statement.json"
+BANK_KEYS = {"updated", "from", "to", "currency", "weeks", "months", "categories_in", "categories_out", "items",
+             "owner_paid", "contributions", "split", "notes"}
+ACCOUNT_NO = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b|\b\d{8}-\d{8}(?:-\d{8})?\b|\b\d{16,24}\b")
+
+def _bank_statement(path=None):
+    """brain/bank_statement.json → the report as written, known keys only. A file that is missing, unreadable, not a report
+    (no weeks list) or that holds anything shaped like an account number is not sent at all: the site keeps the last good one."""
+    p = pathlib.Path(path) if path else HERE.parent / "brain" / BANK_FILE
+    try: d = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError): return None
+    if not isinstance(d, dict) or not isinstance(d.get("weeks"), list): return None
+    out = {k: v for k, v in d.items() if k in BANK_KEYS}
+    if ACCOUNT_NO.search(json.dumps(out, ensure_ascii=False)): return None
+    return out
 
 def _carrier_ledger():
     if not os.getenv("GLS_LEDGER_ACCOUNT", "").strip(): return None
