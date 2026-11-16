@@ -9,7 +9,7 @@ import test_env as base
 REPO = pathlib.Path(__file__).resolve().parent.parent
 os.environ["JINNEE_LANG"] = "en"  # the owner's texts are checked in English here, whatever this machine is set to (test_texts checks hu)
 sys.path.insert(0, str(REPO / "core"))
-import alerts, approvals, autonomy, heartbeat
+import alerts, approvals, autonomy, heartbeat, notices
 
 HOUR, DAY = 3600, 86400
 
@@ -144,6 +144,38 @@ class NewItems(Watching):
         (self.brain / "alerts_state.json").write_text("{half")
         self.assertEqual(len(self.check(at(3, 10, 2))), 1)
         self.assertEqual(self.check(at(3, 10, 3)), [])
+
+
+class News(Watching):
+    """core/notices.py: plain news from the order chain (no decision), each told once, never in the quiet hours."""
+    def test_told_once_even_if_queued_again(self):
+        self.assertTrue(notices.add(self.brain, "new_order:#1001", "New order: #1001, cash on delivery, 1 234 Ft."))
+        self.assertFalse(notices.add(self.brain, "new_order:#1001", "New order: #1001, cash on delivery, 1 234 Ft."))
+        first = self.check(at(3, 10, 1))
+        self.assertEqual(first, ["New order: #1001, cash on delivery, 1 234 Ft."])
+        self.assertEqual(self.check(at(3, 10, 2)), [])
+        self.assertFalse(notices.add(self.brain, "new_order:#1001", "again"))  # said already: never again
+        self.assertEqual(self.check(at(3, 10, 3), alerts.Watch(self.brain)), [])  # nor after a restart
+
+    def test_held_through_quiet_hours(self):
+        notices.add(self.brain, "picked_up:#1002", "GLS picked up #1002.")
+        self.assertEqual(self.check(at(3, 23)), [])
+        self.assertEqual(self.check(at(4, 7, 0)), ["GLS picked up #1002."])
+
+    def test_not_marked_sent_when_the_message_did_not_go(self):
+        notices.add(self.brain, "k", "News.")
+        self.watch.due(at(3, 10))  # sending failed: done() never ran
+        self.assertEqual(self.check(at(3, 10, 1)), ["News."])
+
+    def test_news_and_a_question_in_the_same_minute(self):
+        a = self.add(at(3, 10))
+        notices.add(self.brain, "k", "News.")
+        messages = self.check(at(3, 10, 1))
+        self.assertEqual(len(messages), 2); self.assertEqual(messages[0], "News."); self.assertIn(a, messages[1])
+
+    def test_dashboard_sees_the_newest_first(self):
+        for n in range(3): notices.add(self.brain, f"k{n}", f"News {n}.", now=at(3, 10, n))
+        self.assertEqual([r["text"] for r in notices.recent(self.brain, 2)], ["News 2.", "News 1."])
 
 
 class Reminders(Watching):

@@ -131,18 +131,20 @@ def warn_days():
 
 def sort(raw, shipping, uploaded, cod_rows, now=None):
     """→ {"ready": [{name, id, total, parcel}], "mismatch": [text], "unclear": [text], "waiting": [names], "late": [text]}."""
-    out = {"ready": [], "mismatch": [], "unclear": [], "waiting": [], "late": []}
+    out = {"ready": [], "mismatch": [], "unclear": [], "waiting": [], "late": [], "issues": []}  # issues: [{order, kind}] for the owner's news
     for o in raw or []:
         name = o.get("name") or ""
         ship = (shipping or {}).get(name)
         verdict, why = check(o, ship, (uploaded or {}).get(name), cod_rows)
         if verdict == "ready":
             out["ready"].append({"name": name, "id": str(o["id"]), "total": forint(o.get("total_price")), "parcel": why["parcel"]})
-        elif verdict in ("mismatch", "unclear"): out[verdict].append(why)
+        elif verdict in ("mismatch", "unclear"):
+            out[verdict].append(why); out["issues"].append({"order": name, "kind": verdict})
         elif verdict == "wait":
             out["waiting"].append(name)
             if cod_rows is not None and now and _late(ship, now, warn_days()):
                 out["late"].append(f"{name}: delivered more than {warn_days()} days ago, GLS has not settled its COD yet")
+                out["issues"].append({"order": name, "kind": "late"})
     return out
 
 def select(raw, shipping, uploaded, cod_rows=None):
@@ -172,13 +174,14 @@ def run(raw, shipping, uploaded, now, act=False, shop=None, book=None, gate=None
        "waiting": [names], "late": [text], "note", "errors"}"""
     m = mode()
     out = {"mode": m, "ready": [], "queued": None, "marked": [], "mismatch": [], "unclear": [], "waiting": [], "late": [],
-           "marked_rows": [], "note": None, "errors": []}
+           "issues": [], "marked_rows": [], "note": None, "errors": []}
     if m == "off" or raw is None: return out
     cod_rows = ledger_cod() if cod_rows is False else cod_rows
     state = _read(STATE)
     queued, paid = state.setdefault("queued", {}), state.setdefault("paid", {})
     sorted_ = sort(raw, shipping, uploaded, cod_rows, now)
-    out.update(mismatch=sorted_["mismatch"], unclear=sorted_["unclear"], waiting=sorted_["waiting"], late=sorted_["late"])
+    out.update(mismatch=sorted_["mismatch"], unclear=sorted_["unclear"], waiting=sorted_["waiting"], late=sorted_["late"],
+               issues=sorted_["issues"])
     if cod_rows is None: out["note"] = "no carrier ledger (GLS_LEDGER_ACCOUNT): no COD order is set to paid until GLS's transfer can be seen"
     ready = [r for r in sorted_["ready"] if r["name"] not in paid]
     out["ready"] = [r["name"] for r in ready]

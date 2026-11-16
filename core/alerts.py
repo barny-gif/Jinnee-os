@@ -1,5 +1,6 @@
 """What the owner is told without asking. The Telegram bridge calls this once a minute; it is not a service of its own.
 
+  - news from the order chain that needs no decision (core/notices.py: new order, GLS pickup, COD set paid): once each
   - a new item is waiting for a decision: one message, once per item
   - a decision is ready to be picked up: handed to the lead once, after a short pause in which the owner can still undo
   - a decision was made hours ago and nothing happened (or work started and never reported back): once per item
@@ -16,7 +17,7 @@ quiet hours hold for these messages and for the scheduled runs (core/scheduler.p
 """
 import datetime as dt, logging, os, pathlib, re, sys, time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import store, approvals, autonomy, business, texts
+import store, approvals, autonomy, business, texts, notices
 
 log = logging.getLogger("jinnee.alerts")
 DEFAULT_QUIET = "21:00-07:00"
@@ -134,7 +135,11 @@ class Watch:
         for i in hand_over: s["handed"][i["id"]] = int(now)
 
         if quiet(now):
-            return {"messages": [], "hand_over": hand_over, "ask": [], "ask_text": None, "state": s}
+            return {"messages": [], "hand_over": hand_over, "ask": [], "ask_text": None, "state": s, "notices": []}
+
+        # plain news from the order chain (core/notices.py): no decision needed, each said once
+        said_news = notices.pending(self.brain)
+        messages += [n["text"] for n in said_news]
 
         new = [i for i in pending if i["id"] not in s["asked"]]
         if new:
@@ -188,11 +193,13 @@ class Watch:
         for p in problems:
             if p not in s["problems"]: messages.append(texts.t("alerts.attention", problem=p))
         s["problems"] = problems
-        return {"messages": messages, "hand_over": hand_over, "ask": ask, "ask_text": ask_text, "state": s}
+        return {"messages": messages, "hand_over": hand_over, "ask": ask, "ask_text": ask_text, "state": s,
+                "notices": [n["key"] for n in said_news]}
 
     def done(self, plan):
         with store.locked(self.brain):
             store.write_json(self.path, plan["state"])
+            notices.mark_sent(self.brain, plan.get("notices"))
 
 
 def hand_over_message(book, items):
