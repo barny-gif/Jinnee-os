@@ -1,6 +1,7 @@
 FROM python:3.12-slim
 # Node 22 from NodeSource, as install.sh does: Claude Code runs on it, and the taste skill's scripts need 22 or newer.
-RUN apt-get update && apt-get install -y --no-install-recommends curl git ca-certificates \
+# libatomic1: Playwright's own bundled node driver needs it before "playwright install --with-deps" can add anything.
+RUN apt-get update && apt-get install -y --no-install-recommends curl git ca-certificates libatomic1 \
  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
  && apt-get install -y --no-install-recommends nodejs && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code
