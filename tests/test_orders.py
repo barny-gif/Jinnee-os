@@ -410,3 +410,43 @@ class Issue(unittest.TestCase):
         import order_flow
         self.bill.document = lambda i: {"type": "invoice", "partner": {"id": 5}}
         with self.assertRaises(ConnectorError): order_flow.invoice_issue(1, "yes", bill=self.bill)
+
+class CodInvoiceGate(unittest.TestCase):
+    """The owner's rule (2026-11-16): a cash-on-delivery invoice stays a draft until GLS delivered the parcel (05). Made-up data."""
+    def setUp(self):
+        import order_flow, tempfile
+        d = pathlib.Path(tempfile.mkdtemp())
+        self.flow = order_flow
+        self.old = (order_flow.ISSUED, order_flow.GLS_STATUS)
+        order_flow.ISSUED, order_flow.GLS_STATUS = d / "inv.json", d / "gls_status.json"
+        self.addCleanup(lambda: setattr(order_flow, "ISSUED", self.old[0]) or setattr(order_flow, "GLS_STATUS", self.old[1]))
+        self.bill = mock.Mock(document=lambda i: {"type": "draft", "comment": "Shopify #5042", "gross_total": 13900,
+                                                  "payment_method": "cash_on_delivery", "partner": {"id": 5}},
+                              partner_email=lambda p: "a@b.hu", create_from_draft=mock.Mock(return_value={"id": 77, "invoice_number": "A-2026-9"}),
+                              send_by_email=mock.Mock(return_value=True))
+    def gls(self, state):
+        self.flow.GLS_STATUS.write_text(json.dumps({"#5042": state}), encoding="utf-8")
+
+    def test_cod_not_delivered_is_never_issued(self):
+        for state in (None, {"state": "uploaded"}, {"state": "handed_to_gls", "code": "86"}, {"state": "in_transit", "code": "02"},
+                      {"state": "delivered", "code": "07"}, {"state": "returned", "code": "23"}):
+            if state is not None: self.gls(state)
+            with self.assertRaises(ConnectorError) as e: self.flow.invoice_issue(1, "yes", "yes", bill=self.bill)
+            self.assertIn("#5042", str(e.exception))
+        self.bill.create_from_draft.assert_not_called(); self.bill.send_by_email.assert_not_called()
+    def test_the_dry_run_says_no_too(self):
+        with self.assertRaises(ConnectorError): self.flow.invoice_issue(1, bill=self.bill)
+    def test_cod_delivered_is_issued_and_sent(self):
+        self.gls({"state": "delivered", "code": "05"})
+        self.assertEqual(self.flow.invoice_issue(1, "yes", "yes", bill=self.bill), {"invoice": "A-2026-9", "sent": True})
+    def test_cod_draft_naming_no_order_is_refused(self):
+        self.gls({"state": "delivered", "code": "05"})
+        self.bill.document = lambda i: {"type": "draft", "comment": "", "payment_method": "cash_on_delivery", "partner": {"id": 5}}
+        with self.assertRaises(ConnectorError): self.flow.invoice_issue(1, "yes", bill=self.bill)
+        self.bill.create_from_draft.assert_not_called()
+    def test_another_order_delivered_does_not_count(self):
+        self.flow.GLS_STATUS.write_text(json.dumps({"#50421": {"state": "delivered", "code": "05"}}), encoding="utf-8")
+        with self.assertRaises(ConnectorError): self.flow.invoice_issue(1, "yes", bill=self.bill)
+    def test_paid_order_is_issued_as_before(self):
+        self.bill.document = lambda i: {"type": "draft", "comment": "Shopify #5042", "gross_total": 13900, "payment_method": "bankcard", "partner": {"id": 5}}
+        self.assertEqual(self.flow.invoice_issue(1, "yes", "no", bill=self.bill), {"invoice": "A-2026-9"})

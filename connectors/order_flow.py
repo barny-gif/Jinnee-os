@@ -77,9 +77,37 @@ def _issued():
     try: return json.loads(ISSUED.read_text(encoding="utf-8"))
     except (OSError, ValueError): return {}
 
+GLS_STATUS = HERE.parent / "brain" / "gls_status.json"  # order name -> GLS state, kept by the site sender's round (ecom_sync)
+
+def draft_order(comment):
+    """The order number a draft was made for ('Shopify #1001' -> '#1001'); '' when the comment holds none."""
+    m = re.match(r"\s*Shopify\s+(\S+)", comment or "")
+    return m.group(1) if m else ""
+
+def delivered(name, status=None):
+    """Did GLS hand this order's parcel to the customer (state delivered, status 05)? status: brain/gls_status.json content."""
+    if status is None:
+        try: status = json.loads(GLS_STATUS.read_text(encoding="utf-8"))
+        except (OSError, ValueError): status = {}
+    s = (status or {}).get(name) if name else None
+    return isinstance(s, dict) and s.get("state") == "delivered" and str(s.get("code") or "05") == "05"
+
+def cod_gate(doc, status=None):
+    """The owner's cash-on-delivery rule (2026-11-16): a COD invoice is made as a draft at order time and is issued and sent ONLY
+    once GLS delivered the parcel (status 05, the customer took it and paid the courier). → None when it may be issued, else why
+    not. Any other payment method passes (a PAID order is invoiced as before). Fails closed: no order number, no GLS state → no."""
+    if (doc or {}).get("payment_method") != "cash_on_delivery": return None
+    name = draft_order(doc.get("comment"))
+    if not name: return "cash on delivery, and the draft names no order (comment 'Shopify #…'): the delivery cannot be checked, so it is not issued"
+    if not delivered(name, status):
+        return (f"{name} is cash on delivery and GLS has not delivered it yet (status 05): the invoice stays a draft until the customer "
+                "takes the parcel. Nothing was issued")
+    return None
+
 def invoice_issue(draft_id, confirm="no", send="no", paid="no", bill=None):
     """Draft -> real invoice -> (optionally) e-mailed to the customer. Dry run unless confirm=yes.
     paid=yes records the payment on the invoice (use it only when the Shopify order is PAID, e.g. card or already transferred).
+    A cash-on-delivery draft is refused until GLS delivered the parcel (cod_gate), dry run included.
     Only run it for an item that has a GO from `core/approvals.py consume` (action issue_invoice / send_customer_email)."""
     bill = bill or _load("billingo")
     done = _issued().get(str(draft_id))
@@ -88,6 +116,9 @@ def invoice_issue(draft_id, confirm="no", send="no", paid="no", bill=None):
     doc = bill.document(draft_id)
     if not done and doc.get("type") != "draft":
         raise ConnectorError(f"document {draft_id} is not a draft (type {doc.get('type')}): nothing to issue")
+    if not done:
+        why = cod_gate(doc)
+        if why: raise ConnectorError(why)
     mail = bill.partner_email((doc.get("partner") or {}).get("id")) if send == "yes" else ""
     if send == "yes" and not mail: raise ConnectorError("the customer has no e-mail address in Billingo: issue without sending, or add one")
     if confirm != "yes":
