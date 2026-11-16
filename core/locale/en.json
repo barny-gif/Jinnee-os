@@ -267,5 +267,22 @@
   "dash.err_sign_in": "Sign in at /login",
   "dash.err_local_only": "No DASHBOARD_PASSWORD set: the dashboard only answers direct requests to localhost",
   "dash.err_cross_site": "Cross-site request refused",
-  "dash.err_bad_body": "Expected {{\"decision\": \"ok\"|\"edit\"|\"drop\", \"note\": \"...\"}}"
+  "dash.err_bad_body": "Expected {{\"decision\": \"ok\"|\"edit\"|\"drop\", \"note\": \"...\"}}",
+
+  "dash.keys": "Your keys",
+  "dash.key_name": "Name",
+  "dash.key_value": "Key (pasted here, never shown again)",
+  "dash.key_save": "Store encrypted",
+  "dash.key_hint": "Paste an API key here instead of into .env. It is stored encrypted at once and this page never shows it again; the team's next run uses it.",
+  "dash.key_stored": "{name} is stored encrypted.",
+  "dash.key_replaced": "{name} is replaced. The old key is gone from the store.",
+  "dash.key_bad": "A name (letters, digits and _) and a key are both needed.",
+  "dash.where_stored": "stored encrypted",
+  "dash.where_plain": "in .env, readable",
+  "dash.where_unset": "not set",
+  "dash.keys_plain": "Still in .env in plain text: {names}.",
+  "dash.key_import": "Move them into the encrypted store",
+  "dash.key_import_confirm": "Move these keys into the encrypted store and delete them from .env? The team keeps working with them.",
+  "dash.key_imported": "{n} keys moved. .env no longer holds them.",
+  "dash.keys_unavailable": "The keys could not be read ({code})."
 }

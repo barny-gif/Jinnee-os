@@ -2,7 +2,8 @@
 The real script runs, piped into bash the way the README one-liner does it, with a pseudo-terminal as the
 controlling terminal. git, docker, node, npm, claude, pip3, nohup, curl, sudo and brew are stand-ins on PATH
 that only write down how they were called, so nothing is installed, downloaded or started."""
-import os, pathlib, select, shutil, subprocess, sys, tempfile, time, unittest
+import os, pathlib, select, shutil, stat, subprocess, sys, tempfile, time, unittest
+from unittest import mock
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "core"))
@@ -31,6 +32,11 @@ GENERAL_BIZ = [("business name", ""), ("A name is required", None), ("business n
                ("sound to your customers", "warm, informal"), ("about the business", ""), ("time zone", "")]
 PIPED = "cat install.sh | bash"  # same shape as `curl … | bash`: the script is on stdin
 TOKEN = "123456:TEST-not_a-real-token"
+try:
+    import cryptography  # noqa: F401
+    HAS_CRYPTO = True
+except ImportError:
+    HAS_CRYPTO = False
 
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "needs bash and a pseudo-terminal")
@@ -66,6 +72,26 @@ class Installer(unittest.TestCase):
 
     def dotenv(self):
         return env.parse((self.dir / ".env").read_text(encoding="utf-8"))
+
+    def stored_token(self):
+        """Where the installer left the bot token: in the encrypted key store when the cryptography package is there
+        (it moves the keys out of .env), otherwise still in .env, which the doctor then reports."""
+        if not HAS_CRYPTO:
+            return self.dotenv().get("TELEGRAM_BOT_TOKEN")
+        import vault
+        with mock.patch.dict(os.environ, {"JINNEE_VAULT_FILE": str(self.dir / "config" / "secrets.vault.json"),
+                                          "JINNEE_MASTER_KEY_FILE": str(self.home / ".config" / "jinnee-os" / "master.key")}):
+            vault._loaded.clear()
+            return vault.get("TELEGRAM_BOT_TOKEN")
+
+    def assert_keys_safe(self):
+        key = self.home / ".config" / "jinnee-os" / "master.key"
+        self.assertEqual(stat.S_IMODE(key.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE((self.dir / ".env").stat().st_mode), 0o600)
+        if HAS_CRYPTO:  # the token is nowhere in the install folder in plain text
+            for f in self.dir.rglob("*"):
+                if f.is_file() and "__pycache__" not in f.parts:
+                    self.assertNotIn(TOKEN, f.read_text(encoding="utf-8", errors="ignore"), f)
 
     def business(self):
         import yaml
@@ -135,13 +161,15 @@ class Installer(unittest.TestCase):
         self.assertEqual(code, 0, shown)
         self.assertIn(f"Done. Message {name} on Telegram", shown)
         got = self.dotenv()
-        self.assertEqual((got["TELEGRAM_BOT_TOKEN"], got["TELEGRAM_OWNER_ID"], got["JINNEE_NAME"], got["PACKS"]),
+        self.assertEqual((self.stored_token(), got["TELEGRAM_OWNER_ID"], got["JINNEE_NAME"], got["PACKS"]),
                          (TOKEN, "4242", name, "general,ecom"))
         example = (REPO / ".env.example").read_text().splitlines()
         written = (self.dir / ".env").read_text().splitlines()
         self.assertEqual(len(written), len(example))  # only the four lines changed
+        token_line = "# TELEGRAM_BOT_TOKEN: in the key store (python3 core/vault.py status)" if HAS_CRYPTO else f"TELEGRAM_BOT_TOKEN={TOKEN}"
         self.assertEqual([w for w, e in zip(written, example) if w != e],
-                         [f"JINNEE_NAME='{name}'", f"TELEGRAM_BOT_TOKEN={TOKEN}", "TELEGRAM_OWNER_ID=4242", "PACKS=general,ecom"])
+                         [f"JINNEE_NAME='{name}'", token_line, "TELEGRAM_OWNER_ID=4242", "PACKS=general,ecom"])
+        self.assert_keys_safe()
         self.assertFalse((self.dir / ".env.new").exists())
         calls = self.calls(started=2)
         self.assertIn("claude login", calls)
@@ -166,6 +194,14 @@ class Installer(unittest.TestCase):
         self.assertEqual((got["JINNEE_NAME"], got["PACKS"], got["TELEGRAM_OWNER_ID"]), ("Jinnee", "general", "4242"))
         calls = self.calls()
         self.assertIn("docker compose up -d --build", calls)
+        # the keys move into the store inside the container, then it starts again without them in its settings
+        i = calls.index("docker compose exec -T jinnee python3 core/vault.py import --yes")
+        self.assertEqual(calls[i + 1], "docker compose up -d")
+        self.assertGreater(i, calls.index("docker compose up -d --build"))
+        key_dir = self.home / ".config" / "jinnee-os"
+        self.assertEqual(got["JINNEE_KEY_DIR"], str(key_dir))  # docker-compose.yml mounts it; outside the install folder
+        self.assertEqual(stat.S_IMODE((key_dir / "master.key").stat().st_mode), 0o600)
+        self.assertEqual(len(__import__("base64").b64decode((key_dir / "master.key").read_text().strip())), 32)
         self.assertIn("docker compose exec jinnee claude login", calls)
         self.assertIn("login got: abc", calls)
         self.assertFalse([c for c in calls if c.startswith(("nohup", "pip3", "claude"))], calls)
@@ -248,8 +284,9 @@ exec "{real}" "$@"
                               "JINNEE_NAME": "Ops Bot", "PACKS": "general,ecom", **BIZ, "SHOP_LABEL_NAME": "minta.hu"})
         self.assertEqual(r.returncode, 0, r.stderr)
         got = self.dotenv()
-        self.assertEqual((got["TELEGRAM_BOT_TOKEN"], got["TELEGRAM_OWNER_ID"], got["JINNEE_NAME"], got["PACKS"]),
+        self.assertEqual((self.stored_token(), got["TELEGRAM_OWNER_ID"], got["JINNEE_NAME"], got["PACKS"]),
                          (TOKEN, "4242", "Ops Bot", "general,ecom"))
+        self.assert_keys_safe()
         calls = self.calls(started=2)
         self.assertNotIn("claude login", calls)  # cannot be done without a terminal; the owner is told instead
         self.assertIn("One step is left, and it needs a terminal. Ops Bot cannot answer until it is done: claude login", r.stdout)

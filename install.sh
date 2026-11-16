@@ -81,14 +81,33 @@ EOF
 }
 
 set_env(){ # set_env KEY VALUE: rewrite the KEY= line of .env. The value is plain data here, never a pattern.
-  local key="$1" val="$2" line found=no
+  local key="$1" val="$2" line found=no mask
   case "$val" in *[!A-Za-z0-9_.:,@/+-]*) val="'$val'";; esac  # single quotes: literal for core/env.py and Docker Compose
+  mask="$(umask)"; umask 077  # .env.new holds the token for a moment: nobody else may read it, not even then
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in "$key="*) line="$key=$val"; found=yes;; esac
     printf '%s\n' "$line"
   done < .env > .env.new
   [ "$found" = yes ] || printf '%s\n' "$key=$val" >> .env.new
   cat .env.new > .env && rm -f .env.new
+  umask "$mask"
+}
+
+make_key(){ # the key store's master key (core/vault.py): 32 random bytes in a file only you can read, outside the install
+  # folder, so a copy of that folder carries no key. Made here with the shell, so Docker mode needs no Python package on the host.
+  [ -s "$KEY_DIR/master.key" ] && { echo "  Master key: kept ($KEY_DIR/master.key)"; return 0; }
+  (umask 077; mkdir -p "$KEY_DIR" && head -c 32 /dev/urandom | base64 > "$KEY_DIR/master.key.tmp" \
+     && mv "$KEY_DIR/master.key.tmp" "$KEY_DIR/master.key") || die "The master key could not be made in $KEY_DIR. Nothing secret was written."
+  echo "  Master key: $KEY_DIR/master.key (back it up somewhere safe: without it the stored keys cannot be read)"
+}
+
+to_vault(){ # move the keys of .env into the encrypted store, then out of .env. If it cannot (no cryptography package yet),
+  # .env keeps them and the dashboard and `python3 core/vault.py doctor` say so; the install itself goes on.
+  if "$@" python3 core/vault.py import --yes >/dev/null 2>&1 || "$@" python core/vault.py import --yes >/dev/null 2>&1; then
+    echo "  Your keys are in the encrypted key store, not in .env."
+  else
+    echo "  Your keys are still in .env in plain text. Later: python3 core/vault.py import   (or the Keys box on the dashboard)"
+  fi
 }
 
 design_tools(){ # the design checks' screenshot browser and the skills fetched at a pinned commit (THIRD_PARTY.md).
@@ -193,6 +212,11 @@ main(){
   if [ -d "$DIR/.git" ]; then (cd "$DIR" && git pull -q); else git clone -q "$REPO" "$DIR"; fi
   cd "$DIR"
   [ -f .env ] || cp .env.example .env
+  chmod 600 .env  # your settings and, until the key store takes them, your keys: readable by you only
+  KEY_DIR="${JINNEE_KEY_DIR:-$HOME/.config/jinnee-os}"
+  make_key
+  if [ "$MODE" = docker ]; then set_env JINNEE_KEY_DIR "$KEY_DIR"  # docker-compose.yml mounts it at /run/jinnee-keys
+  elif [ "$KEY_DIR" != "$HOME/.config/jinnee-os" ]; then set_env JINNEE_MASTER_KEY_FILE "$KEY_DIR/master.key"; fi
   set_env TELEGRAM_BOT_TOKEN "$TOKEN"
   set_env TELEGRAM_OWNER_ID "$OWNER"
   set_env JINNEE_NAME "$NAME"
@@ -212,6 +236,8 @@ main(){
   LOGIN_LATER=""
   if [ "$MODE" = docker ]; then
     say "Starting in Docker…"; docker compose up -d --build
+    to_vault docker compose exec -T jinnee
+    docker compose up -d  # started again without the keys in its settings: .env no longer holds them
     if [ "$TTY" = yes ]; then say "Claude login inside the container (one time):"; docker compose exec jinnee claude login <&3 || true
     else LOGIN_LATER="cd $DIR && docker compose exec jinnee claude login"; fi
   else
@@ -219,6 +245,7 @@ main(){
     else LOGIN_LATER="claude login"; fi
     pip3 install -q -r requirements.txt --break-system-packages 2>/dev/null || pip3 install -q -r requirements.txt
     design_tools
+    to_vault env
     bash run.sh restart  # running it again replaces the running copy; it never adds a second one
   fi
   say "Done. Message $NAME on Telegram and open: http://localhost:8080"
