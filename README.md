@@ -53,6 +53,11 @@ it runs next, when it last ran, and how it went.
 - **A job whose connector is not set up does not run.** It shows as off, with the setting it is missing.
 - **Nothing goes out from a scheduled run**, whatever the autonomy level: no e-mail, post, invoice, label or shop change. What should go
   out is put in front of you for approval, as always. A run that has nothing to do (no new mail, no open orders) costs no Claude run at all.
+- **A reply reads the whole mail thread first.** Before Echo queues a reply to a customer, the thread gate reads every mail in the
+  thread: a cancellation, return or complaint word, a reply someone from the shop wrote by hand (or a case already with you) in the
+  last 72 hours, or several customer mails since the last answer, and there is no ready reply, only a "thread warning" with the
+  reasons (which signal, which mail; no customer name or address). You decide; a reply follows only after your yes. Right before
+  sending, the thread is read again: a mail that came in since stops the send.
 - Never in the quiet hours, and never twice for the same time (also after a restart and on the nights the clocks change). A scheduled
   job does not start while Jinnee is working on your message; if one is already running when you write, Jinnee says so and your
   message is next. A failed run is reported to you once.

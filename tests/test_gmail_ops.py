@@ -1,5 +1,5 @@
 """Gmail connector with several accounts, fake HTTP only: no test reaches Google. Run: python3 -m unittest discover tests"""
-import base64, importlib.util, json, os, pathlib, sys, unittest
+import base64, importlib.util, json, os, pathlib, sys, tempfile, unittest
 from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "connectors"))
@@ -32,6 +32,8 @@ class Base(unittest.TestCase):
         self.env = mock.patch.dict(os.environ, self.envs, clear=False); self.env.start()
         for k in [k for k in os.environ if k.startswith("GMAIL_") and k not in self.envs]: os.environ.pop(k)
         self.m = load(); self.posts = []
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)  # never the real brain/ (approvals, sent ledger)
+        self.m.ROOT = pathlib.Path(tmp.name); self.m.BRAIN = self.m.ROOT / "brain"
         def post(url, data=None, timeout=None):
             self.posts.append(data); return Resp({"access_token": "at-" + data["refresh_token"], "expires_in": 3600})
         self.p_post = mock.patch.object(self.m.requests, "post", side_effect=post); self.p_post.start()
@@ -135,7 +137,7 @@ class SharedMailbox(Base):
 
 class Drafts(Base):
     def test_reply_draft_in_thread_from_the_account_address(self):
-        with self.fake({("GET", "/messages/m1"): MSG, ("POST", "/drafts"): {"id": "d1"}}):
+        with self.fake({("GET", "/messages/m1"): MSG, ("GET", "/threads/t1"): {"messages": [MSG]}, ("POST", "/drafts"): {"id": "d1"}}):
             out = self.m.draft_reply("info", "m1", body="Szia! A csomagod úton van.")
         body = self.calls[-1][4]
         raw = base64.urlsafe_b64decode(body["message"]["raw"]).decode()
@@ -145,13 +147,13 @@ class Drafts(Base):
         self.assertNotIn("/send", " ".join(c[2] for c in self.calls))
     def test_empty_reply_refused(self):
         with self.assertRaises(ConnectorError): self.m.draft_reply("info", "m1", body="  ")
-    def test_send_is_dry_unless_confirmed(self):
-        d = {"id": "d1", "message": {"payload": {"headers": [{"name": "Subject", "value": "Re: #5027"}]}}}
-        with self.fake({("GET", "/drafts/d1"): d, ("POST", "/drafts/send"): {"id": "s1", "threadId": "t1"}}):
-            dry = self.m.send("info", "d1")
-            self.assertTrue(dry["dry_run"]); self.assertEqual([c[1] for c in self.calls], ["GET"])
-            sent = self.m.send("info", "d1", confirm="yes")
-        self.assertEqual(sent["message_id"], "s1"); self.assertEqual(self.calls[-1][4], {"id": "d1"})
+    def test_a_draft_is_not_sent_by_its_id(self):
+        """Sending a draft by id is gone: only an approved reply from propose_reply goes out (tests/test_mail_thread.py)."""
+        with self.fake({("POST", "/drafts/send"): {"id": "s1"}, ("POST", "/messages/send"): {"id": "s1"}}):
+            for kw in ({"draft_id": "d1"}, {"draft_id": "d1", "confirm": "yes"}):
+                with self.assertRaises(ConnectorError) as e: self.m.send("info", **kw)
+                self.assertIn("--approval", str(e.exception))
+        self.assertEqual(self.calls, [])
     def test_forbidden_names_the_likely_cause(self):
         with self.fake({("GET", "/profile"): Resp({}, 403)}):
             with self.assertRaises(ConnectorError) as e: self.m.check("info")
