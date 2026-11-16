@@ -64,6 +64,11 @@ class Patterns(unittest.TestCase):
         self.assertEqual(guard.check_lines(lines), [".claude/skills/emails/SKILL.md:2: a GitHub token (" + guard.mask(token) + ")"])
         priv = [("a private word", guard.re.compile("kis bolt", guard.re.I))]
         self.assertEqual(len(guard.check_lines([(".claude/skills/emails/SKILL.md", 3, "Kis Bolt")], priv)), 1)
+        # a "re:" pattern (e.g. an order-number shape) is skipped in vendored folders only: "(#5042)" there is an upstream issue
+        pat = [("a private pattern (config/private_patterns.txt line 1)", guard.re.compile(r"#50\d\d\b"))]
+        self.assertEqual(guard.check_lines([(".claude/skills/impeccable/SKILL.md", 1, "fixed (#5042)")], pat), [])
+        self.assertEqual(len(guard.check_lines([("tools/x.py", 1, "fixed (#5042)")], pat)), 1)
+        self.assertEqual(len(guard.check_lines([(".claude/skills/own-skill/SKILL.md", 1, "fixed (#5042)")], pat)), 1)
         # only the listed upstream folders: a skill of our own, or a file elsewhere, is checked in full
         for f in (".claude/skills/own-skill/SKILL.md", "packs/ecom/agents/x.md", "x/.claude/skills/emails/a.md"):
             with self.subTest(f=f): self.assertEqual(len(guard.check_lines([(f, 1, "see " + MAIL)])), 1)

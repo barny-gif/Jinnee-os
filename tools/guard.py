@@ -62,12 +62,15 @@ def private_patterns(path=None):
             rx = re.compile(line[3:], re.I) if line.startswith("re:") else re.compile(re.escape(line), re.I)
         except re.error as e:
             raise SystemExit(f"{p}:{n}: not a valid regular expression ({e})")
-        out.append((f"a private word (config/private_patterns.txt line {n})", rx))
+        kind = "a private pattern" if line.startswith("re:") else "a private word"
+        out.append((f"{kind} (config/private_patterns.txt line {n})", rx))
     return out
 
 
 def findings(text: str, message=False, private=(), contacts=True):
-    """Every problem in one text: [(what, masked match)]. contacts=False: no phone and e-mail check (vendored files)."""
+    """Every problem in one text: [(what, masked match)]. contacts=False (vendored files): no phone and e-mail check, and no
+    "re:" pattern from your own list either (upstream issue numbers like "(#1234)" look like order numbers); your plain words
+    (shop name, product names) are still checked there."""
     out = []
     for m in (PHONE.finditer(text) if contacts else ()):
         if re.sub(r"\D", "", m.group(0))[-7:] not in FAKE_SUBSCRIBERS: out.append(("a phone number", mask(m.group(0))))
@@ -81,6 +84,7 @@ def findings(text: str, message=False, private=(), contacts=True):
         out += [("an order number", m.group(0)) for m in ORDER_NO.finditer(text)]
         out += [("a money amount", mask(m.group(0))) for m in AMOUNT.finditer(text)]
     for what, rx in private:
+        if not contacts and what.startswith("a private pattern"): continue
         out += [(what, mask(m.group(0))) for m in rx.finditer(text)]
     return out
 
