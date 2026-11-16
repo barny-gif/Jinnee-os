@@ -49,6 +49,7 @@ button.ok{border-color:var(--ok);color:var(--ok)}button.drop{border-color:var(--
 <main>
   <section><h2>{{t:today}}</h2><div class="brief" id="brief"></div></section>
   <section><h2>{{t:orders}}</h2><div id="ordsum" class="brief"></div><div id="orderr"></div><div id="orders"></div></section>
+  <section><h2>{{t:news}}</h2><div class="log" id="news"></div></section>
   <section><h2>{{t:awaiting}}</h2><div id="problems"></div><div id="approvals"></div></section>
   <section id="decidedBox" hidden><h2>{{t:decided}}</h2><div id="decided"></div></section>
   <section id="closedBox" hidden><h2>{{t:closed}}</h2><div id="closed"></div></section>
@@ -104,6 +105,7 @@ async function load(){
   el('connectors').innerHTML=s.connectors.map(c=>`<div class="row"><span><span class="dot ${c.ok===null?'n':c.ok?'g':'r'}"></span>${esc(c.name)}</span><span>${esc(tr(c.ok===null?'no_key':c.ok?'connected':'missing_key'))}</span></div>`).join('');
   el('schedule').innerHTML=s.schedule===null?`<p class="empty">${esc(tr('schedule_unreadable'))}</p>`
     :s.schedule.map(j=>`<div class="row"><span><span class="dot ${!j.on?'n':/fail|missed/.test(j.result)?'r':'g'}"></span>${esc(j.name)}</span><span>${j.on?esc(j.when)+' · '+esc(tr('next',{when:j.next_text}))+(j.last_text?' · '+esc(tr('last',{when:j.last_text,result:j.result_text||j.result})):''):esc(tr('off',{why:j.off}))}</span></div>`).join('');
+  el('news').innerHTML=(s.news||[]).length?s.news.map(n=>esc(n.text)).join('<br>'):`<span class="empty">${esc(tr('no_news'))}</span>`;
   el('log').innerHTML=s.log.length?s.log.map(esc).join('<br>'):`<span class="empty">${esc(tr('no_log'))}</span>`;
 }
 async function loadOrders(){

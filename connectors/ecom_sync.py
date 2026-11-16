@@ -32,6 +32,7 @@ import order_auto
 import complaints
 import cod_paid
 import gls_ledger
+import order_events
 import site_commands
 LEDGER_EVERY = 3600  # seconds between two reads of the carrier's mails
 _ledger_try = {"at": 0.0}
@@ -599,11 +600,17 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
     shipping, gls_err = _shipping(uploaded, gls, now)
     fulfilled, fulfill_errs, fulfilled_now = _fulfillments(every, shipping, shop, now, act)  # an older open order may still be picked up; the switch-on moment still limits it
     fulfill_err = "; ".join(dict.fromkeys(fulfill_errs)) or None
-    # Delivered COD orders → paid in Shopify (SHOPIFY_AUTO_MARK_PAID, off by default): one approval item a day, or auto at level 2
+    # COD orders GLS delivered AND transferred (carrier ledger) → paid in Shopify (SHOPIFY_AUTO_MARK_PAID, off by default):
+    # one approval item a day, or auto at level 2
     try: cod = cod_paid.run(every, shipping, uploaded, now, act=act, shop=shop)
-    except Exception as e: cod = {"mode": cod_paid.mode(), "ready": [], "queued": None, "marked": [], "mismatch": [], "note": None,
-                                  "errors": [f"[COD paid] {type(e).__name__}: {e}"]}
+    except Exception as e: cod = {"mode": cod_paid.mode(), "ready": [], "queued": None, "marked": [], "mismatch": [], "unclear": [],
+                                  "waiting": [], "late": [], "marked_rows": [], "note": None, "errors": [f"[COD paid] {type(e).__name__}: {e}"]}
     cod_err = "; ".join(dict.fromkeys(cod["errors"])) or None
+    # The owner's news (new order, GLS pickup, COD set paid) and the COD invoice once GLS delivered (connectors/order_events.py):
+    # an approval item per order at issue_invoice level 1, issued and sent at level 2. Only when really sending.
+    try: events = order_events.run(every, shipping, uploaded, auto, cod, invoices, now, act=act)
+    except Exception as e: events = {"news": [], "invoice": {"queued": [], "issued": [], "no_draft": [], "errors": [f"[order news] {type(e).__name__}: {e}"]}}
+    events_err = "; ".join(dict.fromkeys(events["invoice"]["errors"])) or None
     # Carrier ledger from the carrier's e-mails (GLS_LEDGER_ACCOUNT set): read at most once an hour, only when really sending
     ledger_err = None
     if act and os.getenv("GLS_LEDGER_ACCOUNT", "").strip() and now - _ledger_try["at"] >= LEDGER_EVERY:
@@ -614,7 +621,7 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
     try: complaint_rows, complaints_err = complaints.payload(every), None
     except Exception as e: complaint_rows, complaints_err = None, f"[complaints] {type(e).__name__}: {e}"
     highlights, highlights_err = _try("highlights", _highlights)
-    errors = [e for e in (shop_err, bill_err, pay_err, prod_err, cost_err, owner_err, sales_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err, complaints_err, highlights_err, cod_err, ledger_err) if e]
+    errors = [e for e in (shop_err, bill_err, pay_err, prod_err, cost_err, owner_err, sales_err, traffic_err, gls_err, scopes_err, fulfill_err, auto_err, complaints_err, highlights_err, cod_err, ledger_err, events_err) if e]
     if billing is not None and not billing["complete"]: errors.append("[Billingo payments] more than 1000 invoices in the window: only the newest are shown")
     if scopes and scopes["missing"]: errors.append(f"[Shopify scopes] missing: {', '.join(scopes['missing'])}")
     if every is not None and len(every) >= PAGE: errors.append(f"[Shopify orders] more than {PAGE} orders in {reach} days: only the newest {PAGE} are shown")
@@ -642,6 +649,7 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
             "shopify_scopes": None if scopes is None else {**scopes, "checked_at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat(timespec="seconds")},
             "fulfilled_now": fulfilled_now,
             "cod_paid": cod,  # order numbers and amounts only: ready, queued approval id, marked, mismatches
+            "order_events": events,  # for the log only (popped in push): news keys and the COD invoice step, order numbers only
             "order_auto": auto,  # order numbers and field names only: what got a label / draft this round and what is held
             "billing": billing,  # the Payments tab; None = Billingo did not answer, the site keeps what it has
             # the last days' orders, plus any older one (up to OPEN_DAYS) that is still open; a closed older order keeps its last state on the site
@@ -718,7 +726,10 @@ def push(send="no", days=DAYS, shop=None, bill=None, gls=None, history="auto"):
                            ("drafts" if send == "yes" else "would_draft"): a["drafts"], "held": a["held"]}
     c = payload.pop("cod_paid")  # for the log only: the site's payload stays as it was
     count["cod_paid"] = {"mode": c["mode"], "ready": c["ready"], "queued": c["queued"], "marked": c["marked"],
-                         "mismatch": c["mismatch"], "note": c["note"]}
+                         "mismatch": c["mismatch"], "unclear": c.get("unclear", []), "waiting_for_transfer": c.get("waiting", []),
+                         "late": c.get("late", []), "note": c["note"]}
+    ev = payload.pop("order_events")  # for the log only: the site's payload stays as it was
+    count["order_events"] = {"news": ev["news"], "cod_invoice": {k: v for k, v in ev["invoice"].items() if k != "errors"}}
     b = payload["billing"]
     count["billing"] = None if b is None else {"bank_accounts": len(b["bank_accounts"]), "invoices": len(b["invoices"]),
                                                "paid": sum(1 for i in b["invoices"] if i["payment_status"] == "paid"),
@@ -765,6 +776,9 @@ def loop(seconds=""):
             c = out.get("cod_paid") or {}
             if c.get("queued"): print(f"ecom sync: COD set-to-paid queued for approval ({c['queued']}): {', '.join(c['ready'])}", flush=True)
             if c.get("marked"): print(f"ecom sync: COD set to paid in Shopify: {', '.join(c['marked'])}", flush=True)
+            ev = (out.get("order_events") or {}).get("cod_invoice") or {}
+            if ev.get("queued"): print(f"ecom sync: COD delivered, invoice question queued: {', '.join(ev['queued'])}", flush=True)
+            if ev.get("issued"): print(f"ecom sync: COD delivered, invoice issued and sent: {', '.join(ev['issued'])}", flush=True)
             if site_commands._on():  # the owner's exchange-label commands from the site (connectors/site_commands.py)
                 for r in site_commands.run("yes").get("done") or []:
                     print(f"ecom sync: site command {'done' if r['ok'] else 'refused'}: {r['result']}", flush=True)

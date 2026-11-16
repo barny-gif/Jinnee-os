@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
-import approvals, autonomy, heartbeat, logs, scheduler, texts, vault
+import approvals, autonomy, heartbeat, logs, notices, scheduler, texts, vault
 import orders
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -145,7 +145,9 @@ def state(req: Request):
     except Exception: schedule = None  # the box says it could not be read; the rest of the page still works
     return {"name": NAME, "auth": bool(PASSWORD), "brief": rd("brief_today.md", ""), "approvals": shown,
             "problems": [p for p in (problem, levels_problem) if p], "autonomy": levels,
-            "team": team, "connectors": connectors, "schedule": schedule, "log": log[::-1]}
+            "team": team, "connectors": connectors, "schedule": schedule, "log": log[::-1],
+            # the order chain's plain news (core/notices.py): order numbers, payment type, amounts and states only
+            "news": [{"text": n["text"], "at": n["at"]} for n in notices.recent(BRAIN, 20)]}
 
 @app.get("/api/orders")
 def api_orders(req: Request):

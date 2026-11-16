@@ -12,6 +12,11 @@ An approval is about the order as it was when you queued it. Immediately before 
 - the amount you are about to send still matches the order.
 If anything differs, do not act: say what changed and queue it again. A typical case: an automatic Shopify discount is missing from the cash-on-delivery amount, so the label asks the customer for more than the order total. That is why a COD label whose amount differs from the order total is not uploaded at all. Treat every mismatch like that one.
 
+## 2b. Cash on delivery: money first, paper after (owner, 2026-11-16)
+- A COD invoice is a draft until GLS delivered the parcel (status 05, the customer took it). Issuing or sending it earlier is not allowed, not even with a GO; the program refuses it (`order_flow.cod_gate`). After delivery it goes by the autonomy table (`issue_invoice`).
+- A COD order is set paid in Shopify only after GLS transferred the money, as the carrier ledger shows for that parcel. Delivered is not paid. If the ledger cannot pair the order without doubt, or the amount differs, it is not set: tell the owner.
+- A paid (card, transfer) order keeps its usual path.
+
 ## 3. Numbers and IDs come from the system, never from you
 Order numbers, invoice numbers, parcel numbers, COD amount, shipping fee, discounts, totals and stock come from Shopify or the connector output. Never type one from memory, never compute one yourself, never "round" or "fix" one. If the connector does not give it, say "I can't see it" and stop. An order number you cannot find in the connector does not exist.
 

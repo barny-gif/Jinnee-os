@@ -146,6 +146,27 @@ the parcel label, which invoice series the Payments view shows, and which order 
   `en.json`) adds one. `python3 core/texts.py check` lists what a language file is missing. The commands (`/ok`, `/pending`…)
   stay the same in every language, and so do the logs and the agents' instructions.
 
+## Cash on delivery: invoice at delivery, paid after the transfer
+The shop pack follows one rule for cash-on-delivery (COD) orders; a paid order (card, transfer) keeps its usual path.
+1. **New order:** the invoice is made as a Billingo *draft* and the GLS label is uploaded (as far as the autonomy table allows).
+   You get one line on Telegram and the dashboard: "Anna, a new order came in: #1001, cash on delivery, 12 345 Ft. The invoice
+   draft and the GLS label are ready." If a field is missing, it says which one (never the data).
+2. **GLS picks it up:** "GLS picked up the parcel of #1001."
+3. **The customer takes it (GLS status 05):** only now may the COD invoice be issued and e-mailed. With `issue_invoice` at
+   level 1 (the default) you get a question per order ("#1001: the customer took the parcel. May I issue and send the
+   invoice?"); at level 2 it is issued and sent by itself and you are told afterwards. **Before delivery a COD invoice is never
+   issued**: `connectors/order_flow.py invoice_issue` checks the GLS state itself and refuses, whoever asks. A parcel that went
+   back stays a draft.
+4. **GLS transfers the money:** only then is the order set *paid* in Shopify (`SHOPIFY_AUTO_MARK_PAID`, off by default). Delivered
+   is not enough. The proof is GLS's own COD settlement e-mail, read by the carrier ledger (`GLS_LEDGER_ACCOUNT`): the parcel
+   must be on it with the same amount, matched to the order without doubt. Two rows for one order, a parcel under another
+   reference, or a different amount: nothing is set, you get a message. Still not settled after `COD_TRANSFER_WARN_DAYS` (10): a
+   reminder to ask GLS.
+
+Each message is said once; nothing is sent in the quiet hours. Switches in `.env`: `ORDER_NOTICES=off` (no news),
+`COD_INVOICE_ON_DELIVERY=off` (no question or automatic issue at delivery; the gate in step 3 stays). How you are addressed:
+`business.owner_name` in `config/business.yaml` (optional).
+
 ## Your keys
 API keys and tokens (Telegram, Shopify, Billingo, Gmail, GLS…) are not kept in plain text. They are in an encrypted key store,
 `config/secrets.vault.json` (AES-256-GCM, each value bound to its name), and the programs read them when they start (`core/env.py`
