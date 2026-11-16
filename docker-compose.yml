@@ -9,7 +9,13 @@ services:
       - ./config:/app/config        # config/business.yaml: the owner's business settings, edited on the host, never in the image
       - ./forge-work:/app/forge-work   # Forge's own clone of the repo: survives a rebuild, the merge stays with the owner
       - claude-auth:/root/.claude
+      # The key store's master key (core/vault.py). The installer puts it outside the install folder, in ~/.config/jinnee-os,
+      # and writes that folder into .env as JINNEE_KEY_DIR; without it, ./keys here (the dashboard and doctor say so).
+      - ${JINNEE_KEY_DIR:-./keys}:/run/jinnee-keys
+      # .env itself, so that moving its keys into the store (python core/vault.py import, or the dashboard) can take them out of it.
+      - ./.env:/app/.env
     environment:
+      JINNEE_KEY_DIR_HOST: ${JINNEE_KEY_DIR:-./keys}   # only for the doctor: is the key folder inside the install folder?
       DASHBOARD_HOST: 0.0.0.0        # inside the container only; the host side is the port line below
       DASHBOARD_TRUST_PEER: "1"      # requests arrive from the Docker bridge, not loopback. Keep the port on 127.0.0.1.
     ports:

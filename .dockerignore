@@ -3,5 +3,9 @@ logs/
 forge-work/
 config/business.yaml
 config/private_patterns.txt
+config/secrets.vault.json*
+keys/
+.env*
+!.env.example
 .claude/skills/impeccable/scripts/bin/
 .claude/skills/design-taste-frontend/

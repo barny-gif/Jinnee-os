@@ -11,6 +11,11 @@ forge-work/
 config/business.yaml
 config/*.tmp
 config/private_patterns.txt
+# The key store and its master key (core/vault.py, README "Your keys"): never in git. Also any stray copy of .env.
+config/secrets.vault.json*
+keys/
+.env*
+!.env.example
 # Skills: the Impeccable engine is downloaded by its launcher; the taste skill is fetched by tools/skills_fetch.py (THIRD_PARTY.md)
 .claude/skills/impeccable/scripts/bin/
 .claude/skills/design-taste-frontend/
