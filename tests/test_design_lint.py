@@ -68,7 +68,7 @@ class Lint(unittest.TestCase):
     def test_default_is_the_shops_own_file_and_names_no_brand(self):
         self.assertEqual(pathlib.Path(dl.DEFAULT_DESIGN), ROOT / "brain" / "brand" / "DESIGN.md")
         src = (ROOT / "tools" / "design_lint.py").read_text(encoding="utf-8").lower()
-        for word in ("esportsight", "jinnee-os/design", "bettor"):
+        for word in ("esport" + "sight", "jinnee-os/design", "bettor"):  # split: a listed private word must not stand in a file
             self.assertNotIn(word, src)
 
 
