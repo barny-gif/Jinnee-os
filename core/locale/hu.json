@@ -267,5 +267,22 @@
   "dash.err_sign_in": "Lépj be itt: /login",
   "dash.err_local_only": "Nincs DASHBOARD_PASSWORD beállítva: a dashboard csak a közvetlen localhost-kérésekre válaszol",
   "dash.err_cross_site": "Más oldalról jövő kérés, elutasítva",
-  "dash.err_bad_body": "Ezt vártam: {{\"decision\": \"ok\"|\"edit\"|\"drop\", \"note\": \"...\"}}"
+  "dash.err_bad_body": "Ezt vártam: {{\"decision\": \"ok\"|\"edit\"|\"drop\", \"note\": \"...\"}}",
+
+  "dash.keys": "Kulcsaid",
+  "dash.key_name": "Név",
+  "dash.key_value": "Kulcs (ide illesztve, többé nem látszik)",
+  "dash.key_save": "Mentés titkosítva",
+  "dash.key_hint": "Az API-kulcsot ide illeszd be, ne a .env-be. Azonnal titkosítva tárolódik, és ez az oldal többé nem mutatja meg; a csapat következő futása már ezt használja.",
+  "dash.key_stored": "{name} titkosítva tárolva.",
+  "dash.key_replaced": "{name} lecserélve. A régi kulcs már nincs a tárban.",
+  "dash.key_bad": "Név (betű, szám és _) és kulcs is kell.",
+  "dash.where_stored": "titkosítva tárolva",
+  "dash.where_plain": "a .env-ben, olvashatóan",
+  "dash.where_unset": "nincs megadva",
+  "dash.keys_plain": "Még sima szövegként a .env-ben: {names}.",
+  "dash.key_import": "Áthelyezés a titkosított tárba",
+  "dash.key_import_confirm": "Áthelyezed ezeket a kulcsokat a titkosított tárba, és törlöd őket a .env-ből? A csapat ugyanúgy dolgozik velük tovább.",
+  "dash.key_imported": "{n} kulcs áthelyezve. A .env már nem tartalmazza őket.",
+  "dash.keys_unavailable": "A kulcsokat nem sikerült beolvasni ({code})."
 }

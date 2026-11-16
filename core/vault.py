@@ -231,21 +231,28 @@ def delete(name: str) -> bool:
 _loaded = {}
 
 
+MARK = "JINNEE_VAULT_NAMES"  # which variables came from the store, so a later run can refresh them
+
+
 def load_into_environ() -> list:
     """Puts the stored values into os.environ. A name already set to something wins (Docker, export, a test);
-    a name set to empty does not: an empty KEY= line left in .env must not hide the stored key."""
+    a name set to empty does not: an empty KEY= line left in .env must not hide the stored key.
+    A name this store set earlier (inherited by a child process) is refreshed: a key replaced on the dashboard
+    reaches the next run of the team without a restart, and a deleted one is gone from it."""
     p = vault_path()
     try:
         mtime = p.stat().st_mtime_ns
     except OSError:
         return []
-    if _loaded.get("mtime") == mtime:
-        new = {k: v for k, v in _loaded["values"].items() if not os.environ.get(k)}
-    else:
-        values = get_all()
-        _loaded.update(mtime=mtime, values=values)
-        new = {k: v for k, v in values.items() if not os.environ.get(k)}
+    if _loaded.get("mtime") != mtime:
+        _loaded.update(mtime=mtime, values=get_all())
+    values = _loaded["values"]
+    ours = {n for n in os.environ.get(MARK, "").split(",") if n}
+    for n in ours - set(values):
+        os.environ.pop(n, None)
+    new = {k: v for k, v in values.items() if not os.environ.get(k) or (k in ours and os.environ[k] != v)}
     os.environ.update(new)
+    os.environ[MARK] = ",".join(sorted((ours & set(values)) | set(new)))
     return list(new)
 
 

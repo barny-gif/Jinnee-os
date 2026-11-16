@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
-import approvals, autonomy, heartbeat, logs, scheduler, texts
+import approvals, autonomy, heartbeat, logs, scheduler, texts, vault
 import orders
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -175,6 +175,57 @@ async def undo(item_id: str, req: Request):
     try: book().undo(item_id, by="dashboard")
     except approvals.Refused as e: refuse(e)
     return JSONResponse({"ok": True})
+
+# --- Keys: the owner pastes an API key here instead of editing .env. It goes straight into the encrypted store
+# (core/vault.py). No value is ever sent back to the browser: only names, and where each one is.
+CORE_KEYS = ("TELEGRAM_BOT_TOKEN", "DASHBOARD_PASSWORD", "GITHUB_TOKEN")
+
+def known_keys():
+    """{name: connector name} for every secret a connector or the core can use, from the manifests."""
+    out = {n: "Jinnee" for n in CORE_KEYS}
+    for c in sorted((ROOT / "connectors").glob("*.manifest.json")):
+        d = json.loads(c.read_text(encoding="utf-8"))
+        a = d.get("auth", {})
+        envs = a.get("env", [])
+        for n in ([envs] if isinstance(envs, str) else envs) + [n for g in a.get("env_any") or [] for n in g]:
+            if vault.is_secret_name(n): out.setdefault(n, d["name"])
+    return out
+
+@app.get("/api/keys")
+def keys(req: Request):
+    guard(req)
+    try: stored, err = vault.names(), ""
+    except vault.VaultError as e: stored, err = [], str(e)
+    plain = sorted(vault.plain_secrets())
+    try: found = vault.doctor(ROOT)
+    except Exception as e: found = [("problem", type(e).__name__)]
+    known = known_keys()
+    rows = [{"name": n, "used_by": known.get(n, ""), "where": "plain" if n in plain else "stored" if n in stored else "unset"}
+            for n in sorted(set(known) | set(stored) | set(plain))]
+    return {"keys": rows, "plain": plain, "error": err,
+            "problems": [m for lv, m in found if lv == "problem"], "notes": [m for lv, m in found if lv == "note"]}
+
+@app.post("/api/keys")
+async def key_set(req: Request):
+    guard(req)
+    try: body = await req.json()
+    except ValueError: body = None
+    name = str((body or {}).get("name") or "").strip()
+    value = str((body or {}).get("value") or "").strip()
+    if not vault.NAME_OK.fullmatch(name) or not value:
+        raise HTTPException(400, texts.t("dash.key_bad"))
+    try: replaced = vault.put(name, value)
+    except vault.VaultError as e: raise HTTPException(409, str(e))
+    os.environ[name] = value  # this process; the team's runs read the store when they start
+    return JSONResponse({"ok": True, "replaced": replaced})
+
+@app.post("/api/keys/import")
+def key_import(req: Request):
+    """Moves the keys left in .env into the store. The browser asks the owner first (the button's confirm)."""
+    guard(req)
+    try: r = vault.import_env()
+    except (vault.VaultError, OSError) as e: raise HTTPException(409, str(e))
+    return JSONResponse({"ok": True, "moved": r["moved"]})
 
 if __name__ == "__main__":
     host = os.getenv("DASHBOARD_HOST") or ("0.0.0.0" if PASSWORD else "127.0.0.1")

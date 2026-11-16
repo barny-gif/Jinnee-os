@@ -35,7 +35,7 @@ class Base(unittest.TestCase):
         self.envfile.write_text(ENV_TEXT, encoding="utf-8")
         os.chmod(self.envfile, 0o644)
         names = ("TELEGRAM_BOT_TOKEN", "SHOPIFY_ADMIN_TOKEN", "DASHBOARD_PASSWORD", "BILLINGO_API_KEY", "JINNEE_NAME",
-                 "JINNEE_KEY_DIR_HOST")
+                 "JINNEE_KEY_DIR_HOST", vault.MARK, "A_TOKEN", "B_TOKEN", "C_TOKEN", "X_TOKEN")
         self.env = mock.patch.dict(os.environ, {"JINNEE_VAULT_FILE": str(self.root / "config" / "secrets.vault.json"),
                                                 "JINNEE_MASTER_KEY_FILE": str(self.keyfile)})
         self.env.start()
@@ -186,6 +186,21 @@ class EnvLoad(Base):
         self.assertEqual(os.environ["TELEGRAM_BOT_TOKEN"], "from-docker")
         self.assertEqual(os.environ["BILLINGO_API_KEY"], "stored-billingo-key")
 
+    def test_a_replaced_key_reaches_a_child_run_but_a_docker_value_is_kept(self):
+        vault.set_many({"A_TOKEN": "first-value-123", "B_TOKEN": "bbb-value-123", "C_TOKEN": "ccc"})
+        os.environ["C_TOKEN"] = "set-by-docker"
+        env.load_vault()
+        self.assertEqual(os.environ["A_TOKEN"], "first-value-123")
+        vault.put("A_TOKEN", "second-value-456")   # the owner replaced it on the dashboard
+        vault.delete("B_TOKEN")
+        vault.put("C_TOKEN", "stored-c")
+        env.load_vault()                            # what the next run (a child process) does
+        self.assertEqual(os.environ["A_TOKEN"], "second-value-456")
+        self.assertNotIn("B_TOKEN", os.environ)
+        self.assertEqual(os.environ["C_TOKEN"], "set-by-docker")
+        for n in ("A_TOKEN", "C_TOKEN", vault.MARK):
+            os.environ.pop(n, None)
+
     def test_unopenable_store_warns_once_without_values_and_does_not_crash(self):
         vault.put("A_TOKEN", "secret-value-123456")
         self.keyfile.unlink()
@@ -248,6 +263,78 @@ class Doctor(Base):
         vault.import_env(self.envfile)
         self.keyfile.write_text(base64.b64encode(os.urandom(32)).decode())
         self.assertTrue(any("cannot be opened" in p for p in self.problems(deep=False)))
+
+
+try:
+    import fastapi, httpx  # noqa: F401
+    HAS_WEB = True
+except ImportError:
+    HAS_WEB = False
+
+
+@unittest.skipUnless(HAS_WEB, "needs fastapi and httpx")
+class DashboardKeys(Base):
+    def setUp(self):
+        super().setUp()
+        os.environ["DASHBOARD_PASSWORD"] = ""
+        os.environ["JINNEE_LANG"] = "en"
+        sys.path.insert(0, str(REPO / "dashboard"))
+        import importlib, app
+        self.dash = importlib.reload(app)
+        self.dash.ROOT = self.root
+        (self.root / "connectors").mkdir()
+        import shutil
+        shutil.copy(REPO / "connectors" / "shopify.manifest.json", self.root / "connectors")
+        self.p = mock.patch.object(vault, "env_file", return_value=self.envfile)
+        self.p.start()
+        from fastapi.testclient import TestClient
+        self.c = TestClient(self.dash.app, base_url="http://localhost:8080", client=("127.0.0.1", 50000))
+        self.h = {"origin": "http://localhost:8080"}
+
+    def tearDown(self):
+        self.p.stop()
+        super().tearDown()
+
+    def test_lists_names_and_where_never_values(self):
+        r = self.c.get("/api/keys")
+        self.assertEqual(r.status_code, 200)
+        rows = {x["name"]: x for x in r.json()["keys"]}
+        self.assertEqual(rows["TELEGRAM_BOT_TOKEN"]["where"], "plain")
+        self.assertEqual(rows["SHOPIFY_ADMIN_TOKEN"]["used_by"], "Shopify")
+        self.assertIn("TELEGRAM_BOT_TOKEN", r.json()["plain"])
+        for v in (FAKE_TG, FAKE_SHOP, FAKE_PW):
+            self.assertNotIn(v, r.text)
+
+    def test_set_stores_encrypted_and_does_not_echo(self):
+        r = self.c.post("/api/keys", json={"name": "BILLINGO_API_KEY", "value": "billingo-made-up-123"}, headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("billingo-made-up-123", r.text)
+        self.assertEqual(vault.get("BILLINGO_API_KEY"), "billingo-made-up-123")
+        self.assertNotIn("billingo-made-up-123", self.blob())
+        rows = {x["name"]: x for x in self.c.get("/api/keys").json()["keys"]}
+        self.assertEqual(rows["BILLINGO_API_KEY"]["where"], "stored")
+
+    def test_bad_input_and_cross_site_are_refused(self):
+        self.assertEqual(self.c.post("/api/keys", json={"name": "bad name", "value": "x"}, headers=self.h).status_code, 400)
+        self.assertEqual(self.c.post("/api/keys", json={"name": "A_TOKEN", "value": ""}, headers=self.h).status_code, 400)
+        r = self.c.post("/api/keys", json={"name": "A_TOKEN", "value": "x"}, headers={"origin": "https://evil.example.com"})
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(vault.names(), [])
+
+    def test_import_button_moves_env(self):
+        r = self.c.post("/api/keys/import", headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["moved"], ["DASHBOARD_PASSWORD", "SHOPIFY_ADMIN_TOKEN", "TELEGRAM_BOT_TOKEN"])
+        self.assertNotIn(FAKE_TG, self.envfile.read_text())
+        self.assertEqual(self.c.get("/api/keys").json()["plain"], [])
+
+    def test_page_has_the_box_in_both_languages(self):
+        self.assertIn('id="keyform"', self.c.get("/").text)
+        for lang in ("en", "hu"):
+            d = json.loads((REPO / "core" / "locale" / f"{lang}.json").read_text(encoding="utf-8"))
+            for k in ("keys", "key_name", "key_value", "key_save", "key_hint", "where_stored", "where_plain", "where_unset",
+                      "keys_plain", "key_import", "key_import_confirm", "key_imported", "key_bad"):
+                self.assertIn("dash." + k, d, lang)
 
 
 class Repo(unittest.TestCase):

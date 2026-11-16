@@ -34,7 +34,13 @@ button.ok{border-color:var(--ok);color:var(--ok)}button.drop{border-color:var(--
 .g{background:var(--ok)}.y{background:var(--warn)}.r{background:var(--bad)}.n{background:var(--line)}
 .empty{color:var(--mute);font-family:system-ui,sans-serif;font-size:15px}
 .log{font-family:system-ui,sans-serif;font-size:14px;color:var(--mute);line-height:1.7}
-@media(min-width:760px){.two{display:grid;grid-template-columns:1fr 1fr;gap:28px}}
+.keyform{display:grid;gap:10px;margin-top:14px;font-family:system-ui,sans-serif;font-size:15px}
+.keyform label{display:grid;gap:4px;color:var(--mute);font-size:14px}
+.keyform input{font:15px system-ui,sans-serif;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);min-width:0}
+.keyform input:focus-visible{outline:2px solid var(--ok);outline-offset:1px}
+.keyform .acts{align-self:end}
+.hint{color:var(--mute);font-family:system-ui,sans-serif;font-size:14px;margin:8px 0 0}
+@media(min-width:760px){.two{display:grid;grid-template-columns:1fr 1fr;gap:28px}.keyform{grid-template-columns:1fr 1fr auto}}
 </style>
 </head>
 <body>
@@ -49,6 +55,15 @@ button.ok{border-color:var(--ok);color:var(--ok)}button.drop{border-color:var(--
     <section><h2>{{t:team}}</h2><div id="team"></div></section>
     <section><h2>{{t:connections}}</h2><div id="connectors"></div></section>
   </div>
+  <section><h2>{{t:keys}}</h2><div id="keyprob"></div><div id="keys"></div><div id="keyimport"></div>
+    <form id="keyform" class="keyform" autocomplete="off">
+      <label>{{t:key_name}}<input name="name" list="keynames" required pattern="[A-Za-z_][A-Za-z0-9_]*" spellcheck="false" autocapitalize="characters"></label>
+      <label>{{t:key_value}}<input name="value" type="password" required autocomplete="new-password" spellcheck="false"></label>
+      <div class="acts"><button class="ok">{{t:key_save}}</button></div>
+      <datalist id="keynames"></datalist>
+    </form>
+    <p class="hint" id="keymsg">{{t:key_hint}}</p>
+  </section>
   <section><h2>{{t:schedule}}</h2><div id="schedule"></div></section>
   <section><h2>{{t:autonomy}}</h2><div id="autonomy"></div></section>
   <section><h2>{{t:log}}</h2><div class="log" id="log"></div></section>
@@ -97,6 +112,25 @@ async function loadOrders(){
   el('orderr').innerHTML=o.errors.map(p=>`<p class="note">${esc(p)}</p>`).join('');
   el('orders').innerHTML=o.orders.map(x=>`<div class="row"><span><span class="dot ${x.cancelled?'n':x.invoice===false?'r':x.invoice===null?'y':'g'}"></span>${esc(x.name)} · ${esc(x.total)} ${esc(x.currency)}</span><span>${esc(x.cancelled?tr('cancelled'):(x.invoice===null?tr('invoice_unknown'):x.invoice?tr('invoice',{number:x.invoice.number}):tr('no_invoice')))} · ${x.label?esc(tr('tracking',{number:x.tracking[0]})):esc(x.shipped)}</span></div>`).join('')||`<p class="empty">${esc(tr('no_orders'))}</p>`;
 }
+async function loadKeys(){
+  const r=await fetch('/api/keys',{headers:H}); if(!r.ok){el('keys').innerHTML=`<p class="empty">${esc(tr('keys_unavailable',{code:r.status}))}</p>`;return;}
+  const k=await r.json();
+  el('keyprob').innerHTML=[k.error,...k.problems].filter(Boolean).map(p=>`<p class="note">${esc(p)}</p>`).join('')+k.notes.map(p=>`<p class="hint">${esc(p)}</p>`).join('');
+  el('keys').innerHTML=k.keys.map(x=>`<div class="row"><span><span class="dot ${x.where==='stored'?'g':x.where==='plain'?'r':'n'}"></span>${esc(x.name)}</span><span>${x.used_by?esc(x.used_by)+' · ':''}${esc(tr('where_'+x.where))}</span></div>`).join('');
+  el('keynames').innerHTML=k.keys.map(x=>`<option value="${esc(x.name)}">`).join('');
+  el('keyimport').innerHTML=k.plain.length?`<p class="note">${esc(tr('keys_plain',{names:k.plain.join(', ')}))}</p><div class="acts"><button class="ok" id="keyimp">${esc(tr('key_import'))}</button></div>`:'';
+}
+el('keyform').addEventListener('submit',async e=>{e.preventDefault();const f=e.target;
+  const r=await fetch('/api/keys',{method:'POST',headers:H,body:JSON.stringify({name:f.name.value.trim(),value:f.value.value})});
+  f.value.value='';  // the value leaves the page at once, whatever the answer
+  const j=await r.json().catch(()=>({}));
+  el('keymsg').textContent=r.ok?tr(j.replaced?'key_replaced':'key_stored',{name:f.name.value.trim()}):(j.detail||tr('failed',{code:r.status}));
+  if(r.ok){f.name.value='';loadKeys();load();}});
+document.addEventListener('click',async e=>{if(!e.target.closest('#keyimp'))return;
+  if(!confirm(tr('key_import_confirm')))return;
+  const r=await fetch('/api/keys/import',{method:'POST',headers:H}); const j=await r.json().catch(()=>({}));
+  el('keymsg').textContent=r.ok?tr('key_imported',{n:j.moved.length}):(j.detail||tr('failed',{code:r.status}));
+  loadKeys();});
 async function dec(id,d){let note='';
   if(d==='edit'){note=(prompt(tr('ask_change'))||'').trim();if(!note)return;}
   if(d==='drop'){note=(prompt(tr('ask_drop'))||'').trim();if(!note)return;}
@@ -104,7 +138,7 @@ async function dec(id,d){let note='';
   if(!r.ok)alert((await r.json().catch(()=>({}))).detail||tr('failed',{code:r.status}));
   load();}
 document.addEventListener('click',e=>{const b=e.target.closest('button[data-id]');if(b)dec(b.dataset.id,b.dataset.d);});
-load();loadOrders();setInterval(load,60000);setInterval(loadOrders,120000);
+load();loadOrders();loadKeys();setInterval(load,60000);setInterval(loadOrders,120000);
 </script>
 </body>
 </html>
