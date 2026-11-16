@@ -25,7 +25,10 @@ esac
 FAKED = ("git", "docker", "node", "npm", "claude", "pip3", "nohup", "curl", "sudo", "brew")
 OURS = ("JINNEE_MODE", "JINNEE_NAME", "JINNEE_LANG", "JINNEE_DIR", "PACKS", "TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_ID", "JINNEE_BUSINESS_FILE",
         "BUSINESS_NAME", "BUSINESS_LANGUAGE", "BUSINESS_VOICE", "BUSINESS_INTRO", "BUSINESS_TIMEZONE", "SHOP_LABEL_NAME", "SHOP_NOT_REVENUE_TAGS",
-        "BILLING_INVOICE_PREFIX", "BUSINESS_FILE")
+        "BILLING_INVOICE_PREFIX", "BUSINESS_FILE",
+        # the key store's own paths: a running installation (Docker sets them) must not point the test at its real store
+        "JINNEE_VAULT_FILE", "JINNEE_MASTER_KEY_FILE", "JINNEE_KEY_DIR", "JINNEE_KEY_DIR_HOST", "JINNEE_VAULT_NAMES",
+        "XDG_CONFIG_HOME")
 BIZ = {"BUSINESS_NAME": "Minta Kft.", "BUSINESS_VOICE": "calm and friendly"}  # the required business answers, made up
 # the business questions for the general pack: name (asked again when empty), language (Enter = hu), voice, intro (skipped)
 GENERAL_BIZ = [("business name", ""), ("A name is required", None), ("business name", "Minta Kft."), ("Language for you", ""),
@@ -59,7 +62,10 @@ class Installer(unittest.TestCase):
         self.env = {k: v for k, v in os.environ.items() if k not in OURS}
         self.env.update(HOME=str(self.home), PATH=os.pathsep.join([str(fakebin), *real]), FAKE_LOG=str(self.log),
                         FAKE_SRC=str(src), PYTHONDONTWRITEBYTECODE="1",
-                        JINNEE_DESIGN_TOOLS="no")  # no browser download in a test; test_design_tools covers the step with a stand-in
+                        JINNEE_DESIGN_TOOLS="no",  # no browser download in a test; test_design_tools covers the step with a stand-in
+                        # inside the Docker image the key folder exists, and the installer would lock the test store with
+                        # the machine's real key: point it at the test's own home, where the checks below look
+                        JINNEE_MASTER_KEY_FILE=str(self.home / ".config" / "jinnee-os" / "master.key"))
         self.fakebin = fakebin
 
     def calls(self, started=0):

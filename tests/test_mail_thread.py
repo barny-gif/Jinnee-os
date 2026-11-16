@@ -27,7 +27,7 @@ class Gate(unittest.TestCase):
         v = self.check([mine(1, CUSTOMER, H, "Szia, hol a csomagom?")])
         self.assertTrue(v["ok"]); self.assertEqual((v["signals"], v["last_id"]), ([], "m1"))
 
-    def test_the_marveen_case_is_held(self):
+    def test_the_cancelled_order_case_is_held(self):
         """Cancelled earlier in the thread, a person answered, then a plain parcel question: no ready reply."""
         msgs = [mine(1, CUSTOMER, 30 * H, "Szeretném lemondani a rendelést."), mine(2, CUSTOMER, 29 * H, "Kérem, LEMONDOM!"),
                 mine(3, SHOP, 20 * H, "Rendben, intézzük.", labels=["SENT"]), mine(4, CUSTOMER, H, "Hol a csomagom?")]
