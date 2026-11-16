@@ -1,6 +1,6 @@
 # Dashboard
 
-One page: Today · Awaiting your decision · Decided, not carried out yet · Recently closed · Team · Connections · What the team may do · Decision log.
+One page: Today · Orders · Order news (new order, GLS pickup, invoice issued, COD set paid: what the program told you on Telegram) · Awaiting your decision · Decided, not carried out yet · Recently closed · Team · Connections · What the team may do · Decision log.
 The owner works on Telegram; this exists so they can *see*.
 
 - Runs at `http://localhost:8080` (in Docker it's bound to the VPS only; Caddy exposes it).
