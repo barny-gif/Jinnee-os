@@ -13,6 +13,7 @@ config/*.tmp
 config/private_patterns.txt
 # The key store and its master key (core/vault.py, README "Your keys"): never in git. Also any stray copy of .env.
 config/secrets.vault.json*
+config/secrets.audit.jsonl
 keys/
 .env*
 !.env.example

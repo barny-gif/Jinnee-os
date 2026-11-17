@@ -34,17 +34,19 @@ button.ok{border-color:var(--ok);color:var(--ok)}button.drop{border-color:var(--
 .g{background:var(--ok)}.y{background:var(--warn)}.r{background:var(--bad)}.n{background:var(--line)}
 .empty{color:var(--mute);font-family:system-ui,sans-serif;font-size:15px}
 .log{font-family:system-ui,sans-serif;font-size:14px;color:var(--mute);line-height:1.7}
-.keyform{display:grid;gap:12px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-family:system-ui,sans-serif;font-size:15px}
-.keyform h3{font-weight:400;font-size:18px;margin:0;font-family:Georgia,"Times New Roman",serif}
+.keyform{display:grid;gap:12px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-size:15px}
+.keyform h3{font-weight:400;font-size:18px;margin:0}
 .keyform .head{display:flex;justify-content:space-between;align-items:center;gap:12px}
-.keyform label{display:grid;gap:4px;color:var(--mute);font-size:14px}
+.keyform label{display:grid;gap:4px;color:var(--mute);font:14px system-ui,sans-serif}
 .keyform input,.keyform select{font:15px system-ui,sans-serif;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);min-width:0;width:100%;min-height:42px}
 .keyform input:focus-visible,.keyform select:focus-visible{outline:2px solid var(--ok);outline-offset:1px}
 .keyform .pw{display:flex;gap:6px}.keyform .pw input{flex:1}
-.keyform .tech{margin:0;color:var(--mute);font-size:14px;overflow-wrap:anywhere}
+.keyform .tech:empty{display:none}
+.keyform .tech{margin:0;color:var(--mute);font:14px/1.5 system-ui,sans-serif;overflow-wrap:anywhere}
 .keyform [hidden]{display:none}
 button:disabled,input:disabled,select:disabled{opacity:.55;cursor:not-allowed}
 #keys .item .t{overflow-wrap:anywhere}
+#keybox .hint,#keybox .note{max-width:62ch}
 .hint{color:var(--mute);font-family:system-ui,sans-serif;font-size:14px;margin:8px 0 0}
 @media(min-width:760px){.two{display:grid;grid-template-columns:1fr 1fr;gap:28px}.keyform{grid-template-columns:1fr 1fr}.keyform .wide{grid-column:1/-1}}
 </style>
@@ -183,8 +185,10 @@ async function loadKeys(){
   const k=await r.json(); KS=k;
   el('keyinsecure').hidden=k.secure; el('keyinsecure').textContent=k.insecure||'';
   el('keyprob').innerHTML=[k.error,...k.problems].filter(Boolean).map(p=>`<p class="note">${esc(p)}</p>`).join('')+k.notes.map(p=>`<p class="hint">${esc(p)}</p>`).join('');
-  el('keys').innerHTML=k.keys.map(x=>{
-    const meta=[x.name,x.used_by?tr('key_used_by',{name:x.used_by}):tr('key_used_by_none'),tr('where_'+x.where),
+  const order={stored:0,plain:1,unset:2};  // what is there first, then what is still missing
+  const list=k.keys.slice().sort((a,b)=>order[a.where]-order[b.where]||ktitle(a).localeCompare(ktitle(b)));
+  el('keys').innerHTML=list.map(x=>{  // the title already says who uses it ("Shopify – ..."); only an own key says nobody does
+    const meta=[x.name,x.used_by?'':tr('key_used_by_none'),tr('where_'+x.where),
       x.at?tr('key_when_'+(x.action||'stored'),{date:kdate(x.at)}):''].filter(Boolean);
     const b=(act,cls,word)=>`<button type="button"${cls?` class="${cls}"`:''} data-kact="${act}" data-name="${esc(x.name)}">${esc(tr(word))}</button>`;
     const acts=x.where==='stored'?b('replace','','key_replace')+b('delete','drop','key_delete'):x.where==='unset'?b('replace','','key_set'):'';
