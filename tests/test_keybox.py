@@ -177,6 +177,9 @@ class Box(Base):
         self.assertTrue(self.c.get("/api/keys/name", params={"label": "saját crm api kulcs"}).json()["exists"])
         self.assertEqual(self.c.get("/api/keys/name", params={"label": "!!!"}).status_code, 400)
         self.assertEqual(self.c.post("/api/keys", json={"label": "???", "value": "x"}, headers=self.h).status_code, 400)
+        for name in ("PATH", "SHOPIFY_STORE", "LD_PRELOAD"):  # settings and the machine's own variables are not set from here
+            self.assertEqual(self.c.post("/api/keys", json={"name": name, "value": "x"}, headers=self.h).status_code, 400)
+        self.assertNotIn("SHOPIFY_STORE", vault.names())
 
     def test_a_value_is_never_in_an_answer_or_the_log(self):
         vals = ["billingo-made-up-123", "billingo-made-up-456", "crm-made-up-789", GOOD, BAD]

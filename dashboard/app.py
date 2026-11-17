@@ -276,7 +276,8 @@ async def key_set(req: Request):
         except ValueError: raise HTTPException(400, texts.t("dash.key_bad_label"))
     else:
         name, own = str(body.get("name") or "").strip(), ""
-    if not vault.NAME_OK.fullmatch(name) or not value:
+    # only a key-like name: a setting such as PATH or SHOPIFY_STORE is not set from here (it would also reach this process)
+    if not vault.NAME_OK.fullmatch(name) or not vault.is_secret_name(name) or not value:
         raise HTTPException(400, texts.t("dash.key_bad"))
     try: replaced = vault.put(name, value)
     except vault.VaultError as e: raise HTTPException(409, str(e))
