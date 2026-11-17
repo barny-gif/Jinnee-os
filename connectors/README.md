@@ -1,7 +1,10 @@
 # Connectors – shared rules
 
 Every connector is a folder `connectors/<id>/` containing
-- `manifest.json` – id, name, category (shop/invoicing/email/shipping/ads), version, auth method, operations
+- `manifest.json` – id, name, category (shop/invoicing/email/shipping/ads), version, auth method, operations.
+  Optional `check`: `{"op": "<function in ops.py>", "args": {...}, "clear": ["NAME", ...]}`, one cheap, read-only call that
+  shows whether a key works. The dashboard's "Try it" button (core/keybox.py, core/keycheck.py) runs it with the key being
+  tried and reports only "works / does not work + why". No `check`, no button. Never name a function that writes.
 - `auth.md` – what the owner has to set up, step by step, screenshot-friendly
 - `ops/` – the operations (Claude Code skills or MCP tools; pack agents call only these)
 
