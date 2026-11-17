@@ -34,14 +34,19 @@ button.ok{border-color:var(--ok);color:var(--ok)}button.drop{border-color:var(--
 .g{background:var(--ok)}.y{background:var(--warn)}.r{background:var(--bad)}.n{background:var(--line)}
 .empty{color:var(--mute);font-family:system-ui,sans-serif;font-size:15px}
 .log{font-family:system-ui,sans-serif;font-size:14px;color:var(--mute);line-height:1.7}
-.keyform{display:grid;gap:10px;margin-top:14px;font-family:system-ui,sans-serif;font-size:15px}
+.keyform{display:grid;gap:12px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-family:system-ui,sans-serif;font-size:15px}
+.keyform h3{font-weight:400;font-size:18px;margin:0;font-family:Georgia,"Times New Roman",serif}
+.keyform .head{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .keyform label{display:grid;gap:4px;color:var(--mute);font-size:14px}
-.keyform input{font:15px system-ui,sans-serif;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);min-width:0}
-.keyform input:focus-visible{outline:2px solid var(--ok);outline-offset:1px}
-.keyform .acts{align-self:end}
-#keys .row{flex-wrap:wrap;row-gap:2px}#keys .row>span:first-child{overflow-wrap:anywhere}
+.keyform input,.keyform select{font:15px system-ui,sans-serif;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);min-width:0;width:100%;min-height:42px}
+.keyform input:focus-visible,.keyform select:focus-visible{outline:2px solid var(--ok);outline-offset:1px}
+.keyform .pw{display:flex;gap:6px}.keyform .pw input{flex:1}
+.keyform .tech{margin:0;color:var(--mute);font-size:14px;overflow-wrap:anywhere}
+.keyform [hidden]{display:none}
+button:disabled,input:disabled,select:disabled{opacity:.55;cursor:not-allowed}
+#keys .item .t{overflow-wrap:anywhere}
 .hint{color:var(--mute);font-family:system-ui,sans-serif;font-size:14px;margin:8px 0 0}
-@media(min-width:760px){.two{display:grid;grid-template-columns:1fr 1fr;gap:28px}.keyform{grid-template-columns:1fr 1fr auto}}
+@media(min-width:760px){.two{display:grid;grid-template-columns:1fr 1fr;gap:28px}.keyform{grid-template-columns:1fr 1fr}.keyform .wide{grid-column:1/-1}}
 </style>
 </head>
 <body>
@@ -57,14 +62,17 @@ button.ok{border-color:var(--ok);color:var(--ok)}button.drop{border-color:var(--
     <section><h2>{{t:team}}</h2><div id="team"></div></section>
     <section><h2>{{t:connections}}</h2><div id="connectors"></div></section>
   </div>
-  <section><h2>{{t:keys}}</h2><div id="keyprob"></div><div id="keys"></div><div id="keyimport"></div>
+  <section id="keybox"><h2>{{t:keys}}</h2><p class="note" id="keyinsecure" hidden></p><div id="keyprob"></div><div id="keys"></div><div id="keyimport"></div>
     <form id="keyform" class="keyform" autocomplete="off">
-      <label>{{t:key_name}}<input name="name" list="keynames" required pattern="[A-Za-z_][A-Za-z0-9_]*" spellcheck="false" autocapitalize="characters"></label>
-      <label>{{t:key_value}}<input name="value" type="password" required autocomplete="new-password" spellcheck="false"></label>
-      <div class="acts"><button class="ok">{{t:key_save}}</button></div>
-      <datalist id="keynames"></datalist>
+      <div class="head wide"><h3 id="keytitle">{{t:key_form_add}}</h3><button type="button" id="keycancel" hidden>{{t:key_cancel}}</button></div>
+      <label>{{t:key_name}}<select id="keysvc" required><option value="">{{t:key_pick}}</option></select></label>
+      <label id="keywhichl" hidden>{{t:key_which}}<select id="keywhich"></select></label>
+      <label id="keyownl" hidden>{{t:key_own_name}}<input id="keyown" maxlength="60" spellcheck="false" autocomplete="off" placeholder="{{t:key_own_ph}}"></label>
+      <p class="tech wide" id="keytech" aria-live="polite"></p>
+      <label class="wide">{{t:key_value}}<span class="pw"><input id="keyval" type="password" required autocomplete="new-password" spellcheck="false" autocapitalize="off" autocorrect="off"><button type="button" id="keyshow" aria-pressed="false" aria-controls="keyval">{{t:key_show}}</button></span></label>
+      <div class="acts wide"><button class="ok" id="keysave">{{t:key_save}}</button><button type="button" id="keytest" hidden>{{t:key_test}}</button></div>
     </form>
-    <p class="hint" id="keymsg">{{t:key_hint}}</p>
+    <p class="hint" id="keymsg" aria-live="polite">{{t:key_hint}}</p>
   </section>
   <section><h2>{{t:schedule}}</h2><div id="schedule"></div></section>
   <section><h2>{{t:autonomy}}</h2><div id="autonomy"></div></section>
@@ -115,20 +123,108 @@ async function loadOrders(){
   el('orderr').innerHTML=o.errors.map(p=>`<p class="note">${esc(p)}</p>`).join('');
   el('orders').innerHTML=o.orders.map(x=>`<div class="row"><span><span class="dot ${x.cancelled?'n':x.invoice===false?'r':x.invoice===null?'y':'g'}"></span>${esc(x.name)} · ${esc(x.total)} ${esc(x.currency)}</span><span>${esc(x.cancelled?tr('cancelled'):(x.invoice===null?tr('invoice_unknown'):x.invoice?tr('invoice',{number:x.invoice.number}):tr('no_invoice')))} · ${x.label?esc(tr('tracking',{number:x.tracking[0]})):esc(x.shipped)}</span></div>`).join('')||`<p class="empty">${esc(tr('no_orders'))}</p>`;
 }
+// --- Your keys. Values only ever go from this page to the server, never back: the list has names, labels and dates.
+let KS={services:[],keys:[],secure:true};
+const kdate=v=>v?new Date(v).toLocaleDateString(T['dash.lang']||[],{year:'numeric',month:'short',day:'numeric'}):'';
+const ktitle=x=>x.used_by&&x.service!=='own'?x.used_by+' – '+x.label:x.label;
+function keyChoices(){
+  const known=new Set(KS.services.flatMap(s=>s.keys.map(k=>k.name)));
+  const own=KS.keys.filter(k=>k.where==='stored'&&!known.has(k.name)).map(k=>({name:k.name,label:ktitle(k),check:false}));
+  return own.length?[...KS.services,{id:'own',name:tr('key_own'),keys:own}]:KS.services;
+}
+function chosen(){
+  const sid=el('keysvc').value;
+  if(sid==='__other'){const t=el('keyown').value.trim();return t?{own:t}:null;}
+  const s=keyChoices().find(x=>x.id===sid); if(!s)return null;
+  const k=s.keys.find(k=>k.name===el('keywhich').value)||s.keys[0];
+  return k?{...k,title:s.id==='own'?k.label:s.name+' – '+k.label}:null;
+}
+function fillSvc(){
+  const sel=el('keysvc'),keep=sel.value;
+  sel.innerHTML=`<option value="">${esc(tr('key_pick'))}</option>`+keyChoices().map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')
+    +`<option value="__other">${esc(tr('key_other'))}</option>`;
+  sel.value=keep; if(sel.value!==keep)sel.value='';
+  svcChanged();
+}
+function svcChanged(){
+  const sid=el('keysvc').value,s=keyChoices().find(x=>x.id===sid),w=el('keywhich'),keep=w.value;
+  w.innerHTML=s?s.keys.map(k=>`<option value="${esc(k.name)}">${esc(s.id==='own'?k.label:s.name+' – '+k.label)}</option>`).join(''):'';
+  if(s&&s.keys.some(k=>k.name===keep))w.value=keep;
+  el('keywhichl').hidden=!(s&&s.keys.length>1);
+  el('keyownl').hidden=sid!=='__other';
+  whichChanged();
+}
+let ownTimer=0;
+function whichChanged(){
+  const sid=el('keysvc').value,c=chosen();
+  el('keytest').hidden=!(c&&c.check);
+  clearTimeout(ownTimer);
+  if(sid!=='__other'){
+    const row=c&&KS.keys.find(k=>k.name===c.name);
+    el('keytech').textContent=c?tr(row&&row.where==='stored'?'key_tech_exists':'key_tech',{name:c.name}):'';
+    return;
+  }
+  const t=el('keyown').value.trim();
+  if(!t){el('keytech').textContent='';return;}
+  ownTimer=setTimeout(async()=>{  // the server makes the name, so what is shown is what is stored
+    const r=await fetch('/api/keys/name?label='+encodeURIComponent(t),{headers:H});
+    const j=await r.json().catch(()=>({}));
+    if(el('keyown').value.trim()!==t||el('keysvc').value!=='__other')return;
+    el('keytech').textContent=r.ok?tr(j.exists?'key_tech_exists':'key_tech',{name:j.name}):(j.detail||tr('failed',{code:r.status}));
+  },250);
+}
+function hideValue(){el('keyval').type='password';el('keyshow').textContent=tr('key_show');el('keyshow').setAttribute('aria-pressed','false');}
+function resetKeyForm(){
+  el('keysvc').value='';el('keyown').value='';el('keyval').value='';hideValue();
+  el('keytitle').textContent=tr('key_form_add');el('keycancel').hidden=true;svcChanged();
+}
 async function loadKeys(){
   const r=await fetch('/api/keys',{headers:H}); if(!r.ok){el('keys').innerHTML=`<p class="empty">${esc(tr('keys_unavailable',{code:r.status}))}</p>`;return;}
-  const k=await r.json();
+  const k=await r.json(); KS=k;
+  el('keyinsecure').hidden=k.secure; el('keyinsecure').textContent=k.insecure||'';
   el('keyprob').innerHTML=[k.error,...k.problems].filter(Boolean).map(p=>`<p class="note">${esc(p)}</p>`).join('')+k.notes.map(p=>`<p class="hint">${esc(p)}</p>`).join('');
-  el('keys').innerHTML=k.keys.map(x=>`<div class="row"><span><span class="dot ${x.where==='stored'?'g':x.where==='plain'?'r':'n'}"></span>${esc(x.name)}</span><span>${x.used_by?esc(x.used_by)+' · ':''}${esc(tr('where_'+x.where))}</span></div>`).join('');
-  el('keynames').innerHTML=k.keys.map(x=>`<option value="${esc(x.name)}">`).join('');
+  el('keys').innerHTML=k.keys.map(x=>{
+    const meta=[x.name,x.used_by?tr('key_used_by',{name:x.used_by}):tr('key_used_by_none'),tr('where_'+x.where),
+      x.at?tr('key_when_'+(x.action||'stored'),{date:kdate(x.at)}):''].filter(Boolean);
+    const b=(act,cls,word)=>`<button type="button"${cls?` class="${cls}"`:''} data-kact="${act}" data-name="${esc(x.name)}">${esc(tr(word))}</button>`;
+    const acts=x.where==='stored'?b('replace','','key_replace')+b('delete','drop','key_delete'):x.where==='unset'?b('replace','','key_set'):'';
+    return `<div class="item"><div class="t"><span class="dot ${x.where==='stored'?'g':x.where==='plain'?'r':'n'}"></span>${esc(ktitle(x))}<small>${meta.map(esc).join(' · ')}</small></div><div class="acts">${acts}</div></div>`;
+  }).join('');
   el('keyimport').innerHTML=k.plain.length?`<p class="note">${esc(tr('keys_plain',{names:k.plain.join(', ')}))}</p><div class="acts"><button class="ok" id="keyimp">${esc(tr('key_import'))}</button></div>`:'';
+  fillSvc();
+  document.querySelectorAll('#keybox button, #keybox input, #keybox select').forEach(x=>{x.disabled=!k.secure;});
 }
-el('keyform').addEventListener('submit',async e=>{e.preventDefault();const f=e.target;
-  const r=await fetch('/api/keys',{method:'POST',headers:H,body:JSON.stringify({name:f.name.value.trim(),value:f.value.value})});
-  f.value.value='';  // the value leaves the page at once, whatever the answer
+el('keysvc').addEventListener('change',()=>{el('keyown').value='';svcChanged();});
+el('keywhich').addEventListener('change',whichChanged);
+el('keyown').addEventListener('input',whichChanged);
+el('keycancel').addEventListener('click',()=>{resetKeyForm();el('keymsg').textContent=tr('key_hint');});
+el('keyshow').addEventListener('click',()=>{const v=el('keyval'),show=v.type==='password';
+  v.type=show?'text':'password';el('keyshow').textContent=tr(show?'key_hide':'key_show');el('keyshow').setAttribute('aria-pressed',String(show));});
+el('keyform').addEventListener('submit',async e=>{e.preventDefault();
+  const c=chosen(),v=el('keyval').value;
+  if(!c||!v.trim()){el('keymsg').textContent=tr(c||el('keysvc').value!=='__other'?'key_bad':'key_bad_label');return;}
+  const r=await fetch('/api/keys',{method:'POST',headers:H,body:JSON.stringify(c.own?{label:c.own,value:v}:{name:c.name,value:v})});
+  el('keyval').value='';hideValue();  // the value leaves the page at once, whatever the answer
   const j=await r.json().catch(()=>({}));
-  el('keymsg').textContent=r.ok?tr(j.replaced?'key_replaced':'key_stored',{name:f.name.value.trim()}):(j.detail||tr('failed',{code:r.status}));
-  if(r.ok){f.name.value='';loadKeys();load();}});
+  el('keymsg').textContent=r.ok?tr(j.replaced?'key_replaced':'key_stored',{label:c.own||c.title,name:j.name}):(j.detail||tr('failed',{code:r.status}));
+  if(r.ok){resetKeyForm();loadKeys();load();}});
+el('keytest').addEventListener('click',async()=>{const c=chosen();if(!c)return;
+  el('keymsg').textContent=tr('key_testing');
+  const r=await fetch('/api/keys/test',{method:'POST',headers:H,body:JSON.stringify({name:c.name,value:el('keyval').value})});
+  const j=await r.json().catch(()=>({}));
+  const cap=s=>s.charAt(0).toUpperCase()+s.slice(1)+(/[.!?]$/.test(s)?'':'.');
+  el('keymsg').textContent=!r.ok?(j.detail||tr('failed',{code:r.status})):j.ok?(j.reason?cap(j.reason):tr('key_test_ok')):tr('key_test_bad',{reason:j.reason||'?'});});
+document.addEventListener('click',async e=>{const b=e.target.closest('button[data-kact]');if(!b)return;
+  const x=KS.keys.find(k=>k.name===b.dataset.name);if(!x)return;
+  if(b.dataset.kact==='replace'){
+    const s=keyChoices().find(s=>s.keys.some(k=>k.name===x.name));if(!s)return;
+    el('keysvc').value=s.id;svcChanged();el('keywhich').value=x.name;whichChanged();
+    el('keytitle').textContent=tr(x.where==='stored'?'key_form_replace':'key_form_add',{label:ktitle(x)});el('keycancel').hidden=false;
+    el('keyform').scrollIntoView({behavior:'smooth',block:'center'});el('keyval').focus({preventScroll:true});return;}
+  if(!confirm(tr('key_delete_confirm',{label:ktitle(x)})))return;
+  const r=await fetch('/api/keys/'+encodeURIComponent(x.name),{method:'DELETE',headers:H});const j=await r.json().catch(()=>({}));
+  el('keymsg').textContent=r.ok?tr('key_deleted',{label:ktitle(x)}):(j.detail||tr('failed',{code:r.status}));
+  loadKeys();load();});
 document.addEventListener('click',async e=>{if(!e.target.closest('#keyimp'))return;
   if(!confirm(tr('key_import_confirm')))return;
   const r=await fetch('/api/keys/import',{method:'POST',headers:H}); const j=await r.json().catch(()=>({}));
