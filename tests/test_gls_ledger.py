@@ -63,7 +63,7 @@ class Ledger(unittest.TestCase):
         self.build()
         b = self.m.balance()
         self.assertEqual((b["collected_cod"], b["kept_for_invoices"], b["transferred"]), (5555.0, 2921.0, 2634.0))
-        self.assertEqual(b["open_invoices"], [{"invoice": "HU00000009", "date": None, "open": 1357.0, "reminded": True}])
+        self.assertEqual(b["open_invoices"], [{"invoice": "HU00000009", "date": None, "open": 1357.0, "reminded": True, "due": None}])
         self.assertEqual(b["we_owe_carrier"], 1357.0)
     def test_timeline_for_the_site_has_no_names(self):
         self.build()
@@ -99,5 +99,19 @@ class Ledger(unittest.TestCase):
         b = self.m.balance()
         self.assertEqual(b["we_owe_carrier"], round(2400 * 1.27))  # nothing collected: the whole invoice has to be paid
         self.assertEqual(b["avg_fee_per_parcel_gross"], round(1150 * 1.27))
+
+    def test_invoice_xml_gives_the_due_date_and_no_buyer_data(self):
+        xml = ('<?xml version="1.0"?><szamla xmlns="http://www.apeh.hu/2005/szamla"><fejlec><vevo><nev>Example Kft.</nev>'
+               '<cim><telepules>Exampleton</telepules></cim></vevo><szamlainfo><sorszam>XX00001001</sorszam>'
+               '<kialldatum>2026-01-05</kialldatum><fizhatarido>2026-01-06</fizhatarido></szamlainfo></fejlec>'
+               '<tetelek><tetel><bruttoar>1000</bruttoar></tetel><tetel><bruttoar>234</bruttoar></tetel></tetelek></szamla>')
+        got = self.m.parse_invoice_xml(xml.encode())
+        self.assertEqual(got, {"invoice": "XX00001001", "issued": "2026-01-05", "due": "2026-01-06", "gross": 1234})
+        self.assertNotIn("Example Kft.", json.dumps(got))
+        self.assertEqual(self.m.parse_invoice_xml(b"not xml"), {})
+        d = {"invoices": {}, "cod": {}, "compensations": [], "reminders": {}}
+        self.m.ingest(d, "Szamla", [self.file("1_InvoiceDocument_XX00001001.xml", xml)], "1")
+        self.assertEqual(d["invoices"]["XX00001001"]["due"], "2026-01-06")
+        self.assertEqual(d["invoices"]["XX00001001"]["gross"], 1234)
 
 if __name__ == "__main__": unittest.main()

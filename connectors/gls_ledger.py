@@ -101,6 +101,27 @@ def parse_compensation(text):
                     "remaining": n[4], "date": m.group(7).replace(".", "-")})
     return out
 
+def parse_invoice_xml(data):
+    """The carrier's invoice XML (the Hungarian 'szamla' schema): {invoice, issued, due, gross}. Number, dates and the total
+    only; the buyer's name and address in the file are never read out. Anything unreadable → {}."""
+    import xml.etree.ElementTree as ET
+    try: root = ET.fromstring(data)
+    except ET.ParseError: return {}
+    def first(tag):
+        for el in root.iter():
+            if el.tag.rsplit("}", 1)[-1] == tag and (el.text or "").strip(): return el.text.strip()
+        return ""
+    lines = [el for el in root.iter() if el.tag.rsplit("}", 1)[-1] == "tetel"]
+    gross = 0.0
+    for t in lines:
+        for el in t:
+            if el.tag.rsplit("}", 1)[-1] == "bruttoar":
+                try: gross += float((el.text or "0").replace(",", "."))
+                except ValueError: pass
+    due = first("fizhatarido")
+    return {"invoice": first("sorszam"), "issued": first("kialldatum"),
+            "due": due if re.fullmatch(r"\d{4}-\d{2}-\d{2}", due) else "", "gross": round(gross) if gross else None}
+
 def parse_reminder(text):
     """→ [{invoice, date, amount}] overdue invoices from a payment reminder's text."""
     return [{"invoice": m.group(1), "date": m.group(2).replace(".", "-"), "amount": _num(m.group(3).replace(".", " "))}
@@ -131,6 +152,13 @@ def ingest(d, subject, files, uid):
             d["invoices"][s["invoice"]] = {**prev, "date": s["date"], "parcels": len(s["parcels"]), "net": s["net"],
                                            "gross": prev.get("gross") or round(s["net"] * (1 + vat)),
                                            "per_parcel_net": [p["net"] for p in s["parcels"]], "refs": [p["ref"] for p in s["parcels"]]}
+        elif name.endswith(".xml") and "invoice" in name:
+            due = parse_invoice_xml(f.read_bytes())
+            if due.get("invoice"):
+                inv = d["invoices"].setdefault(due["invoice"], {})
+                for k in ("due", "issued"):
+                    if due.get(k): inv[k] = due[k]
+                if due.get("gross") and not inv.get("gross"): inv["gross"] = due["gross"]
         elif name.endswith(".xlsx") and re.search(r"_huf_\d{8}", name):
             for r in parse_cod_detail(f.read_bytes()):
                 d["cod"][r["parcel"]] = {"ref": r["ref"], "delivered": r["delivered"], "amount": r["amount"], "report_uid": uid}
@@ -200,7 +228,8 @@ def balance(paid=""):
     for no, inv in sorted(d["invoices"].items()):
         rest = inv.get("remaining") if inv.get("compensated") is not None and "remaining" in inv else (inv.get("gross") or 0) - (inv.get("compensated") or 0)
         if rest and rest > 0 and no not in paid_set:
-            open_inv.append({"invoice": no, "date": inv.get("date"), "open": round(rest, 2), "reminded": no in d["reminders"]})
+            open_inv.append({"invoice": no, "date": inv.get("date"), "open": round(rest, 2), "reminded": no in d["reminders"],
+                             "due": inv.get("due")})
     owed_to_carrier = round(sum(i["open"] for i in open_inv), 2)
     nets = [n for inv in d["invoices"].values() for n in inv.get("per_parcel_net") or []]
     vat = float(os.getenv("GLS_INVOICE_VAT", "0.27") or 0.27)
