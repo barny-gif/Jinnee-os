@@ -71,7 +71,7 @@ def money(n):
 
 
 def owner_name():
-    """config/business.yaml business.owner_name, optional: "Barni, a new order came in" instead of "New order"."""
+    """config/business.yaml business.owner_name, optional: "Anna, a new order came in" instead of "New order"."""
     try:
         import business
         v = (business.load().get("business") or {}).get("owner_name")
