@@ -53,6 +53,11 @@ TOOLS += [f"mcp__claude_ai_Shopify__{t}" for t in ("get-shop-info", "search_prod
 # only reads. What is read stays out of Telegram, logs and handoffs beyond sender company and subject.
 GMAIL_READ = [f"mcp__claude_ai_Gmail__{t}" for t in ("search_threads", "get_thread", "get_message", "list_labels", "list_drafts", "get_draft")]
 TOOLS += GMAIL_READ + ["mcp__claude_ai_Gmail__create_draft"]
+# Google Drive through the owner's claude.ai connector: reading a folder the owner shared, and creating files and folders in it
+# (e.g. filing carrier invoices by month). Creating is the owner's runs only and, as an outgoing step, goes through the approval
+# queue first; copying, sharing and permissions are deliberately NOT here.
+DRIVE_READ = [f"mcp__claude_ai_Google_Drive__{t}" for t in ("search_files", "get_file_metadata", "read_file_content", "download_file_content", "list_recent_files")]
+TOOLS += DRIVE_READ + ["mcp__claude_ai_Google_Drive__create_file"]
 # Forge's only way to git: this helper (own branch forge/*, tests must pass, pull request, never main).
 TOOLS += [f"Bash({py} core/forge_git.py *)" for py in ("python3", "python")]
 # Forge needs to read API docs and run the connectors and tests it writes; still no curl, rm or free shell.
@@ -80,7 +85,7 @@ GUARDED += [f"Bash({py} core/memory.py compact{rest})" for py in ("python3", "py
 # A scheduled run (core/scheduler.py) has nobody watching it. It gets less: no building (Lovable, git, tests), writing only
 # in brain/ and handoffs/ (dontAsk refuses everything not allowed here), and JINNEE_UNATTENDED=1, with which the connectors
 # refuse every outgoing step and approvals.py refuses to hand out a decision.
-SCHEDULED_TOOLS = [t for t in TOOLS if not any(x in t for x in ("forge_git", "-m unittest", "Lovable__send_message", "Lovable__get_message", "Lovable__get_file_upload_url", "Gmail__create_draft"))
+SCHEDULED_TOOLS = [t for t in TOOLS if not any(x in t for x in ("forge_git", "-m unittest", "Lovable__send_message", "Lovable__get_message", "Lovable__get_file_upload_url", "Gmail__create_draft", "Google_Drive__create_file"))
                    and t not in DESIGN_TOOLS]  # building and checking UI is the owner's run, never a scheduled one
 SCHEDULED_TOOLS += ["Edit(brain/**)", "Edit(handoffs/**)"]
 # company.md holds only the owner's own statements: a run nobody watches reads it, never changes it. (An Edit rule covers every

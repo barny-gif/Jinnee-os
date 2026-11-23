@@ -377,6 +377,13 @@ print("RESULT " + json.dumps({"tools": jinnee.TOOLS, "scheduled": jinnee.SCHEDUL
         self.assertNotIn("mcp__claude_ai_Gmail__create_draft", got["scheduled"])
         for t in ("send_message", "reply", "forward", "trash_message", "trash_thread", "label_message", "update_draft", "delete_draft"):
             self.assertNotIn(f"mcp__claude_ai_Gmail__{t}", got["tools"] + got["scheduled"])
+        # Google Drive through the claude.ai connector: read everywhere, create (files, folders) only in the owner's runs,
+        # never copy, share or change permissions
+        self.assertIn("mcp__claude_ai_Google_Drive__search_files", got["scheduled"])
+        self.assertIn("mcp__claude_ai_Google_Drive__create_file", got["tools"])
+        self.assertNotIn("mcp__claude_ai_Google_Drive__create_file", got["scheduled"])
+        for t in ("copy_file", "get_file_permissions"):
+            self.assertNotIn(f"mcp__claude_ai_Google_Drive__{t}", got["tools"] + got["scheduled"])
 
 
 if __name__ == "__main__":
