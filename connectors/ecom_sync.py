@@ -31,6 +31,7 @@ import order_checks
 import order_auto
 import complaints
 import cod_paid
+import cod_invoice_paid
 import gls_ledger
 import order_events
 import site_commands
@@ -606,6 +607,12 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
     except Exception as e: cod = {"mode": cod_paid.mode(), "ready": [], "queued": None, "marked": [], "mismatch": [], "unclear": [],
                                   "waiting": [], "late": [], "marked_rows": [], "note": None, "errors": [f"[COD paid] {type(e).__name__}: {e}"]}
     cod_err = "; ".join(dict.fromkeys(cod["errors"])) or None
+    # COD invoices the carrier settled → paid in Billingo (BILLINGO_AUTO_MARK_PAID, off by default): one approval item a day,
+    # or auto at issue_invoice level 2. Billingo is read at most once an hour, only while a settled row is not handled.
+    try: cod_inv = cod_invoice_paid.run(now, act=act)
+    except Exception as e: cod_inv = {"mode": cod_invoice_paid.mode(), "ready": [], "queued": None, "marked": [], "mismatch": [],
+                                      "unclear": [], "note": None, "errors": [f"[COD invoice paid] {type(e).__name__}: {e}"]}
+    if cod_inv["errors"]: cod_err = "; ".join(x for x in (cod_err, *dict.fromkeys(cod_inv["errors"])) if x)
     # The owner's news (new order, GLS pickup, COD set paid) and the COD invoice once GLS delivered (connectors/order_events.py):
     # an approval item per order at issue_invoice level 1, issued and sent at level 2. Only when really sending.
     try: events = order_events.run(every, shipping, uploaded, auto, cod, invoices, now, act=act)
@@ -649,6 +656,7 @@ def build(days=DAYS, shop=None, bill=None, now=None, gls=None, act=False, histor
             "shopify_scopes": None if scopes is None else {**scopes, "checked_at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat(timespec="seconds")},
             "fulfilled_now": fulfilled_now,
             "cod_paid": cod,  # order numbers and amounts only: ready, queued approval id, marked, mismatches
+            "cod_invoice_paid": cod_inv,  # invoice and order numbers and amounts only; for the log, not the site
             "order_events": events,  # for the log only (popped in push): news keys and the COD invoice step, order numbers only
             "order_auto": auto,  # order numbers and field names only: what got a label / draft this round and what is held
             "billing": billing,  # the Payments tab; None = Billingo did not answer, the site keeps what it has
@@ -728,6 +736,8 @@ def push(send="no", days=DAYS, shop=None, bill=None, gls=None, history="auto"):
     count["cod_paid"] = {"mode": c["mode"], "ready": c["ready"], "queued": c["queued"], "marked": c["marked"],
                          "mismatch": c["mismatch"], "unclear": c.get("unclear", []), "waiting_for_transfer": c.get("waiting", []),
                          "late": c.get("late", []), "note": c["note"]}
+    ci = payload.pop("cod_invoice_paid", None)  # for the log only: the site's payload stays as it was
+    if ci: count["cod_invoice_paid"] = {k: ci[k] for k in ("mode", "ready", "queued", "marked", "mismatch", "unclear", "note")}
     ev = payload.pop("order_events")  # for the log only: the site's payload stays as it was
     count["order_events"] = {"news": ev["news"], "cod_invoice": {k: v for k, v in ev["invoice"].items() if k != "errors"}}
     b = payload["billing"]
