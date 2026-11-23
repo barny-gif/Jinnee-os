@@ -11,6 +11,12 @@
       "GLS_PASSWORD"
     ]
   },
+  "check": {
+    "op": "parcel_numbers",
+    "args": {
+      "days": "1"
+    }
+  },
   "ops": [
     "track",
     "prepare_labels"

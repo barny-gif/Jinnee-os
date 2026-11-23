@@ -8,6 +8,12 @@
     "env": "BILLINGO_API_KEY",
     "docs": "https://api.billingo.hu"
   },
+  "check": {
+    "op": "block_id",
+    "clear": [
+      "BILLINGO_BLOCK_ID"
+    ]
+  },
   "ops": [
     "create_draft",
     "list",

@@ -19,6 +19,9 @@
     ],
     "store_env": "SHOPIFY_STORE"
   },
+  "check": {
+    "op": "scopes"
+  },
   "ops": [
     "list_orders",
     "get_order",

@@ -171,10 +171,20 @@ Each message is said once; nothing is sent in the quiet hours. Switches in `.env
 API keys and tokens (Telegram, Shopify, Billingo, Gmail, GLS…) are not kept in plain text. They are in an encrypted key store,
 `config/secrets.vault.json` (AES-256-GCM, each value bound to its name), and the programs read them when they start (`core/env.py`
 reads `.env` first, then the store; a variable already set in the environment still wins, an empty `KEY=` line does not).
-- **Adding or changing a key:** the dashboard's **Your keys** box. Pick the name, paste the key, *Store encrypted*. The page never
-  shows a key again, only where it is (stored encrypted / in `.env`, readable / not set). The team's next run uses it; Jinnee's
-  own Telegram connection needs a restart for a new bot token. Without the dashboard: `python3 core/vault.py set NAME` (asks for the
-  value without showing it; never put a key on the command line, it stays in the shell history).
+- **Adding or changing a key:** the dashboard's **Your keys** box. *API name*: pick the service (Shopify, Billingo, GLS, Gmail…);
+  when it has more than one key a second list names them in plain words ("Shopify – Admin access token"). For anything else pick
+  *Other* and type a name ("My CRM api"): the page shows the name it will be stored under (`MY_CRM_API_KEY`) before you save.
+  *API key*: paste it (hidden; *Show* reveals it while you type), *Save encrypted*. Where the connector has a cheap, read-only
+  check (Shopify, Billingo, GLS) a *Try it* button makes one call with the key and says only "it works" or "it does not work, and
+  why"; nothing is stored by trying. The list shows each key by name, who uses it, and when it was added or replaced, with
+  *Replace* and *Delete* (asks first). The page never shows a key again, not even its last characters. The team's next run uses
+  it; Jinnee's own Telegram connection needs a restart for a new bot token. Without the dashboard: `python3 core/vault.py set NAME`
+  (asks for the value without showing it; never put a key on the command line, it stays in the shell history).
+- **Safe line only:** keys can be added, replaced, deleted or tried only on HTTPS (the `Caddyfile` sets that up) or on the machine
+  itself (`http://localhost:8080`, or an SSH tunnel). On plain http over the network the box says so and refuses. At most 10 key
+  changes a minute from one address.
+- **The key log:** every add, replace, delete and move from `.env` done on the dashboard is one line in
+  `config/secrets.audit.jsonl` (name, what happened, when, from which address), owner-only, never a value.
 - **The installer** asks for the Telegram token as before, puts it into the store, and leaves `.env` without it.
 - **Keys left in `.env`** (an older install, or one typed in by hand): the box lists them in red with a button to move them;
   after your OK they are encrypted, checked to read back the same, and only then removed from `.env`. No plain copy is kept.
