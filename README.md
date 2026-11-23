@@ -157,7 +157,8 @@ The shop pack follows one rule for cash-on-delivery (COD) orders; a paid order (
    invoice?"); at level 2 it is issued and sent by itself and you are told afterwards. **Before delivery a COD invoice is never
    issued**: `connectors/order_flow.py invoice_issue` checks the GLS state itself and refuses, whoever asks. A parcel that went
    back stays a draft.
-4. **GLS transfers the money:** only then is the order set *paid* in Shopify (`SHOPIFY_AUTO_MARK_PAID`, off by default). Delivered
+4. **GLS transfers the money:** only then is the order set *paid* in Shopify (`SHOPIFY_AUTO_MARK_PAID`, off by default), and its
+   issued invoice recorded as paid in Billingo (`BILLINGO_AUTO_MARK_PAID`, off by default, `connectors/cod_invoice_paid.py`). Delivered
    is not enough. The proof is GLS's own COD settlement e-mail, read by the carrier ledger (`GLS_LEDGER_ACCOUNT`): the parcel
    must be on it with the same amount, matched to the order without doubt. Two rows for one order, a parcel under another
    reference, or a different amount: nothing is set, you get a message. Still not settled after `COD_TRANSFER_WARN_DAYS` (10): a
